@@ -7,94 +7,9 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from .config import load_system_prompt
-from .tools import execute_tool
+from .tool_call import execute_tool, get_tool_definitions
 
 MAX_HISTORY_TOKENS = 64000
-TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "read",
-            "description": "Read content from a file in the working directory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {"type": "string", "description": "Path to the file relative to working directory."},
-                    "limit_lines": {"type": "integer", "default": 50, "description": "Max lines to return."},
-                    "start_line": {"type": "integer", "default": 0, "description": "Line number to start from (0-indexed)."},
-                    "limit_chars": {"type": "integer", "default": 10000, "description": "Max characters to return."},
-                },
-                "required": ["filename"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write",
-            "description": "Write to a file by replacing old_str with new_str. old_str must be unique.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {"type": "string", "description": "Path to the file relative to working directory."},
-                    "old_str": {"type": "string", "description": "The exact string to replace."},
-                    "new_str": {"type": "string", "description": "The string to replace it with."},
-                },
-                "required": ["filename", "old_str", "new_str"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "bash",
-            "description": "Execute a bash command in the working directory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string", "description": "The bash command to execute."},
-                },
-                "required": ["command"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "todo_read",
-            "description": "List all current todos.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "todo_write",
-            "description": "Add new todos.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tasks": {"type": "array", "items": {"type": "string"}, "description": "List of tasks to add."},
-                },
-                "required": ["tasks"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "todo_done",
-            "description": "Mark todos as done.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tasks": {"type": "array", "items": {"type": "string"}, "description": "List of tasks to mark as done."},
-                },
-                "required": ["tasks"],
-            },
-        },
-    },
-]
 
 
 class Agent:
@@ -152,7 +67,7 @@ class Agent:
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    tools=TOOL_DEFINITIONS,
+                    tools=get_tool_definitions(),
                     stream=True,
                     extra_body={"thinking": {"type": "enabled"}},
                 )

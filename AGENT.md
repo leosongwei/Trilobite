@@ -66,3 +66,7 @@ TODO:
 * todo_done：标记相应的todo为done：`["事情b"，"事情c"]`，返回todo_read的结果
 
 
+# 风格
+
+* 3.3后的现代python不应该用__init__.py
+* 全篇采用绝对引用`from src.myagent.xxxx import yyyy`，禁止使用相对引用
