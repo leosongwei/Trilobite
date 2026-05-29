@@ -154,6 +154,7 @@ class Agent:
                     messages=messages,
                     tools=TOOL_DEFINITIONS,
                     stream=True,
+                    extra_body={"thinking": {"type": "enabled"}},
                 )
 
                 tool_calls: list[dict] = []
@@ -209,7 +210,7 @@ class Agent:
                     if content:
                         assistant_msg["content"] = content
                     if thinking:
-                        assistant_msg["thinking"] = thinking
+                        assistant_msg["reasoning_content"] = thinking
                     self.history.append(assistant_msg)
 
                     for tc in tool_calls:
@@ -240,7 +241,7 @@ class Agent:
                     if content:
                         assistant_final: dict = {"role": "assistant", "content": content}
                         if thinking:
-                            assistant_final["thinking"] = thinking
+                            assistant_final["reasoning_content"] = thinking
                         self.history.append(assistant_final)
                     self._save_history()
                     await self._send_stream_event({"type": "done"})

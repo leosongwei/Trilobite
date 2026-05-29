@@ -79,10 +79,10 @@ function renderMessage(msg) {
         return;
     }
 
-    if (msg.thinking) {
+    if (msg.reasoning_content) {
         const details = document.createElement('details');
         details.className = 'message thinking';
-        details.innerHTML = `<summary>thinking...</summary>${escapeHtml(msg.thinking)}`;
+        details.innerHTML = `<summary>thinking...</summary>${escapeHtml(msg.reasoning_content)}`;
         chat.appendChild(details);
     }
 
