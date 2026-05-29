@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import traceback
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -237,7 +236,11 @@ class Agent:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            await self._send_stream_event({"type": "error", "text": f"{e}\n{traceback.format_exc()}"})
+            msg = str(e)
+            if hasattr(e, "body") and isinstance(e.body, dict):
+                err = e.body.get("error", {})
+                msg = err.get("message", msg)
+            await self._send_stream_event({"type": "error", "text": msg})
 
     def _check_steer(self) -> bool:
         """Check if a steering message was queued and add it to history. Returns True if steered."""
