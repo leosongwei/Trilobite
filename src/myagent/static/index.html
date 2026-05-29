@@ -42,15 +42,15 @@ body { font-family: ui-monospace, 'Cascadia Code', monospace; background: #1e1e2
         <input type="text" id="sessionName" placeholder="Session name">
         <label>Working directory:</label>
         <input type="text" id="workingDir" placeholder="/home/user/project">
-        <button onclick="createSession()">+ New Session</button>
+        <button id="createSessionBtn">+ New Session</button>
     </div>
     <div class="sessions" id="sessionList"></div>
 </div>
 <div class="main">
     <div class="chat" id="chat"></div>
     <div class="input-area">
-        <textarea id="messageInput" placeholder="Type a message..." rows="1" onkeydown="handleKeydown(event)"></textarea>
-        <button id="sendBtn" onclick="sendMessage()">Send</button>
+        <textarea id="messageInput" placeholder="Type a message..." rows="1"></textarea>
+        <button id="sendBtn">Send</button>
     </div>
 </div>
 

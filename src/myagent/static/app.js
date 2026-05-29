@@ -6,9 +6,9 @@ async function loadSessions() {
     const sessions = await res.json();
     const list = document.getElementById('sessionList');
     list.innerHTML = sessions.map(s =>
-        `<div class="session-item ${s.name === currentSession ? 'active' : ''}" onclick="selectSession('${s.name}')">
+        `<div class="session-item ${s.name === currentSession ? 'active' : ''}" data-session="${s.name}">
             <span>${s.name}</span>
-            <span class="delete" onclick="event.stopPropagation(); deleteSession('${s.name}')">&times;</span>
+            <span class="delete" data-delete="${s.name}">&times;</span>
         </div>`
     ).join('');
 }
@@ -115,7 +115,6 @@ async function sendMessage() {
 
     const streamingDiv = createStreamingMessage('assistant');
     let streamingContent = '';
-    const toolResults = [];
 
     const sendBtn = document.getElementById('sendBtn');
     sendBtn.disabled = true;
@@ -184,16 +183,31 @@ async function sendMessage() {
     sendBtn.disabled = false;
 }
 
-function handleKeydown(event) {
+// Event listeners
+document.getElementById('createSessionBtn').addEventListener('click', createSession);
+document.getElementById('sendBtn').addEventListener('click', sendMessage);
+document.getElementById('messageInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         sendMessage();
     }
-}
-
+});
 document.getElementById('messageInput').addEventListener('input', function () {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// Delegate click for session list (select/delete)
+document.getElementById('sessionList').addEventListener('click', (event) => {
+    const sessionEl = event.target.closest('[data-session]');
+    if (sessionEl) {
+        selectSession(sessionEl.dataset.session);
+    }
+    const deleteEl = event.target.closest('[data-delete]');
+    if (deleteEl) {
+        event.stopPropagation();
+        deleteSession(deleteEl.dataset.delete);
+    }
 });
 
 loadSessions();
