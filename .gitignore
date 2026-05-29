@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# uv / virtualenv
+.venv/
+.uv/
+
+# Build
+*.egg-info/
+dist/
+build/
+
+# Runtime config (contains user's API keys)
+config/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

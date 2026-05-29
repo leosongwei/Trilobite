@@ -1,0 +1,21 @@
+[project]
+name = "myagent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.136.3",
+    "openai>=2.38.0",
+    "pyyaml>=6.0.3",
+    "uvicorn[standard]>=0.48.0",
+]
+
+[project.scripts]
+myagent = "myagent.server:main"
+
+[tool.uv.sources]
+myagent = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]
