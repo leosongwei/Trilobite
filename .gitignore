@@ -25,3 +25,6 @@ config/
 # OS
 .DS_Store
 Thumbs.db
+
+# project
+/config
