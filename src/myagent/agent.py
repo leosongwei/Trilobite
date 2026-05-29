@@ -158,6 +158,7 @@ class Agent:
 
                 tool_calls: list[dict] = []
                 content_parts: list[str] = []
+                thinking_parts: list[str] = []
                 current_tool_id = ""
                 current_tool_name = ""
                 current_tool_args = ""
@@ -166,6 +167,10 @@ class Agent:
                     delta = chunk.choices[0].delta if chunk.choices else None
                     if delta is None:
                         continue
+
+                    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                        thinking_parts.append(delta.reasoning_content)
+                        await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
 
                     if delta.content:
                         content_parts.append(delta.content)
@@ -197,11 +202,14 @@ class Agent:
                     })
 
                 content = "".join(content_parts)
+                thinking = "".join(thinking_parts)
 
                 if tool_calls:
                     assistant_msg: dict = {"role": "assistant", "tool_calls": tool_calls}
                     if content:
                         assistant_msg["content"] = content
+                    if thinking:
+                        assistant_msg["thinking"] = thinking
                     self.history.append(assistant_msg)
 
                     for tc in tool_calls:
@@ -230,7 +238,10 @@ class Agent:
                         await self._send_stream_event({"type": "status", "text": "steered - processing new input..."})
                 else:
                     if content:
-                        self.history.append({"role": "assistant", "content": content})
+                        assistant_final: dict = {"role": "assistant", "content": content}
+                        if thinking:
+                            assistant_final["thinking"] = thinking
+                        self.history.append(assistant_final)
                     self._save_history()
                     await self._send_stream_event({"type": "done"})
                     break

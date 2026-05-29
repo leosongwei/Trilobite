@@ -1,6 +1,12 @@
 let currentSession = null;
 let isStreaming = false;
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 async function loadSessions() {
     const res = await fetch('/api/sessions');
     const sessions = await res.json();
@@ -73,6 +79,13 @@ function renderMessage(msg) {
         return;
     }
 
+    if (msg.thinking) {
+        const details = document.createElement('details');
+        details.className = 'message thinking';
+        details.innerHTML = `<summary>thinking...</summary>${escapeHtml(msg.thinking)}`;
+        chat.appendChild(details);
+    }
+
     const div = document.createElement('div');
     div.className = `message ${role}`;
 
@@ -115,6 +128,8 @@ async function sendMessage() {
 
     const streamingDiv = createStreamingMessage('assistant');
     let streamingContent = '';
+    let streamingThinking = '';
+    let thinkingDetails = null;
 
     const sendBtn = document.getElementById('sendBtn');
     sendBtn.disabled = true;
@@ -141,6 +156,17 @@ async function sendMessage() {
                 const data = JSON.parse(line.slice(6));
 
                 switch (data.type) {
+                    case 'thinking':
+                        streamingThinking += data.text;
+                        if (!thinkingDetails) {
+                            thinkingDetails = document.createElement('details');
+                            thinkingDetails.className = 'message thinking';
+                            thinkingDetails.open = true;
+                            thinkingDetails.innerHTML = '<summary>thinking...</summary><span></span>';
+                            chat.insertBefore(thinkingDetails, streamingDiv);
+                        }
+                        thinkingDetails.querySelector('span').textContent = streamingThinking;
+                        break;
                     case 'text':
                         streamingContent += data.text;
                         streamingDiv.textContent = streamingContent;
@@ -160,6 +186,9 @@ async function sendMessage() {
                         break;
                     case 'done':
                         streamingDiv.removeAttribute('id');
+                        if (thinkingDetails) {
+                            thinkingDetails.open = false;
+                        }
                         break;
                     case 'error':
                         const errDiv = document.createElement('div');

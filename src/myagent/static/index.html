@@ -22,6 +22,9 @@ body { font-family: ui-monospace, 'Cascadia Code', monospace; background: #1e1e2
 .message { margin-bottom: 16px; }
 .message.user { color: #89b4fa; }
 .message.assistant { color: #a6e3a1; }
+.message.thinking { color: #6c7086; font-style: italic; margin-left: 8px; white-space: pre-wrap; }
+.message.thinking summary { cursor: pointer; color: #585b70; font-style: normal; }
+.message.thinking summary:hover { color: #a6adc8; }
 .message.tool { color: #f9e2af; font-size: 13px; margin-left: 16px; white-space: pre-wrap; }
 .message.error { color: #f38ba8; }
 .message.system { color: #6c7086; font-style: italic; }
