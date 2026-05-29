@@ -16,6 +16,32 @@ export function setStreaming(v) {
 }
 export function getStreaming() { return isStreaming; }
 
+let maxTokens = 0;
+
+export function setMaxTokens(v) { maxTokens = v; }
+
+function updateTokenBar(count) {
+    const bar = document.getElementById('tokenBar');
+    if (!bar) return;
+    if (maxTokens) {
+        const pct = ((count / maxTokens) * 100).toFixed(1);
+        bar.textContent = `Tokens: ${count.toLocaleString()} / ${maxTokens.toLocaleString()} (${pct}%)`;
+        if (count >= maxTokens * 0.7) bar.className = 'token-bar warn';
+        if (count >= maxTokens * 0.9) bar.className = 'token-bar danger';
+    } else if (count > 0) {
+        bar.textContent = `Tokens: ${count.toLocaleString()}`;
+        bar.className = 'token-bar';
+    } else {
+        bar.textContent = 'Tokens: \u2014';
+        bar.className = 'token-bar';
+    }
+}
+
+export function updateTokenUsage(data) {
+    if (data.max_context_tokens) setMaxTokens(data.max_context_tokens);
+    updateTokenBar(data.token_count || 0);
+}
+
 export async function stopAgent() {
     if (!currentSession) return;
     await fetch(`/api/sessions/${currentSession}/cancel`, { method: 'POST' });
@@ -55,6 +81,14 @@ export async function loadHistory() {
     const history = await res.json();
     const chat = document.getElementById('chat');
     chat.innerHTML = '';
+    updateTokenBar(0);
+
+    fetch(`/api/sessions/${currentSession}/info`)
+        .then(r => r.json())
+        .then(info => {
+            if (info.max_context_tokens) setMaxTokens(info.max_context_tokens);
+            updateTokenBar(info.token_count || 0);
+        });
 
     let i = 0;
     while (i < history.length) {
@@ -280,6 +314,10 @@ export async function sendMessage() {
                         closeTurn();
                         break;
 
+                    case 'usage':
+                        updateTokenUsage(data);
+                        break;
+
                     case 'cancelled':
                         closeTurn();
                         break;
@@ -299,6 +337,7 @@ export async function sendMessage() {
                 const data = JSON.parse(buffer.slice(6));
                 // Only process final events (done/error)
                 if (data.type === 'done') closeTurn();
+                else if (data.type === 'usage') updateTokenUsage(data);
                 else if (data.type === 'error') {
                     const errDiv = document.createElement('div');
                     errDiv.className = 'message error';

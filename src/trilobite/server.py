@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
-from src.trilobite.config import init_config, get_sessions_dir
+from src.trilobite.config import init_config, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
 
 app = FastAPI(title="Trilobite")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
@@ -140,6 +140,30 @@ async def cancel_session(name: str):
     if agent and agent.is_running():
         agent.cancel()
     return {"status": "ok"}
+
+
+@app.get("/api/sessions/{name}/info")
+async def get_session_info(name: str):
+    agent = agents.get(name)
+    if agent is None:
+        session_dir = get_sessions_dir() / name
+        if not session_dir.exists():
+            raise HTTPException(404, "Session not found")
+        info = json.loads((session_dir / "session.json").read_text())
+        return {
+            "name": name,
+            "working_dir": info["working_dir"],
+            "is_running": False,
+            "token_count": 0,
+            "max_context_tokens": int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS)),
+        }
+    return {
+        "name": name,
+        "working_dir": str(agent.working_dir),
+        "is_running": agent.is_running(),
+        "token_count": agent._token_count,
+        "max_context_tokens": agent.max_context_tokens,
+    }
 
 
 @app.get("/api/sessions/{name}/history")

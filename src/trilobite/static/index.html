@@ -37,6 +37,9 @@ body { font-family: ui-monospace, 'Cascadia Code', monospace; background: #1e1e2
 #stopBtn { background: #f38ba8; padding: 8px 12px; font-size: 14px; }
 #stopBtn:disabled { background: #45475a; opacity: 0.3; }
 #stopBtn:not(:disabled):hover { background: #f06292; }
+.token-bar { padding: 4px 16px 8px; font-size: 11px; color: #6c7086; font-family: ui-monospace, 'Cascadia Code', monospace; }
+.token-bar.warn { color: #f9e2af; }
+.token-bar.danger { color: #f38ba8; }
 .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #6c7086; }
 .sidebar-header .working-dir { margin-top: 4px; }
 .sidebar-header .working-dir input { margin-top: 4px; }
@@ -61,6 +64,7 @@ body { font-family: ui-monospace, 'Cascadia Code', monospace; background: #1e1e2
         <button id="sendBtn">Send</button>
         <button id="stopBtn" title="Stop" disabled>&#9632;</button>
     </div>
+    <div class="token-bar" id="tokenBar">Tokens: &mdash;</div>
 </div>
 
 <script type="module" src="/static/app.js"></script>

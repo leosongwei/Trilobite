@@ -171,6 +171,12 @@ class Agent:
                         "function": {"name": current_tool_name, "arguments": current_tool_args},
                     })
 
+                await self._send_stream_event({
+                    "type": "usage",
+                    "token_count": self._token_count,
+                    "max_context_tokens": self.max_context_tokens,
+                })
+
                 content = "".join(content_parts)
                 thinking = "".join(thinking_parts)
 
