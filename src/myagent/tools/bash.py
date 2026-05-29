@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from . import Tool
+from src.myagent.tools.tool import Tool
 
 
 class BashTool(Tool):

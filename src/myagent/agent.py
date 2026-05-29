@@ -6,8 +6,8 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from .config import load_system_prompt
-from .tool_call import execute_tool, get_tool_definitions
+from src.myagent.config import load_system_prompt
+from src.myagent.tool_call import execute_tool, get_tool_definitions
 
 MAX_HISTORY_TOKENS = 64000
 

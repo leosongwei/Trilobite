@@ -8,8 +8,8 @@ from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .agent import Agent
-from .config import init_config, get_sessions_dir
+from src.myagent.agent import Agent
+from src.myagent.config import init_config, get_sessions_dir
 
 app = FastAPI(title="MyAgent")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
