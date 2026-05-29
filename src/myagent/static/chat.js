@@ -148,6 +148,8 @@ export async function sendMessage() {
     let textEl = null;
     let textContent = '';
     let pendingTools = [];
+    let toolStreamEl = null;
+    let toolStreamName = '';
 
     function closeTurn() {
         if (thinkingEl && thinkingContent) {
@@ -161,6 +163,8 @@ export async function sendMessage() {
         textEl = null;
         textContent = '';
         pendingTools = [];
+        toolStreamEl = null;
+        toolStreamName = '';
     }
 
     function newTurn() {
@@ -214,16 +218,40 @@ export async function sendMessage() {
                         textEl.textContent = textContent;
                         break;
 
+                    case 'tool_stream':
+                        if (!toolStreamEl || toolStreamName !== data.tool_name) {
+                            toolStreamEl = document.createElement('div');
+                            toolStreamEl.className = 'tool-entry';
+                            toolStreamEl.innerHTML = `<div class="tool-action">[${data.tool_name}]</div><pre class="tool-result"></pre>`;
+                            toolStreamEl.dataset.tool = data.tool_name;
+                            currentBlock.appendChild(toolStreamEl);
+                            toolStreamName = data.tool_name;
+                        }
+                        if (data.args) {
+                            toolStreamEl.querySelector('.tool-result').textContent = data.args;
+                        }
+                        if (data.complete) {
+                            toolStreamName = '';
+                        }
+                        break;
+
                     case 'tool_start':
-                        const toolEntry = createToolBlock(data.tool, '');
-                        toolEntry.dataset.tool = data.tool;
-                        currentBlock.appendChild(toolEntry);
-                        pendingTools.push(toolEntry);
+                        const existing = currentBlock.querySelector(`.tool-entry[data-tool="${data.tool}"]`);
+                        if (existing) {
+                            existing.querySelector('.tool-action').textContent = `[${data.tool}] running...`;
+                            pendingTools.push(existing);
+                        } else {
+                            const toolEntry = createToolBlock(data.tool, 'running...');
+                            toolEntry.dataset.tool = data.tool;
+                            currentBlock.appendChild(toolEntry);
+                            pendingTools.push(toolEntry);
+                        }
                         break;
 
                     case 'tool_result':
                         const match = pendingTools.find(t => t.dataset.tool === data.tool);
                         if (match) {
+                            match.querySelector('.tool-action').textContent = `[${data.tool}]`;
                             match.querySelector('.tool-result').textContent = data.result;
                         }
                         break;

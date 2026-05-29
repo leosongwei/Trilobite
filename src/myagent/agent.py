@@ -181,6 +181,12 @@ class Agent:
                         for tc in delta.tool_calls:
                             if tc.id:
                                 if current_tool_id:
+                                    await self._send_stream_event({
+                                        "type": "tool_stream",
+                                        "tool_name": current_tool_name,
+                                        "args": current_tool_args,
+                                        "complete": True,
+                                    })
                                     tool_calls.append({
                                         "id": current_tool_id,
                                         "type": "function",
@@ -189,13 +195,38 @@ class Agent:
                                 current_tool_id = tc.id
                                 current_tool_name = tc.function.name if tc.function else ""
                                 current_tool_args = ""
+                                if current_tool_name:
+                                    await self._send_stream_event({
+                                        "type": "tool_stream",
+                                        "tool_name": current_tool_name,
+                                        "args": "",
+                                        "complete": False,
+                                    })
                             if tc.function:
                                 if tc.function.name:
                                     current_tool_name = tc.function.name
+                                    await self._send_stream_event({
+                                        "type": "tool_stream",
+                                        "tool_name": current_tool_name,
+                                        "args": current_tool_args,
+                                        "complete": False,
+                                    })
                                 if tc.function.arguments:
                                     current_tool_args += tc.function.arguments
+                                    await self._send_stream_event({
+                                        "type": "tool_stream",
+                                        "tool_name": current_tool_name,
+                                        "args": current_tool_args,
+                                        "complete": False,
+                                    })
 
                 if current_tool_id:
+                    await self._send_stream_event({
+                        "type": "tool_stream",
+                        "tool_name": current_tool_name,
+                        "args": current_tool_args,
+                        "complete": True,
+                    })
                     tool_calls.append({
                         "id": current_tool_id,
                         "type": "function",
