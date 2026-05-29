@@ -18,9 +18,7 @@ myagent = "src.myagent.server:main"
 myagent = { workspace = true }
 
 [tool.setuptools]
-packages = ["src", "src.myagent", "src.myagent.tools"]
+packages = ["src"]
 
 [tool.setuptools.package-dir]
 "src" = "src"
-"src.myagent" = "src/myagent"
-"src.myagent.tools" = "src/myagent/tools"
