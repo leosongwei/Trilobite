@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-DEFAULT_MAX_CONTEXT_TOKENS = 128000
+DEFAULT_MAX_CONTEXT_TOKENS = 1_000_000
 
 DEFAULT_CONFIG = {
     "model": "deepseek-chat",
