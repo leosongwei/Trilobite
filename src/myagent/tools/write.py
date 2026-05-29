@@ -16,7 +16,7 @@ class WriteTool(Tool):
             },
             "old_str": {
                 "type": "string",
-                "description": "The exact string to replace. Use empty string to create/overwrite the file.",
+                "description": "The exact string to replace. Use empty string (\"\") to create/overwrite the file.",
             },
             "new_str": {
                 "type": "string",

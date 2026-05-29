@@ -12,10 +12,15 @@ dependencies = [
 ]
 
 [project.scripts]
-myagent = "myagent.server:main"
+myagent = "src.myagent.server:main"
 
 [tool.uv.sources]
 myagent = { workspace = true }
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+packages = ["src", "src.myagent", "src.myagent.tools"]
+
+[tool.setuptools.package-dir]
+"src" = "src"
+"src.myagent" = "src/myagent"
+"src.myagent.tools" = "src/myagent/tools"
