@@ -83,10 +83,24 @@ class Agent:
         recent_messages = self.history[boundary + 1 :]
 
         system_with_context = self.system_prompt + self.working_context
+        prompt = load_compaction_prompt()
+        # Include current todo state so the summary preserves task progress
+        if (self.session_dir / "todos.json").exists():
+            try:
+                todos = json.loads((self.session_dir / "todos.json").read_text())
+                if todos:
+                    lines = ["\nCurrent todo list:"]
+                    for t in todos:
+                        status = t.get("status", "pending")
+                        lines.append(f"  [{status}] {t['title']}")
+                    prompt += "\n".join(lines)
+            except Exception:
+                pass
+
         messages = [
             {"role": "system", "content": system_with_context},
             *compact_messages,
-            {"role": "user", "content": load_compaction_prompt()},
+            {"role": "user", "content": prompt},
         ]
 
         await self._send_stream_event({"type": "status", "text": "compacting context..."})
