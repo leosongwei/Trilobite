@@ -182,13 +182,15 @@ export async function sendMessage() {
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const text = decoder.decode(value, { stream: true });
+            const text = buffer + decoder.decode(value, { stream: true });
             const lines = text.split('\n');
+            buffer = lines.pop() || '';
 
             for (const line of lines) {
                 if (!line.startsWith('data: ')) continue;
@@ -268,6 +270,20 @@ export async function sendMessage() {
                         break;
                 }
             }
+        }
+        // Process any remaining partial line from buffer
+        if (buffer && buffer.startsWith('data: ')) {
+            try {
+                const data = JSON.parse(buffer.slice(6));
+                // Only process final events (done/error)
+                if (data.type === 'done') closeTurn();
+                else if (data.type === 'error') {
+                    const errDiv = document.createElement('div');
+                    errDiv.className = 'message error';
+                    errDiv.textContent = `Error: ${data.text}`;
+                    document.getElementById('chat').appendChild(errDiv);
+                }
+            } catch {}
         }
     } catch (e) {
         const errDiv = document.createElement('div');
