@@ -6,9 +6,9 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from src.myagent.compaction import compact_if_needed
-from src.myagent.config import DEFAULT_MAX_CONTEXT_TOKENS, load_system_prompt
-from src.myagent.tool_call import execute_tool, get_tool_definitions
+from src.trilobite.compaction import compact_if_needed
+from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, load_system_prompt
+from src.trilobite.tool_call import execute_tool, get_tool_definitions
 
 
 class Agent:

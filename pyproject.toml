@@ -1,5 +1,5 @@
 [project]
-name = "myagent"
+name = "trilobite"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -12,10 +12,10 @@ dependencies = [
 ]
 
 [project.scripts]
-myagent = "src.myagent.server:main"
+trilobite = "src.trilobite.server:main"
 
 [tool.uv.sources]
-myagent = { workspace = true }
+trilobite = { workspace = true }
 
 [tool.setuptools]
 packages = ["src"]

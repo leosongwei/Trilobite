@@ -4,12 +4,12 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.myagent.config import load_compaction_prompt
-from src.myagent.tokens import estimate_tokens_for_messages, estimate_tokens_for_tools
-from src.myagent.tool_call import get_tool_definitions
+from src.trilobite.config import load_compaction_prompt
+from src.trilobite.tokens import estimate_tokens_for_messages, estimate_tokens_for_tools
+from src.trilobite.tool_call import get_tool_definitions
 
 if TYPE_CHECKING:
-    from src.myagent.agent import Agent
+    from src.trilobite.agent import Agent
 
 
 def can_split_after(messages: list[dict], index: int) -> bool:

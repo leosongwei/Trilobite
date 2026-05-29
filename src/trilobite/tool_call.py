@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import Any
 
-from src.myagent.tools.read import ReadTool
-from src.myagent.tools.write import WriteTool
-from src.myagent.tools.bash import BashTool
-from src.myagent.tools.todo import TodoListTool
+from src.trilobite.tools.read import ReadTool
+from src.trilobite.tools.write import WriteTool
+from src.trilobite.tools.bash import BashTool
+from src.trilobite.tools.todo import TodoListTool
 
 ALL_TOOLS = [
     ReadTool(),

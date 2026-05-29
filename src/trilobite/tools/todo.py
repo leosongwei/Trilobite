@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from src.myagent.tools.tool import Tool
+from src.trilobite.tools.tool import Tool
 
 
 class TodoListTool(Tool):
