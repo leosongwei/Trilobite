@@ -177,6 +177,7 @@ class Agent:
                                 if current_tool_id:
                                     tool_calls.append({
                                         "id": current_tool_id,
+                                        "type": "function",
                                         "function": {"name": current_tool_name, "arguments": current_tool_args},
                                     })
                                 current_tool_id = tc.id
@@ -191,6 +192,7 @@ class Agent:
                 if current_tool_id:
                     tool_calls.append({
                         "id": current_tool_id,
+                        "type": "function",
                         "function": {"name": current_tool_name, "arguments": current_tool_args},
                     })
 
