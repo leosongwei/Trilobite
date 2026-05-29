@@ -9,8 +9,17 @@ let isStreaming = false;
 
 export function setSession(name) { currentSession = name; }
 export function getSession() { return currentSession; }
-export function setStreaming(v) { isStreaming = v; }
+export function setStreaming(v) {
+    isStreaming = v;
+    const btn = document.getElementById('stopBtn');
+    if (btn) btn.disabled = !v;
+}
 export function getStreaming() { return isStreaming; }
+
+export async function stopAgent() {
+    if (!currentSession) return;
+    await fetch(`/api/sessions/${currentSession}/cancel`, { method: 'POST' });
+}
 
 function createTurnBlock() {
     const block = document.createElement('div');
@@ -131,7 +140,7 @@ export async function sendMessage() {
     if (!message) return;
     input.value = '';
     input.style.height = 'auto';
-    isStreaming = true;
+    setStreaming(true);
 
     const chat = document.getElementById('chat');
     const userDiv = document.createElement('div');
@@ -262,6 +271,10 @@ export async function sendMessage() {
                         closeTurn();
                         break;
 
+                    case 'cancelled':
+                        closeTurn();
+                        break;
+
                     case 'error':
                         const errDiv = document.createElement('div');
                         errDiv.className = 'message error';
@@ -294,6 +307,6 @@ export async function sendMessage() {
 
     closeTurn();
     chat.scrollTop = chat.scrollHeight;
-    isStreaming = false;
+    setStreaming(false);
     sendBtn.disabled = false;
 }

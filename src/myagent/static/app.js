@@ -1,8 +1,9 @@
-import { sendMessage } from './chat.js';
+import { sendMessage, stopAgent } from './chat.js';
 import { loadSessions, createSession, selectSession, deleteSession } from './session.js';
 
 document.getElementById('createSessionBtn').addEventListener('click', createSession);
 document.getElementById('sendBtn').addEventListener('click', sendMessage);
+document.getElementById('stopBtn').addEventListener('click', stopAgent);
 document.getElementById('messageInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();

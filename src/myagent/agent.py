@@ -57,6 +57,9 @@ class Agent:
         self._stream_queue = stream_queue
         self._task = asyncio.current_task()
 
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+
         try:
             while True:
                 self._compact_history()
@@ -72,9 +75,9 @@ class Agent:
                     extra_body={"thinking": {"type": "enabled"}},
                 )
 
+                content_parts.clear()
+                thinking_parts.clear()
                 tool_calls: list[dict] = []
-                content_parts: list[str] = []
-                thinking_parts: list[str] = []
                 current_tool_id = ""
                 current_tool_name = ""
                 current_tool_args = ""
@@ -194,6 +197,17 @@ class Agent:
                     break
 
         except asyncio.CancelledError:
+            content = "".join(content_parts)
+            thinking = "".join(thinking_parts)
+            if content or thinking:
+                msg: dict = {"role": "assistant"}
+                if content:
+                    msg["content"] = content
+                if thinking:
+                    msg["reasoning_content"] = thinking
+                self.history.append(msg)
+                self._save_history()
+            await self._send_stream_event({"type": "cancelled"})
             raise
         except Exception as e:
             msg = str(e)
@@ -223,3 +237,7 @@ class Agent:
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def cancel(self):
+        if self._task and not self._task.done():
+            self._task.cancel()

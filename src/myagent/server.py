@@ -134,6 +134,14 @@ async def send_message(name: str, req: MessageRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@app.post("/api/sessions/{name}/cancel")
+async def cancel_session(name: str):
+    agent = agents.get(name)
+    if agent and agent.is_running():
+        agent.cancel()
+    return {"status": "ok"}
+
+
 @app.get("/api/sessions/{name}/history")
 async def get_history(name: str):
     agent = agents.get(name)
