@@ -134,22 +134,31 @@ export async function loadHistory() {
 }
 
 export async function sendMessage() {
-    if (!currentSession || isStreaming) return;
+    if (!currentSession) return;
     const input = document.getElementById('messageInput');
     const message = input.value.trim();
     if (!message) return;
     input.value = '';
     input.style.height = 'auto';
-    setStreaming(true);
 
     const chat = document.getElementById('chat');
     const userDiv = document.createElement('div');
     userDiv.className = 'message user';
     userDiv.textContent = message;
     chat.appendChild(userDiv);
+    chat.scrollTop = chat.scrollHeight;
 
-    const sendBtn = document.getElementById('sendBtn');
-    sendBtn.disabled = true;
+    if (isStreaming) {
+        // Steer: fire-and-forget, existing stream picks it up
+        await fetch(`/api/sessions/${currentSession}/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message }),
+        });
+        return;
+    }
+
+    setStreaming(true);
 
     let currentBlock = null;
     let thinkingEl = null;
@@ -308,5 +317,4 @@ export async function sendMessage() {
     closeTurn();
     chat.scrollTop = chat.scrollHeight;
     setStreaming(false);
-    sendBtn.disabled = false;
 }
