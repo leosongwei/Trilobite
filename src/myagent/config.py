@@ -10,6 +10,8 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "api_url": "https://api.deepseek.com/v1",
     "reasoning_effort": "max",
+    "max_context_tokens": "64000",
+    "compaction_trigger_ratio": "0.7",
 }
 
 

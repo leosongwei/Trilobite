@@ -6,10 +6,10 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
+from src.myagent.compaction import COMPACTION_INSTRUCTION, find_compact_boundary
 from src.myagent.config import load_system_prompt
+from src.myagent.tokens import estimate_tokens_for_messages, estimate_tokens_for_tools
 from src.myagent.tool_call import execute_tool, get_tool_definitions
-
-MAX_HISTORY_TOKENS = 64000
 
 
 class Agent:
@@ -21,8 +21,14 @@ class Agent:
         self.client = AsyncOpenAI(api_key=config["api_key"], base_url=config["api_url"])
         self.model = config["model"]
         self.reasoning_effort = config.get("reasoning_effort", "max")
+        self.max_context_tokens = int(config.get("max_context_tokens", 64000))
+        self.compaction_trigger_ratio = float(config.get("compaction_trigger_ratio", 0.7))
         self.system_prompt = load_system_prompt()
+        self.working_context = self._load_working_context()
         self.history: list[dict] = []
+        self._compacted_summary: str | None = None
+        self._token_count: int = 0
+        self._token_covered: int = 0
         self._task: asyncio.Task | None = None
         self._stream_queue: asyncio.Queue[dict] | None = None
         self._steering: asyncio.Event = asyncio.Event()
@@ -30,6 +36,17 @@ class Agent:
 
         self.history_path = session_dir / "history.json"
         self._load_history()
+
+    def _load_working_context(self) -> str:
+        """Load AGENTS.md and other context from the working directory."""
+        agents_md = self.working_dir / "AGENTS.md"
+        if agents_md.exists():
+            try:
+                content = agents_md.read_text(encoding="utf-8", errors="replace")
+                return f"\n\n# Working directory context ({self.working_dir})\n\n{content}"
+            except Exception:
+                return ""
+        return ""
 
     def _load_history(self):
         if self.history_path.exists():
@@ -42,12 +59,59 @@ class Agent:
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.history_path.write_text(json.dumps(self.history, indent=2, ensure_ascii=False))
 
-    def _compact_history(self):
-        while len(self.history) > 4:
-            estimated = sum(len(json.dumps(m)) for m in self.history)
-            if estimated <= MAX_HISTORY_TOKENS * 4:
-                break
-            self.history.pop(0)
+    def _estimated_tokens(self) -> int:
+        """Estimate total tokens including system prompt, working context, tools, and pending messages."""
+        tools = get_tool_definitions()
+        pending = self.history[self._token_covered :]
+        return (
+            estimate_tokens_for_messages([{"role": "system", "content": self.system_prompt + self.working_context}])
+            + self._token_count
+            + estimate_tokens_for_messages(pending)
+            + estimate_tokens_for_tools(tools)
+        )
+
+    def _should_compact(self) -> bool:
+        threshold = int(self.max_context_tokens * self.compaction_trigger_ratio)
+        return self._estimated_tokens() >= threshold
+
+    async def _do_compact(self):
+        boundary = find_compact_boundary(self.history)
+        if boundary < 1:
+            return
+
+        compact_messages = self.history[: boundary + 1]
+        recent_messages = self.history[boundary + 1 :]
+
+        system_with_context = self.system_prompt + self.working_context
+        messages = [
+            {"role": "system", "content": system_with_context},
+            *compact_messages,
+            {"role": "user", "content": COMPACTION_INSTRUCTION},
+        ]
+
+        await self._send_stream_event({"type": "status", "text": "compacting context..."})
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stream=False,
+            )
+            summary = response.choices[0].message.content or ""
+        except Exception:
+            summary = "[compaction failed — older context dropped]"
+
+        self._compacted_summary = summary
+        summary_msg = f"[Context summary]\n{summary}"
+        if self.working_context:
+            summary_msg += f"\n\n[Working context — project rules]\n{self.working_context.strip()}"
+        self.history = [
+            {"role": "user", "content": summary_msg},
+            {"role": "assistant", "content": "Understood. Continuing with the task."},
+            *recent_messages,
+        ]
+        self._token_count = 0
+        self._token_covered = 2  # the summary exchange
         self._save_history()
 
     async def _send_stream_event(self, event: dict):
@@ -63,8 +127,9 @@ class Agent:
 
         try:
             while True:
-                self._compact_history()
-                messages = [{"role": "system", "content": self.system_prompt}, *self.history]
+                if self._should_compact():
+                    await self._do_compact()
+                messages = [{"role": "system", "content": self.system_prompt + self.working_context}, *self.history]
 
                 await self._send_stream_event({"type": "turn"})
 
@@ -75,17 +140,26 @@ class Agent:
                     stream=True,
                     reasoning_effort=self.reasoning_effort,
                     extra_body={"thinking": {"type": "enabled"}},
+                    stream_options={"include_usage": True},
                 )
 
                 content_parts.clear()
                 thinking_parts.clear()
                 tool_calls: list[dict] = []
+                content_parts: list[str] = []
+                thinking_parts: list[str] = []
                 current_tool_id = ""
                 current_tool_name = ""
                 current_tool_args = ""
 
                 async for chunk in response:
                     delta = chunk.choices[0].delta if chunk.choices else None
+
+                    # Capture real token usage from stream
+                    if chunk.usage:
+                        self._token_count = chunk.usage.total_tokens
+                        self._token_covered = len(self.history)
+
                     if delta is None:
                         continue
 
