@@ -200,9 +200,7 @@ class Agent:
             content = "".join(content_parts)
             thinking = "".join(thinking_parts)
             if content or thinking:
-                msg: dict = {"role": "assistant"}
-                if content:
-                    msg["content"] = content
+                msg: dict = {"role": "assistant", "content": content or ""}
                 if thinking:
                     msg["reasoning_content"] = thinking
                 self.history.append(msg)
