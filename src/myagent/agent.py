@@ -6,9 +6,8 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from src.myagent.compaction import find_compact_boundary
-from src.myagent.config import load_compaction_prompt, load_system_prompt
-from src.myagent.tokens import estimate_tokens_for_messages, estimate_tokens_for_tools
+from src.myagent.compaction import compact_if_needed
+from src.myagent.config import load_system_prompt
 from src.myagent.tool_call import execute_tool, get_tool_definitions
 
 
@@ -59,75 +58,6 @@ class Agent:
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.history_path.write_text(json.dumps(self.history, indent=2, ensure_ascii=False))
 
-    def _estimated_tokens(self) -> int:
-        """Estimate total tokens including system prompt, working context, tools, and pending messages."""
-        tools = get_tool_definitions()
-        pending = self.history[self._token_covered :]
-        return (
-            estimate_tokens_for_messages([{"role": "system", "content": self.system_prompt + self.working_context}])
-            + self._token_count
-            + estimate_tokens_for_messages(pending)
-            + estimate_tokens_for_tools(tools)
-        )
-
-    def _should_compact(self) -> bool:
-        threshold = int(self.max_context_tokens * self.compaction_trigger_ratio)
-        return self._estimated_tokens() >= threshold
-
-    async def _do_compact(self):
-        boundary = find_compact_boundary(self.history)
-        if boundary < 1:
-            return
-
-        compact_messages = self.history[: boundary + 1]
-        recent_messages = self.history[boundary + 1 :]
-
-        system_with_context = self.system_prompt + self.working_context
-        prompt = load_compaction_prompt()
-        # Include current todo state so the summary preserves task progress
-        if (self.session_dir / "todos.json").exists():
-            try:
-                todos = json.loads((self.session_dir / "todos.json").read_text())
-                if todos:
-                    lines = ["\nCurrent todo list:"]
-                    for t in todos:
-                        status = t.get("status", "pending")
-                        lines.append(f"  [{status}] {t['title']}")
-                    prompt += "\n".join(lines)
-            except Exception:
-                pass
-
-        messages = [
-            {"role": "system", "content": system_with_context},
-            *compact_messages,
-            {"role": "user", "content": prompt},
-        ]
-
-        await self._send_stream_event({"type": "status", "text": "compacting context..."})
-
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                stream=False,
-            )
-            summary = response.choices[0].message.content or ""
-        except Exception:
-            summary = "[compaction failed — older context dropped]"
-
-        self._compacted_summary = summary
-        summary_msg = f"[Context summary]\n{summary}"
-        if self.working_context:
-            summary_msg += f"\n\n[Working context — project rules]\n{self.working_context.strip()}"
-        self.history = [
-            {"role": "user", "content": summary_msg},
-            {"role": "assistant", "content": "Understood. Continuing with the task."},
-            *recent_messages,
-        ]
-        self._token_count = 0
-        self._token_covered = 2  # the summary exchange
-        self._save_history()
-
     async def _send_stream_event(self, event: dict):
         if self._stream_queue is not None:
             await self._stream_queue.put(event)
@@ -141,8 +71,8 @@ class Agent:
 
         try:
             while True:
-                if self._should_compact():
-                    await self._do_compact()
+                if await compact_if_needed(self):
+                    continue
                 messages = [{"role": "system", "content": self.system_prompt + self.working_context}, *self.history]
 
                 await self._send_stream_event({"type": "turn"})
