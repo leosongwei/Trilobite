@@ -20,6 +20,7 @@ class Agent:
         self.config = config
         self.client = AsyncOpenAI(api_key=config["api_key"], base_url=config["api_url"])
         self.model = config["model"]
+        self.reasoning_effort = config.get("reasoning_effort", "max")
         self.system_prompt = load_system_prompt()
         self.history: list[dict] = []
         self._task: asyncio.Task | None = None
@@ -72,6 +73,7 @@ class Agent:
                     messages=messages,
                     tools=get_tool_definitions(),
                     stream=True,
+                    reasoning_effort=self.reasoning_effort,
                     extra_body={"thinking": {"type": "enabled"}},
                 )
 

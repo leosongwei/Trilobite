@@ -9,6 +9,7 @@ DEFAULT_CONFIG = {
     "model": "deepseek-chat",
     "api_key": "",
     "api_url": "https://api.deepseek.com/v1",
+    "reasoning_effort": "max",
 }
 
 
