@@ -43,7 +43,7 @@ class Agent:
         if agents_md.exists():
             try:
                 content = agents_md.read_text(encoding="utf-8", errors="replace")
-                return f"\n\n# Working directory context ({self.working_dir})\n\n{content}"
+                return f"\n\n<AGENTS.md>\n{content}\n</AGENTS.md>"
             except Exception:
                 return ""
         return ""
