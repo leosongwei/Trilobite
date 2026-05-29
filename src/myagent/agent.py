@@ -7,7 +7,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from src.myagent.compaction import compact_if_needed
-from src.myagent.config import load_system_prompt
+from src.myagent.config import DEFAULT_MAX_CONTEXT_TOKENS, load_system_prompt
 from src.myagent.tool_call import execute_tool, get_tool_definitions
 
 
@@ -20,7 +20,7 @@ class Agent:
         self.client = AsyncOpenAI(api_key=config["api_key"], base_url=config["api_url"])
         self.model = config["model"]
         self.reasoning_effort = config.get("reasoning_effort", "max")
-        self.max_context_tokens = int(config.get("max_context_tokens", 64000))
+        self.max_context_tokens = int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS))
         self.compaction_trigger_ratio = float(config.get("compaction_trigger_ratio", 0.7))
         self.system_prompt = load_system_prompt()
         self.working_context = self._load_working_context()
