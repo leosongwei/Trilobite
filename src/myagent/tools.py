@@ -32,21 +32,24 @@ def _write_file(working_dir: Path, filename: str, old_str: str, new_str: str) ->
     if not filepath.is_relative_to(working_dir):
         return "Error: Access denied - file is outside working directory"
 
-    if filepath.exists():
-        if filepath.is_dir():
-            return f"Error: {filename} is a directory"
-        content = filepath.read_text(encoding="utf-8")
-    else:
-        content = ""
+    existed = filepath.exists()
+    is_dir = existed and filepath.is_dir()
 
-    if old_str == "" and content == "":
+    if old_str == "":
+        if is_dir:
+            return f"Error: {filename} is a directory"
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(new_str, encoding="utf-8")
-        return f"File created: {filename}"
+        action = "Created" if not existed else "Written"
+        return f"{action}: {filename}"
 
+    if not existed:
+        return f"Error: File not found: {filename} (use empty old_str to create)"
+    if is_dir:
+        return f"Error: {filename} is a directory"
+
+    content = filepath.read_text(encoding="utf-8")
     count = content.count(old_str)
-    if old_str == "":
-        return "Error: old_str cannot be empty when file has content"
     if count == 0:
         return "Error: old_str not found in file"
     if count > 1:
