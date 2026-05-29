@@ -120,9 +120,9 @@ async def send_message(name: str, req: MessageRequest):
         try:
             while True:
                 event = await stream_queue.get()
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                if event.get("type") in ("done", "error"):
-                    break
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if event.get("type") in ("done", "error", "cancelled"):
+                break
         finally:
             if not task.done():
                 task.cancel()
