@@ -4,15 +4,13 @@ from typing import Any
 from src.myagent.tools.read import ReadTool
 from src.myagent.tools.write import WriteTool
 from src.myagent.tools.bash import BashTool
-from src.myagent.tools.todo import TodoReadTool, TodoWriteTool, TodoDoneTool
+from src.myagent.tools.todo import TodoListTool
 
 ALL_TOOLS = [
     ReadTool(),
     WriteTool(),
     BashTool(),
-    TodoReadTool(),
-    TodoWriteTool(),
-    TodoDoneTool(),
+    TodoListTool(),
 ]
 
 _TOOL_MAP: dict[str, Any] = {t.name: t for t in ALL_TOOLS}
