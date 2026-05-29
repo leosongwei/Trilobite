@@ -147,7 +147,7 @@ class Agent:
                 self._compact_history()
                 messages = [{"role": "system", "content": self.system_prompt}, *self.history]
 
-                await self._send_stream_event({"type": "status", "text": "thinking..."})
+                await self._send_stream_event({"type": "turn"})
 
                 response = await self.client.chat.completions.create(
                     model=self.model,
