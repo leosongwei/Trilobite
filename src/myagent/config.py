@@ -39,12 +39,23 @@ def init_config() -> dict:
 
 
 def load_system_prompt() -> str:
+    return _load_prompt("system_prompt.txt", "You are a helpful coding agent.")
+
+
+def load_compaction_prompt() -> str:
+    return _load_prompt(
+        "compaction_prompt.txt",
+        "Summarize the conversation history, preserving critical information. Output text only.",
+    )
+
+
+def _load_prompt(filename: str, fallback: str) -> str:
     root = get_project_root()
     config_dir = root / "config"
-    prompt_path = config_dir / "system_prompt.txt"
+    prompt_path = config_dir / filename
     if prompt_path.exists():
         return prompt_path.read_text(encoding="utf-8")
-    return "You are a helpful coding agent."
+    return fallback
 
 
 def get_sessions_dir() -> Path:

@@ -6,8 +6,8 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from src.myagent.compaction import COMPACTION_INSTRUCTION, find_compact_boundary
-from src.myagent.config import load_system_prompt
+from src.myagent.compaction import find_compact_boundary
+from src.myagent.config import load_compaction_prompt, load_system_prompt
 from src.myagent.tokens import estimate_tokens_for_messages, estimate_tokens_for_tools
 from src.myagent.tool_call import execute_tool, get_tool_definitions
 
@@ -86,7 +86,7 @@ class Agent:
         messages = [
             {"role": "system", "content": system_with_context},
             *compact_messages,
-            {"role": "user", "content": COMPACTION_INSTRUCTION},
+            {"role": "user", "content": load_compaction_prompt()},
         ]
 
         await self._send_stream_event({"type": "status", "text": "compacting context..."})
