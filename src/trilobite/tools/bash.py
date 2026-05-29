@@ -15,6 +15,10 @@ class BashTool(Tool):
                 "type": "string",
                 "description": "The bash command to execute.",
             },
+            "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds (default 10).",
+            },
         },
         "required": ["command"],
     }
@@ -24,6 +28,7 @@ class BashTool(Tool):
         working_dir: Path,
         session_dir: Path,
         command: str = "",
+        timeout: int = 10,
         **kwargs: Any,
     ) -> str:
         try:
@@ -32,7 +37,7 @@ class BashTool(Tool):
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=timeout,
                 cwd=working_dir,
             )
             output = result.stdout
@@ -42,6 +47,6 @@ class BashTool(Tool):
                 output += f"\n[exit code: {result.returncode}]"
             return output or "(no output)"
         except subprocess.TimeoutExpired:
-            return "Error: Command timed out (30s)"
+            return f"Error: Command timed out ({timeout}s)"
         except Exception as e:
             return f"Error: {e}"
