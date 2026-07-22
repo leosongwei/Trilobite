@@ -10,7 +10,7 @@ export type SSEEvent =
   | { type: 'plan_exit_request' }
   | { type: 'done' }
   | { type: 'cancelled' }
-  | { type: 'error'; text: string }
+  | { type: 'error'; text: string; status_code?: number; error_type?: string; error_code?: string }
 
 export interface ToolCall {
   id: string

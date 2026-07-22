@@ -283,10 +283,26 @@ class Agent:
             raise
         except Exception as e:
             msg = str(e)
+            error_type: str | None = None
+            error_code: str | None = None
+            status_code: int | None = None
+
             if hasattr(e, "body") and isinstance(e.body, dict):
                 err = e.body.get("error", {})
                 msg = err.get("message", msg)
-            await self._send_stream_event({"type": "error", "text": msg})
+                error_type = err.get("type")
+                error_code = err.get("code")
+
+            if hasattr(e, "status_code"):
+                status_code = e.status_code
+
+            await self._send_stream_event({
+                "type": "error",
+                "text": msg,
+                "status_code": status_code,
+                "error_type": error_type,
+                "error_code": error_code,
+            })
 
     def _check_steer(self) -> bool:
         """Check if steering messages were queued and add them to history. Returns True if steered."""

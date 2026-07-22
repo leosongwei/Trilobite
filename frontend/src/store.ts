@@ -141,9 +141,19 @@ function handleSSEEvent(event: SSEEvent) {
       closeTurn()
       break
 
-    case 'error':
-      state.chatItems.push({ kind: 'error', content: `Error: ${event.text}` })
+    case 'error': {
+      let content = ''
+      if (event.status_code) {
+        content += `[HTTP ${event.status_code}] `
+      }
+      if (event.error_type) {
+        content += `[${event.error_type}] `
+      }
+      content += event.text
+      state.chatItems.push({ kind: 'error', content })
+      closeTurn()
       break
+    }
   }
 
   state.streamTick++
