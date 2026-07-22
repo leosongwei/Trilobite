@@ -60,14 +60,13 @@ Content-Type: application/json
     │
     ├─ 在工作目录或额外目录内？
     │   ├─ 是 -> 允许访问
-    │   └─ 否 -> 路径是否为绝对路径？
-    │       ├─ 是 -> 允许访问（标记为 outside_workspace）
-    │       └─ 否（相对路径逃逸） -> 拒绝，返回错误
+    │   └─ 否 -> 触发权限请求（暂停 Agent，前端弹窗提示用户 Grant/Deny）
 ```
 
-**设计原则**（与 kimi-code 一致）：
-- **相对路径逃逸被硬拒绝**：`../../etc/passwd` 这样的相对路径会被拒绝，强制使用绝对路径才能访问工作目录外的文件。这防止了意外的路径逃逸。
-- **绝对路径被允许但标记**：`/etc/hosts` 这样的绝对路径可以通过检查，但被标记为 `outside_workspace`。目前不做额外限制（Trilobite 没有审批系统），但为未来引入审批机制预留了接口。
+**设计原则**：
+- **白名单制**：所有路径（绝对或相对）必须在 `working_dir` 或 `additional_dirs` 内。
+- **权限提示而非硬拒绝**：当模型尝试访问工作区外的路径时，Agent 暂停执行，前端弹出横幅让用户授权（Grant）或拒绝（Deny）。批准后目录自动加入 `additional_dirs` 并持久化，Agent 自动重试工具调用。用户无需手动添加目录。
+- **敏感文件硬拒绝**：`.env`、SSH 密钥等敏感文件无论位置一律拒绝，不走权限提示流程。
 
 ### 共享前缀攻击防护
 
@@ -133,7 +132,7 @@ def is_within_directory(candidate: str, base: str) -> bool:
 | 敏感文件 | 硬阻止，返回错误 |
 | 工作目录内 | 允许 |
 | 工作目录外（绝对路径） | 允许（标记 outside_workspace） |
-| 工作目录外（相对路径逃逸） | 拒绝 |
+| 工作目录外 | 权限提示（Grant/Deny） |
 
 ### write 工具
 
@@ -164,13 +163,13 @@ read("/etc/hostname")         -> /etc/hostname                    ✓ 绝对路�
 write("src/new.py", ...)      -> /home/user/project/src/new.py   ✓ 工作目录内
 ```
 
-### 路径逃逸被阻止
+### 权限提示（工作区外访问）
 
 ```
 工作目录: /home/user/project
 
-read("../../etc/passwd")      -> 拒绝：相对路径逃逸，请使用绝对路径
-read("../../../home/user/.ssh/id_rsa")  -> 拒绝：相对路径逃逸
+read("/etc/passwd")           -> 权限提示：Agent 暂停，用户 Grant/Deny
+read("../other/file.txt")     -> 权限提示（规范化后在工作区外）
 ```
 
 ### 敏感文件被阻止
@@ -178,23 +177,22 @@ read("../../../home/user/.ssh/id_rsa")  -> 拒绝：相对路径逃逸
 ```
 工作目录: /home/user/project
 
-read(".env")                  -> 拒绝：敏感文件
+read(".env")                  -> 硬拒绝：敏感文件
 read(".env.example")          -> 允许：在豁免列表中
-read("/home/user/.ssh/id_rsa")  -> 拒绝：敏感文件
+read("/home/user/.ssh/id_rsa")  -> 硬拒绝：敏感文件
 read("/home/user/.ssh/id_rsa.pub")  -> 允许：公钥在豁免列表中
-write(".env.local", ...)      -> 拒绝：敏感文件
+write(".env.local", ...)      -> 硬拒绝：敏感文件
 ```
 
-### 额外授权目录
+### 额外授权目录（无权限提示）
 
 ```
 工作目录: /home/user/project
 额外目录: ["/home/user/shared-libs"]
 
-read("/home/user/shared-libs/utils.py")    -> ✓ 在额外目录内
-write("/home/user/shared-libs/new.py", ...)  -> ✓ 在额外目录内
-read("/home/user/other/file.txt")          -> ✓ 绝对路径，允许（标记 outside_workspace）
-read("../other/file.txt")                  -> 拒绝：相对路径逃逸
+read("/home/user/shared-libs/utils.py")    -> ✓ 直接允许
+write("/home/user/shared-libs/new.py", ...)  -> ✓ 直接允许
+read("/home/user/other/file.txt")          -> 权限提示（不在额外目录中）
 ```
 
 ## 与 kimi-code 的对比
@@ -205,14 +203,13 @@ read("../other/file.txt")                  -> 拒绝：相对路径逃逸
 | 路径规范化 | 词法级别（不解析 symlink） | 相同 |
 | 符号链接保护 | agent 工具层无，REST API 层有 | 暂无（未来可加） |
 | 敏感文件 | 硬阻止 + 审批策略双层 | 硬阻止（单层） |
-| 工作目录外访问 | 绝对路径允许但需审批 | 绝对路径允许（无审批系统） |
+| 工作目录外访问 | 绝对路径允许但需审批 | 权限提示（Grant/Deny），批准后自动加入白名单 |
 | bash 路径限制 | 无 | 无 |
-| 额外目录添加 | CLI flag + slash command + config | API（未来可加 UI） |
-| 审批系统 | 完整（manual/yolo/auto 模式 + 规则链） | 无（未来可加） |
+| 额外目录添加 | CLI flag + slash command + config | 权限提示自动添加 + API |
+| 审批系统 | 完整（manual/yolo/auto 模式 + 规则链） | 已实现（SSE 事件暂停 + 前端横幅） |
 
 ## 未来扩展
 
-1. **审批系统**：当工具访问工作目录外的路径时，通过 SSE 事件通知前端，用户审批后才执行（类似 plan 模式的审批流程）。
-2. **符号链接保护**：在文件操作前调用 `os.path.realpath()` 解析符号链接，重新检查边界。
-3. **用户权限规则**：类似 kimi-code 的 `config.toml` `[permission]` 段，允许用户配置 allow/deny/ask 规则。
-4. **VCS 目录排除**：搜索工具（如果未来添加 grep/glob）自动排除 `.git`、`.svn` 等目录。
+1. **符号链接保护**：在文件操作前调用 `os.path.realpath()` 解析符号链接，重新检查边界。
+2. **用户权限规则**：类似 kimi-code 的 `config.toml` `[permission]` 段，允许用户配置 allow/deny/ask 规则。
+3. **VCS 目录排除**：搜索工具（如果未来添加 grep/glob）自动排除 `.git`、`.svn` 等目录。
