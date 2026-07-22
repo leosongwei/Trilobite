@@ -22,19 +22,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useStore } from './store'
 import SessionSidebar from './components/SessionSidebar.vue'
 import ChatView from './components/ChatView.vue'
 import ChatInput from './components/ChatInput.vue'
 import TokenBar from './components/TokenBar.vue'
 
-const { state, loadSessions, approvePlanExit, rejectPlanExit, approvePermission, rejectPermission } = useStore()
+const { state, loadSessions, setMode, approvePlanExit, rejectPlanExit, approvePermission, rejectPermission } = useStore()
 const sidebarOpen = ref(false)
 
 watch(() => state.currentSession, () => {
   sidebarOpen.value = false
 })
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Tab') {
+    e.preventDefault()
+    setMode(state.planMode ? 'build' : 'plan')
+  }
+}
+
+onMounted(() => document.addEventListener('keydown', handleKeydown))
+onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
 
 loadSessions()
 </script>

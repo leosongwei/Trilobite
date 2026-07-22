@@ -6,7 +6,7 @@
       @click="toggleMode"
       :title="state.planMode ? 'Switch to Build mode' : 'Switch to Plan mode'"
     >
-      {{ state.planMode ? 'Plan' : 'Build' }}
+      {{ state.planMode ? 'Plan\u00A0' : 'Build' }}
     </button>
     <textarea
       v-model="message"

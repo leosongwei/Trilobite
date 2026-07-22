@@ -262,11 +262,21 @@ body {
   font-family: inherit;
   font-size: 12px;
   white-space: nowrap;
+  width: 60px;
+  box-sizing: border-box;
+  text-align: center;
+  padding-left: 0;
+  padding-right: 0;
 }
 .mode-toggle.plan {
-  background: #37373d;
-  border-color: #007acc;
-  color: #569cd6;
+  background: #cca700;
+  border-color: #cca700;
+  color: #1e1e1e;
+}
+.mode-toggle.plan:hover {
+  background: #d4b000;
+  border-color: #d4b000;
+  color: #1e1e1e;
 }
 .input-area textarea {
   flex: 1;
