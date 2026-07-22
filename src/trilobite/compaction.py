@@ -42,14 +42,18 @@ async def compact_if_needed(agent: Agent) -> bool:
     if not _should_compact(agent):
         return False
 
-    boundary = find_compact_boundary(agent.history)
+    # System message is always at index 0; skip it for boundary finding
+    conv_history = agent.history[1:] if agent.history and agent.history[0].get("role") == "system" else agent.history
+
+    boundary = find_compact_boundary(conv_history)
     if boundary < 1:
         return False
 
-    compact_messages = agent.history[: boundary + 1]
-    recent_messages = agent.history[boundary + 1 :]
+    compact_messages = conv_history[: boundary + 1]
+    recent_messages = conv_history[boundary + 1 :]
 
-    system_with_context = agent.system_prompt + agent.working_context
+    # Reconstruct system message from current config during compaction
+    system_msg = {"role": "system", "content": agent.system_prompt + agent.working_context}
     prompt = load_compaction_prompt()
 
     todo_path = agent.session_dir / "todos.json"
@@ -66,7 +70,7 @@ async def compact_if_needed(agent: Agent) -> bool:
             pass
 
     messages = [
-        {"role": "system", "content": system_with_context},
+        system_msg,
         *compact_messages,
         {"role": "user", "content": prompt},
     ]
@@ -81,20 +85,19 @@ async def compact_if_needed(agent: Agent) -> bool:
         )
         summary = response.choices[0].message.content or ""
     except Exception:
-        summary = "[compaction failed — older context dropped]"
+        summary = "[compaction failed - older context dropped]"
 
     agent._compacted_summary = summary
     summary_msg = f"[Context summary]\n{summary}"
-    if agent.working_context:
-        summary_msg += f"\n\n[Working context — project rules]\n{agent.working_context.strip()}"
 
     agent.history = [
+        system_msg,
         {"role": "user", "content": summary_msg},
         {"role": "assistant", "content": "Understood. Continuing with the task."},
         *recent_messages,
     ]
     agent._token_count = 0
-    agent._token_covered = 2
+    agent._token_covered = 0
     agent._save_history()
     return True
 
@@ -103,8 +106,7 @@ def _should_compact(agent: Agent) -> bool:
     tools = get_tool_definitions()
     pending = agent.history[agent._token_covered :]
     estimated = (
-        estimate_tokens_for_messages([{"role": "system", "content": agent.system_prompt + agent.working_context}])
-        + agent._token_count
+        agent._token_count
         + estimate_tokens_for_messages(pending)
         + estimate_tokens_for_tools(tools)
     )

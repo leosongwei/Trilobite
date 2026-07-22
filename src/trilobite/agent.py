@@ -54,6 +54,16 @@ class Agent:
             except Exception:
                 self.history = []
 
+    def _ensure_system_message(self):
+        """Ensure history starts with a system message.
+
+        For new sessions or old histories without one, create it from current
+        config. Once recorded, the system message is immutable in history.
+        """
+        if not self.history or self.history[0].get("role") != "system":
+            self.history.insert(0, {"role": "system", "content": self.system_prompt + self.working_context})
+            self._save_history()
+
     def _save_history(self):
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.history_path.write_text(json.dumps(self.history, indent=2, ensure_ascii=False))
@@ -69,11 +79,13 @@ class Agent:
         content_parts: list[str] = []
         thinking_parts: list[str] = []
 
+        self._ensure_system_message()
+
         try:
             while True:
                 if await compact_if_needed(self):
                     continue
-                messages = [{"role": "system", "content": self.system_prompt + self.working_context}, *self.history]
+                messages = self.history
 
                 await self._send_stream_event({"type": "turn"})
 
