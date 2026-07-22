@@ -29,12 +29,13 @@ This compiles to `src/trilobite/static/` (gitignored). Runtime only needs FastAP
 Copy the example config and edit it:
 
 ```bash
-cp config_example/config.yaml config/config.yaml
+mkdir -p ~/.config/trilobite
+cp config_example/config.yaml ~/.config/trilobite/config.yaml
 ```
 
-Or just start the server — it will auto-copy `config_example/` to `config/` on first run.
+The config lives at `~/.config/trilobite/` (or `$XDG_CONFIG_HOME/trilobite`). On first run it is seeded from `config_example/`; an existing project-local `config/` is migrated automatically.
 
-Edit `config/config.yaml`:
+Edit `~/.config/trilobite/config.yaml`:
 
 ```yaml
 model: "deepseek-chat"           # or deepseek-reasoner
@@ -47,8 +48,8 @@ compaction_trigger_ratio: 0.7    # compact at 70% of context
 
 You can also customize:
 
-- `config/system_prompt.txt` — the system prompt
-- `config/compaction_prompt.txt` — instructions for context compaction
+- `~/.config/trilobite/system_prompt.txt` — the system prompt
+- `~/.config/trilobite/compaction_prompt.txt` — instructions for context compaction
 
 ## Run
 
@@ -97,7 +98,7 @@ Where the system message is concatenated as:
 
 | Part | Source | Description |
 |------|--------|-------------|
-| `system_prompt` | `config/system_prompt.txt` | Base instructions for the agent |
+| `system_prompt` | `~/.config/trilobite/system_prompt.txt` | Base instructions for the agent |
 | `working_context` | `<working_dir>/AGENTS.md` | If present, wrapped in `<AGENTS.md>...</AGENTS.md>` and appended |
 
 On context compaction, the system prompt + working context is reused, and the compacted history begins with a `[Context summary]` followed by `[Working context - project rules]`.

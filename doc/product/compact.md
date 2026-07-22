@@ -40,7 +40,7 @@ estimated = token_count（上次 API 返回的真实 token 数）
 
 ## 重新构建 system 消息
 
-compaction 时**重新构建** system 消息，使用当前的 `config/system_prompt.txt` 和 `<working_dir>/AGENTS.md`。这与正常请求不同（正常请求从 history 中读取已存的 system 消息）。
+compaction 时**重新构建** system 消息，使用当前的 `~/.config/trilobite/system_prompt.txt` 和 `<working_dir>/AGENTS.md`。这与正常请求不同（正常请求从 history 中读取已存的 system 消息）。
 
 原因：compaction 本质上是开启一段新对话，应该使用最新的项目配置。
 

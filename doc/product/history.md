@@ -2,7 +2,7 @@
 
 ## 概述
 
-对话历史是 agent 的记忆载体，由 `History` 类管理，持久化在 `config/sessions/<session_name>/history.json`。每次用户请求和 API 返回都会全量序列化到这个文件。history 的第一条消息始终是 system 消息（详见 [context_building.md](./context_building.md)）。
+对话历史是 agent 的记忆载体，由 `History` 类管理，持久化在 `~/.config/trilobite/sessions/<session_name>/history.json`。每次用户请求和 API 返回都会全量序列化到这个文件。history 的第一条消息始终是 system 消息（详见 [context_building.md](./context_building.md)）。
 
 ## History 类
 

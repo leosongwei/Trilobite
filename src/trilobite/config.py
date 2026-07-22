@@ -23,14 +23,26 @@ def get_project_root() -> Path:
     return Path(__file__).parent.parent.parent
 
 
-def init_config() -> dict:
-    """Copy config_example to config if it doesn't exist, then load config."""
-    root = get_project_root()
-    config_dir = root / "config"
-    example_dir = root / "config_example"
+def get_config_dir() -> Path:
+    """User config directory: ${XDG_CONFIG_HOME:-~/.config}/trilobite."""
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "trilobite"
 
+
+def init_config() -> dict:
+    """Ensure the user config dir exists, then load config.
+
+    On first run the config dir is seeded from the bundled ``config_example/``
+    (or migrated from a legacy project-local ``config/`` if present). The
+    config lives at ``${XDG_CONFIG_HOME:-~/.config}/trilobite``.
+    """
+    config_dir = get_config_dir()
     if not config_dir.exists():
-        shutil.copytree(example_dir, config_dir)
+        root = get_project_root()
+        legacy_dir = root / "config"
+        src = legacy_dir if legacy_dir.exists() else root / "config_example"
+        shutil.copytree(src, config_dir)
 
     config_path = config_dir / "config.yaml"
     config = dict(DEFAULT_CONFIG)
@@ -54,16 +66,13 @@ def load_compaction_prompt() -> str:
 
 
 def _load_prompt(filename: str, fallback: str) -> str:
-    root = get_project_root()
-    config_dir = root / "config"
-    prompt_path = config_dir / filename
+    prompt_path = get_config_dir() / filename
     if prompt_path.exists():
         return prompt_path.read_text(encoding="utf-8")
     return fallback
 
 
 def get_sessions_dir() -> Path:
-    root = get_project_root()
-    sessions_dir = root / "config" / "sessions"
+    sessions_dir = get_config_dir() / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
     return sessions_dir
