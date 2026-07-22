@@ -79,12 +79,8 @@ async def compact_if_needed(agent: Agent) -> bool:
     await agent._send_stream_event({"type": "status", "text": "compacting context..."})
 
     try:
-        response = await agent.client.chat.completions.create(
-            model=agent.model,
-            messages=messages,
-            stream=False,
-        )
-        summary = response.choices[0].message.content or ""
+        response = await agent.chat_completion(messages=messages, stream=False)
+        summary = response["choices"][0]["message"]["content"] or ""
     except Exception:
         summary = "[compaction failed - older context dropped]"
 

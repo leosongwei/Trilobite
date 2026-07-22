@@ -4,9 +4,10 @@ import asyncio
 import json
 import os
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from openai import AsyncOpenAI
+import httpx
 
 from src.trilobite.compaction import compact_if_needed
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, load_system_prompt
@@ -15,17 +16,48 @@ from src.trilobite.tool_call import execute_tool, get_tool_definitions
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
+# ── opencode-compatible session ID ──────────────────────────────────────────
+
 def _generate_session_id() -> str:
     """Generate an opencode-style session ID: ses_ + 26 chars."""
     ts_ms = int(time.time() * 1000)
-    # descending: bitwise NOT of (timestamp * 4096 + counter)
-    current = (ts_ms << 12)  # * 4096, counter 0 is fine
-    value = ~current & 0xFFFFFFFFFFFFFFFF  # 64-bit NOT
-    time_hex = "".join(
-        f"{(value >> (40 - 8 * i)) & 0xFF:02x}" for i in range(6)
-    )
+    current = ts_ms << 12  # * 4096, counter 0 is fine
+    value = ~current & 0xFFFFFFFFFFFFFFFF  # 64-bit NOT, descending
+    time_hex = "".join(f"{(value >> (40 - 8 * i)) & 0xFF:02x}" for i in range(6))
     rand = "".join(_CHARS[b % 62] for b in os.urandom(14))
     return f"ses_{time_hex}{rand}"
+
+
+# ── thin SSE-chunk wrappers (mirror OpenAI SDK shapes) ──────────────────────
+
+@dataclass
+class _Function:
+    name: str = ""
+    arguments: str = ""
+
+@dataclass
+class _ToolCall:
+    id: str = ""
+    function: _Function = field(default_factory=_Function)
+
+@dataclass
+class _Delta:
+    content: str | None = None
+    reasoning_content: str | None = None
+    tool_calls: list[_ToolCall] | None = None
+
+@dataclass
+class _Choice:
+    delta: _Delta = field(default_factory=_Delta)
+
+@dataclass
+class _Usage:
+    total_tokens: int = 0
+
+@dataclass
+class _StreamChunk:
+    choices: list[_Choice] = field(default_factory=list)
+    usage: _Usage | None = None
 
 PLAN_MODE_NOTIFICATION = (
     "Your operational mode has changed from build to plan.\n"
@@ -40,6 +72,58 @@ BUILD_MODE_NOTIFICATION = (
 )
 
 
+# ── httpx-based OpenAI-compatible streaming chat completions ────────────────
+
+async def _chat_completion_stream(
+    http: httpx.AsyncClient,
+    api_key: str,
+    body: dict,
+):
+    """Stream SSE chunks from an OpenAI-compatible chat/completions endpoint."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    async with http.stream(
+        "POST",
+        "/chat/completions",
+        json=body,
+        headers=headers,
+    ) as response:
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            try:
+                data = json.loads(data_str)
+                choices = []
+                for c in data.get("choices", []):
+                    d = c.get("delta", {})
+                    tc_list = []
+                    for t in d.get("tool_calls", []):
+                        tc_list.append(_ToolCall(
+                            id=t.get("id", ""),
+                            function=_Function(
+                                name=t.get("function", {}).get("name", ""),
+                                arguments=t.get("function", {}).get("arguments", ""),
+                            ),
+                        ))
+                    choices.append(_Choice(delta=_Delta(
+                        content=d.get("content"),
+                        reasoning_content=d.get("reasoning_content"),
+                        tool_calls=tc_list if tc_list else None,
+                    )))
+                usage_raw = data.get("usage")
+                usage = _Usage(total_tokens=usage_raw.get("total_tokens", 0)) if usage_raw else None
+                yield _StreamChunk(choices=choices, usage=usage)
+            except json.JSONDecodeError:
+                continue
+
+
 class Agent:
     def __init__(self, name: str, working_dir: str, session_dir: Path, config: dict[str, str], session_id: str | None = None):
         self.name = name
@@ -47,14 +131,15 @@ class Agent:
         self.session_dir = session_dir
         self.config = config
         self._session_id = session_id or _generate_session_id()
-        self.client = AsyncOpenAI(
-            api_key=config["api_key"],
-            base_url=config["api_url"],
-            default_headers={
+        self._api_url = config["api_url"].rstrip("/")
+        self._http = httpx.AsyncClient(
+            base_url=self._api_url,
+            headers={
                 "User-Agent": "opencode/1.18.4",
                 "x-session-affinity": self._session_id,
                 "X-Session-Id": self._session_id,
             },
+            timeout=httpx.Timeout(600, connect=10),
         )
         self.model = config["model"]
         self.reasoning_effort = config.get("reasoning_effort", "max")
@@ -82,6 +167,28 @@ class Agent:
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    async def chat_completion(self, messages: list[dict], stream: bool = False, tools: list[dict] | None = None):
+        """Make a chat completion request. Returns parsed JSON for non-stream,
+        or an async generator of _StreamChunk for stream."""
+        body: dict = {"model": self.model, "messages": messages}
+        if tools is not None:
+            body["tools"] = tools
+        body["stream"] = stream
+        if stream:
+            body["stream_options"] = {"include_usage": True}
+            if self.reasoning_effort:
+                body["reasoning_effort"] = self.reasoning_effort
+                body["thinking"] = {"type": "enabled"}
+            return _chat_completion_stream(self._http, self.config["api_key"], body)
+        else:
+            headers = {
+                "Authorization": f"Bearer {self.config['api_key']}",
+                "Content-Type": "application/json",
+            }
+            resp = await self._http.post("/chat/completions", json=body, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
@@ -170,14 +277,10 @@ class Agent:
 
                 await self._send_stream_event({"type": "turn"})
 
-                response = await self.client.chat.completions.create(
-                    model=self.model,
+                stream = await self.chat_completion(
                     messages=messages,
-                    tools=get_tool_definitions(),
                     stream=True,
-                    reasoning_effort=self.reasoning_effort,
-                    extra_body={"thinking": {"type": "enabled"}},
-                    stream_options={"include_usage": True},
+                    tools=get_tool_definitions(),
                 )
 
                 content_parts.clear()
@@ -189,7 +292,7 @@ class Agent:
                 current_tool_name = ""
                 current_tool_args = ""
 
-                async for chunk in response:
+                async for chunk in stream:
                     delta = chunk.choices[0].delta if chunk.choices else None
 
                     # Capture real token usage from stream
