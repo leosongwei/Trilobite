@@ -36,19 +36,21 @@ function scrollToBottom() {
 }
 
 // Typeset math in the chat container after content changes.
-// Debounced to avoid redundant calls during streaming.
-// typesetMath internally serializes calls via a promise chain, so
-// no typeset is ever skipped - they just queue up and run in order.
 let typesetTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleTypeset() {
   if (typesetTimer) clearTimeout(typesetTimer)
+  // 流式输出时 v-html 会随每个 delta 重新设置 innerHTML，把 MathJax 刚渲染
+  // 好的 <mjx-container> 覆盖回原始 TeX 文本，而 MathJax 内部仍保留着已被
+  // 移除节点的状态，导致后续 typeset 静默失败——公式"闪一下就消失"。
+  // 因此流式期间跳过渲染，等流结束后（isStreaming 翻回 false）再统一 typeset。
+  if (state.isStreaming) return
   typesetTimer = setTimeout(async () => {
     typesetTimer = null
     await nextTick()
     if (chatRef.value) {
       await typesetMath(chatRef.value)
     }
-  }, state.isStreaming ? 200 : 50)
+  })
 }
 
 // chatItems is replaced on session switch; streamTick bumps during streaming

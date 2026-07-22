@@ -7,6 +7,10 @@ function loadMathJax(): Promise<void> {
     ;(window as any).MathJax = {
       loader: {
         paths: {
+          // Point MathJax's component loader at our vendored copy under
+          // /mathjax so autoload can pull tex extensions from
+          // /mathjax/input/tex/extensions/*.js (served from public/).
+          mathjax: '/mathjax',
           fonts: '/vendor',
           sre: '/assets/sre',
         },
