@@ -31,7 +31,7 @@ class Agent:
         self._task: asyncio.Task | None = None
         self._stream_queue: asyncio.Queue[dict] | None = None
         self._steering: asyncio.Event = asyncio.Event()
-        self._steer_message: str | None = None
+        self._steer_messages: list[str] = []
 
         self.history_path = session_dir / "history.json"
         self._load_history()
@@ -252,18 +252,18 @@ class Agent:
             await self._send_stream_event({"type": "error", "text": msg})
 
     def _check_steer(self) -> bool:
-        """Check if a steering message was queued and add it to history. Returns True if steered."""
-        if self._steer_message is not None:
-            msg = self._steer_message
-            self._steer_message = None
-            self._steering.clear()
-            self.history.append({"role": "user", "content": msg})
-            self._save_history()
-            return True
-        return False
+        """Check if steering messages were queued and add them to history. Returns True if steered."""
+        if not self._steer_messages:
+            return False
+        msg = "\n\n".join(self._steer_messages)
+        self._steer_messages.clear()
+        self._steering.clear()
+        self.history.append({"role": "user", "content": msg})
+        self._save_history()
+        return True
 
     def steer(self, message: str):
-        self._steer_message = message
+        self._steer_messages.append(message)
         self._steering.set()
 
     def add_user_message(self, message: str):
