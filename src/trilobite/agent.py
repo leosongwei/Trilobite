@@ -235,9 +235,10 @@ class Agent:
                         tool_name = tc["function"]["name"]
                         await self._send_stream_event({"type": "tool_start", "tool": tool_name, "args": args})
 
+                        tool_result: dict[str, Any]
                         if tool_name == "exit_plan_mode":
                             if not self._plan_mode:
-                                result = "Not in plan mode."
+                                tool_result = {"result": "Not in plan mode."}
                             else:
                                 await self._send_stream_event({"type": "plan_exit_request"})
                                 await self._plan_exit_event.wait()
@@ -245,20 +246,29 @@ class Agent:
                                 if self._plan_exit_approved:
                                     self._plan_mode = False
                                     self._last_notified_mode = False
-                                    result = "Plan mode exited. All tools are now available."
+                                    tool_result = {"result": "Plan mode exited. All tools are now available."}
                                 else:
-                                    result = "User declined. Continue planning in plan mode."
+                                    tool_result = {"result": "User declined. Continue planning in plan mode."}
                         elif self._plan_mode and tool_name == "write":
-                            result = "Error: write tool is not available in plan mode. Call exit_plan_mode to request switching to build mode."
+                            tool_result = {"result": "Error: write tool is not available in plan mode. Call exit_plan_mode to request switching to build mode."}
                         else:
-                            result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
-                        await self._send_stream_event({"type": "tool_result", "tool": tool_name, "result": result})
+                            tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
 
-                        self.history.append({
+                        result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"]}
+                        if "diff_prev" in tool_result:
+                            result_event["diff_prev"] = tool_result["diff_prev"]
+                            result_event["diff_current"] = tool_result["diff_current"]
+                        await self._send_stream_event(result_event)
+
+                        history_msg: dict[str, Any] = {
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": result,
-                        })
+                            "content": tool_result["result"],
+                        }
+                        if "diff_prev" in tool_result:
+                            history_msg["diff_prev"] = tool_result["diff_prev"]
+                            history_msg["diff_current"] = tool_result["diff_current"]
+                        self.history.append(history_msg)
 
                     # Check for steering between tool calls
                     if self._check_steer():

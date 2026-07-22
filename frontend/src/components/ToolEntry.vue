@@ -1,9 +1,18 @@
 <template>
   <div class="tool-entry">
     <div class="tool-action">
-      [{{ tool.name }}]<span v-if="tool.status === 'running'"> running...</span>
+      [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
     </div>
-    <pre class="tool-result">{{ displayContent }}</pre>
+    <Diff
+      v-if="tool.diffPrev"
+      class="tool-diff"
+      :mode="'unified'"
+      :theme="'dark'"
+      :language="'plaintext'"
+      :prev="tool.diffPrev"
+      :current="tool.diffCurrent!"
+    />
+    <pre v-else class="tool-result">{{ displayContent }}</pre>
   </div>
 </template>
 
@@ -12,6 +21,21 @@ import { computed } from 'vue'
 import type { ToolDisplay } from '../types'
 
 const props = defineProps<{ tool: ToolDisplay }>()
+
+const label = computed(() => {
+  const args = props.tool.startArgs
+  if (!args) return props.tool.name
+  if (props.tool.name === 'read' && args.filename) {
+    return `read: ${args.filename}`
+  }
+  if (props.tool.name === 'bash' && args.command) {
+    return `bash: ${args.command}`
+  }
+  if (props.tool.name === 'write' && args.filename) {
+    return `write: ${args.filename}`
+  }
+  return props.tool.name
+})
 
 const displayContent = computed(() => {
   if (props.tool.status === 'done') {

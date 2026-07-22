@@ -104,8 +104,9 @@ function handleSSEEvent(event: SSEEvent) {
       )
       if (streaming) {
         streaming.status = 'running'
+        streaming.startArgs = event.args
       } else {
-        turn.tools.push({ name: event.tool, status: 'running', args: '' })
+        turn.tools.push({ name: event.tool, status: 'running', args: '', startArgs: event.args })
       }
       break
     }
@@ -119,6 +120,10 @@ function handleSSEEvent(event: SSEEvent) {
       if (running) {
         running.status = 'done'
         running.result = event.result
+        if (event.diff_prev) {
+          running.diffPrev = event.diff_prev
+          running.diffCurrent = event.diff_current
+        }
       }
       break
     }
@@ -182,10 +187,15 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
 
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         for (const tc of msg.tool_calls) {
+          let startArgs: Record<string, unknown> | undefined
+          try {
+            startArgs = JSON.parse(tc.function.arguments)
+          } catch {}
           turn.tools.push({
             name: tc.function.name,
             status: 'done',
             args: tc.function.arguments,
+            startArgs,
           })
         }
 
@@ -194,6 +204,10 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
         while (i < history.length && history[i].role === 'tool') {
           if (toolIdx < turn.tools.length) {
             turn.tools[toolIdx].result = history[i].content || ''
+            if ((history[i] as any).diff_prev) {
+              turn.tools[toolIdx].diffPrev = (history[i] as any).diff_prev
+              turn.tools[toolIdx].diffCurrent = (history[i] as any).diff_current
+            }
           }
           toolIdx++
           i++

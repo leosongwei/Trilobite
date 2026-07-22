@@ -4,7 +4,7 @@ export type SSEEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_stream'; tool_name: string; args: string; complete: boolean }
   | { type: 'tool_start'; tool: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; tool: string; result: string }
+  | { type: 'tool_result'; tool: string; result: string; diff_prev?: string; diff_current?: string }
   | { type: 'usage'; token_count: number; max_context_tokens: number }
   | { type: 'status'; text: string }
   | { type: 'plan_exit_request' }
@@ -53,7 +53,10 @@ export interface ToolDisplay {
   name: string
   status: ToolStatus
   args: string
+  startArgs?: Record<string, unknown>
   result?: string
+  diffPrev?: string
+  diffCurrent?: string
 }
 
 export interface UserItem {

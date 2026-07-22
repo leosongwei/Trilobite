@@ -35,13 +35,21 @@ def execute_tool(
     working_dir: Path,
     session_dir: Path,
     additional_dirs: list[Path] | None = None,
-) -> str:
+) -> dict[str, Any]:
+    """Execute a tool and return a result dict.
+
+    Returns dict with at least "result" (str). May include "diff_prev"
+    and "diff_current" for write operations.
+    """
     tool = _TOOL_MAP.get(tool_name)
     if tool is None:
-        return f"Unknown tool: {tool_name}"
-    return tool.execute(
+        return {"result": f"Unknown tool: {tool_name}"}
+    result = tool.execute(
         working_dir=working_dir,
         session_dir=session_dir,
         additional_dirs=additional_dirs or [],
         **arguments,
     )
+    if isinstance(result, dict):
+        return result
+    return {"result": result}

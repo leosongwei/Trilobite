@@ -3,7 +3,6 @@
 # 项目架构
 
 Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/FastAPI)** 和 **前端 (Vue 3/TypeScript)** 两部分。
-
 ## 后端 (`src/trilobite/`)
 
 * `server.py` — FastAPI 应用入口，提供 REST API 和 SSE 流式端点，挂载静态前端文件。
@@ -17,7 +16,7 @@ Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/Fa
 * `tools/` — 四个具体工具：
   * `bash.py` — 执行 shell 命令
   * `read.py` — 读取文件（支持行/字符限制）
-  * `write.py` — 写入文件（支持精确字符串替换或覆盖）
+  * `write.py` — 写入文件（replace 模式生成上下文 diff）
   * `todo.py` — 任务列表管理（JSON 文件持久化在 session 目录）
 
 ## 前端 (`frontend/`)
