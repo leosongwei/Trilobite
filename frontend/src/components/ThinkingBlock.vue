@@ -36,7 +36,9 @@ function stickToBottom() {
   const body = bodyRef.value
   const content = contentRef.value
   if (!body || !content) return
-  const overflow = content.scrollHeight - body.clientHeight
+  const style = getComputedStyle(body)
+  const vpad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+  const overflow = content.scrollHeight - (body.clientHeight - vpad)
   content.style.transform = overflow > 0 ? `translateY(${-overflow}px)` : ''
 }
 

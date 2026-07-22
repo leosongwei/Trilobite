@@ -256,13 +256,21 @@ body {
   max-height: 4.5em; /* ~3 lines */
   overflow: hidden;
   margin-bottom: 2px;
+  padding: 6px 10px;
+  background: #252526;
+  border-radius: 3px;
 }
 .turn-block .thinking-content {
   display: block;
   white-space: pre-wrap;
+  font-size: 12px;
+  transition: transform 0.2s ease;
 }
 .turn-block .thinking-body.expanded {
   max-height: none;
+}
+.turn-block .thinking-body.expanded .thinking-content {
+  transition: none;
 }
 
 .tool-entry { margin: 4px 0 8px 8px; }
