@@ -33,6 +33,7 @@ export interface Session {
   working_dir: string
   is_running: boolean
   history_length: number
+  plan_mode: boolean
 }
 
 export interface SessionInfo {
@@ -41,6 +42,7 @@ export interface SessionInfo {
   is_running: boolean
   token_count: number
   max_context_tokens: number
+  plan_mode: boolean
 }
 
 export type ToolStatus = 'streaming' | 'running' | 'done'

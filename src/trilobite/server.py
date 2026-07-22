@@ -23,6 +23,9 @@ class SessionCreate(BaseModel):
 class MessageRequest(BaseModel):
     message: str
 
+class ModeRequest(BaseModel):
+    mode: str
+
 class SessionInfo(BaseModel):
     name: str
     working_dir: str
@@ -48,6 +51,7 @@ async def list_sessions():
                     agent = agents.get(sd.name)
                     info["is_running"] = agent.is_running() if agent else False
                     info["history_length"] = len(agent.history) if agent else 0
+                    info["plan_mode"] = agent._plan_mode if agent else info.get("plan_mode", False)
                     result.append(info)
                 except Exception:
                     pass
@@ -61,7 +65,7 @@ async def create_session(req: SessionCreate):
         raise HTTPException(400, "Session already exists")
 
     session_dir.mkdir(parents=True, exist_ok=True)
-    info = {"name": req.name, "working_dir": req.working_dir}
+    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False}
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 
     agent = Agent(
@@ -99,6 +103,7 @@ async def send_message(name: str, req: MessageRequest):
             session_dir=session_dir,
             config=config,
         )
+        agent.set_plan_mode(info.get("plan_mode", False))
         agents[name] = agent
 
     if agent.is_running():
@@ -135,6 +140,24 @@ async def cancel_session(name: str):
     return {"status": "ok"}
 
 
+@app.post("/api/sessions/{name}/mode")
+async def set_mode(name: str, req: ModeRequest):
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+
+    plan_mode = req.mode == "plan"
+    info = json.loads((session_dir / "session.json").read_text())
+    info["plan_mode"] = plan_mode
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+
+    agent = agents.get(name)
+    if agent:
+        agent.set_plan_mode(plan_mode)
+
+    return {"status": "ok", "mode": req.mode}
+
+
 @app.get("/api/sessions/{name}/info")
 async def get_session_info(name: str):
     agent = agents.get(name)
@@ -149,6 +172,7 @@ async def get_session_info(name: str):
             "is_running": False,
             "token_count": 0,
             "max_context_tokens": int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS)),
+            "plan_mode": info.get("plan_mode", False),
         }
     return {
         "name": name,
@@ -156,6 +180,7 @@ async def get_session_info(name: str):
         "is_running": agent.is_running(),
         "token_count": agent._token_count,
         "max_context_tokens": agent.max_context_tokens,
+        "plan_mode": agent._plan_mode,
     }
 
 

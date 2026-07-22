@@ -11,6 +11,18 @@ from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, load_system_prompt
 from src.trilobite.history import History
 from src.trilobite.tool_call import execute_tool, get_tool_definitions
 
+PLAN_MODE_NOTIFICATION = (
+    "Your operational mode has changed from build to plan.\n"
+    "You are now in read-only mode.\n"
+    "You are not permitted to make file changes. Focus on exploring, analyzing, and planning."
+)
+
+BUILD_MODE_NOTIFICATION = (
+    "Your operational mode has changed from plan to build.\n"
+    "You are no longer in read-only mode.\n"
+    "You are permitted to make file changes, run shell commands, and utilize your arsenal of tools as needed."
+)
+
 
 class Agent:
     def __init__(self, name: str, working_dir: str, session_dir: Path, config: dict[str, str]):
@@ -33,6 +45,8 @@ class Agent:
         self._stream_queue: asyncio.Queue[dict] | None = None
         self._steering: asyncio.Event = asyncio.Event()
         self._steer_messages: list[str] = []
+        self._plan_mode: bool = False
+        self._last_notified_mode: bool | None = None
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
@@ -54,6 +68,19 @@ class Agent:
         if not self.history or self.history[0].get("role") != "system":
             self.history.insert(0, {"role": "system", "content": self.system_prompt + self.working_context})
 
+    def set_plan_mode(self, mode: bool):
+        self._plan_mode = mode
+
+    def _check_mode_notification(self):
+        """Append a mode-change notification to history if the mode has changed
+        since the last time the model was notified. Coalesces rapid toggles."""
+        if self._last_notified_mode is None:
+            self._last_notified_mode = self._plan_mode
+        elif self._plan_mode != self._last_notified_mode:
+            notification = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
+            self.history.append({"role": "user", "content": notification})
+            self._last_notified_mode = self._plan_mode
+
     async def _send_stream_event(self, event: dict):
         if self._stream_queue is not None:
             await self._stream_queue.put(event)
@@ -71,6 +98,7 @@ class Agent:
             while True:
                 if await compact_if_needed(self):
                     continue
+                self._check_mode_notification()
                 messages = self.history.get_api_messages()
 
                 await self._send_stream_event({"type": "turn"})
@@ -196,7 +224,10 @@ class Agent:
                         tool_name = tc["function"]["name"]
                         await self._send_stream_event({"type": "tool_start", "tool": tool_name, "args": args})
 
-                        result = execute_tool(tool_name, args, self.working_dir, self.session_dir)
+                        if self._plan_mode and tool_name == "write":
+                            result = "Error: write tool is not available in plan mode. Switch to build mode to make changes."
+                        else:
+                            result = execute_tool(tool_name, args, self.working_dir, self.session_dir)
                         await self._send_stream_event({"type": "tool_result", "tool": tool_name, "result": result})
 
                         self.history.append({

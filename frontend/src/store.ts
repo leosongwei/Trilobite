@@ -11,6 +11,7 @@ interface State {
   maxTokens: number
   statusText: string | null
   streamTick: number
+  planMode: boolean
 }
 
 const state = reactive<State>({
@@ -22,6 +23,7 @@ const state = reactive<State>({
   maxTokens: 0,
   statusText: null,
   streamTick: 0,
+  planMode: false,
 })
 
 let currentTurnIdx = -1
@@ -205,6 +207,8 @@ export function useStore() {
     state.statusText = null
     await loadSessions()
     await loadHistory()
+    const info = await api.getSessionInfo(name)
+    state.planMode = info.plan_mode
   }
 
   async function createSession(name: string, workingDir: string) {
@@ -214,6 +218,7 @@ export function useStore() {
     state.chatItems = []
     state.tokenCount = 0
     state.statusText = null
+    state.planMode = false
     await loadSessions()
     const info = await api.getSessionInfo(name)
     state.maxTokens = info.max_context_tokens
@@ -227,6 +232,7 @@ export function useStore() {
       state.tokenCount = 0
       state.maxTokens = 0
       state.statusText = null
+      state.planMode = false
       closeTurn()
     }
     await loadSessions()
@@ -240,6 +246,7 @@ export function useStore() {
     const info = await api.getSessionInfo(state.currentSession)
     state.maxTokens = info.max_context_tokens
     state.tokenCount = info.token_count
+    state.planMode = info.plan_mode
   }
 
   async function sendMessage(message: string) {
@@ -279,6 +286,12 @@ export function useStore() {
     await api.cancelSession(state.currentSession)
   }
 
+  async function setMode(mode: 'plan' | 'build') {
+    if (!state.currentSession) return
+    await api.setMode(state.currentSession, mode)
+    state.planMode = mode === 'plan'
+  }
+
   return {
     state,
     loadSessions,
@@ -288,5 +301,6 @@ export function useStore() {
     loadHistory,
     sendMessage,
     stopAgent,
+    setMode,
   }
 }

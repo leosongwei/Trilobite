@@ -122,7 +122,22 @@ body {
   border-top: 1px solid #313244;
   display: flex;
   gap: 8px;
+  align-items: flex-end;
 }
+.mode-toggle {
+  padding: 8px 12px;
+  background: #313244;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+.mode-toggle:hover { background: #45475a; }
+.mode-toggle.plan { background: #f9e2af; color: #1e1e2e; border-color: #f9e2af; }
 .input-area textarea {
   flex: 1;
   padding: 8px;

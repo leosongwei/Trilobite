@@ -1,5 +1,13 @@
 <template>
   <div class="input-area">
+    <button
+      class="mode-toggle"
+      :class="{ plan: state.planMode }"
+      @click="toggleMode"
+      :title="state.planMode ? 'Switch to Build mode' : 'Switch to Plan mode'"
+    >
+      {{ state.planMode ? 'Plan' : 'Build' }}
+    </button>
     <textarea
       v-model="message"
       placeholder="Type a message..."
@@ -16,7 +24,7 @@
 import { ref, watch, nextTick } from 'vue'
 import { useStore } from '../store'
 
-const { state, sendMessage, stopAgent } = useStore()
+const { state, sendMessage, stopAgent, setMode } = useStore()
 const message = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 
@@ -41,5 +49,9 @@ async function handleSend() {
 
 async function stop() {
   await stopAgent()
+}
+
+async function toggleMode() {
+  await setMode(state.planMode ? 'build' : 'plan')
 }
 </script>

@@ -37,6 +37,14 @@ export async function cancelSession(name: string): Promise<void> {
   await fetch(`/api/sessions/${encode(name)}/cancel`, { method: 'POST' })
 }
 
+export async function setMode(name: string, mode: 'plan' | 'build'): Promise<void> {
+  await fetch(`/api/sessions/${encode(name)}/mode`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
+}
+
 export async function getSessionInfo(name: string): Promise<SessionInfo> {
   const res = await fetch(`/api/sessions/${encode(name)}/info`)
   if (!res.ok) throw new Error('Session not found')
