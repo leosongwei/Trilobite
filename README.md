@@ -30,7 +30,7 @@ A built wheel (from `./build.sh`) already bundles the frontend assets, so no
 separate frontend build is needed. Install it globally as an isolated CLI tool:
 
 ```bash
-uv tool install dist/trilobite-0.1.0-py3-none-any.whl
+uv tool install dist/trilobite_code-0.1.0-py3-none-any.whl
 trilobite   # starts uvicorn on 0.0.0.0:2345
 ```
 
