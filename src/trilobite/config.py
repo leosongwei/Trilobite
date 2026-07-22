@@ -39,9 +39,14 @@ def init_config() -> dict:
     """
     config_dir = get_config_dir()
     if not config_dir.exists():
+        # Seed from a legacy project-local ``config/`` if present (dev mode),
+        # otherwise from the bundled ``config_example/`` shipped inside the
+        # package. Using ``__file__`` (not the project root) keeps this working
+        # after ``pip install``, where the project root no longer exists.
         root = get_project_root()
         legacy_dir = root / "config"
-        src = legacy_dir if legacy_dir.exists() else root / "config_example"
+        bundled = Path(__file__).parent / "config_example"
+        src = legacy_dir if legacy_dir.exists() else bundled
         shutil.copytree(src, config_dir)
 
     config_path = config_dir / "config.yaml"

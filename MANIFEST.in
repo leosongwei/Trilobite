@@ -1,0 +1,6 @@
+# Frontend build output (vendored, gitignored) -- must ship in the package so
+# the server can serve the UI without a separate frontend build at install time.
+recursive-include src/trilobite/static *
+
+# Default config / prompt templates seeded into the user config dir on first run.
+recursive-include src/trilobite/config_example *

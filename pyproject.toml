@@ -26,3 +26,11 @@ trilobite = { workspace = true }
 where = ["."]
 include = ["src*"]
 namespaces = true
+
+# Ship the frontend build output (src/trilobite/static) and the bundled
+# config_example/ templates inside the wheel. MANIFEST.in handles the sdist;
+# this flag plus MANIFEST.in ensures both sdist and wheel carry the data files.
+# (static/ is gitignored, so we must NOT rely on VCS-based include_package_data
+# alone -- MANIFEST.in's recursive-include ignores .gitignore.)
+[tool.setuptools]
+include-package-data = true

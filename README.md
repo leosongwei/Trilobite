@@ -24,16 +24,35 @@ npm run build
 
 This compiles to `src/trilobite/static/` (gitignored). Runtime only needs FastAPI.
 
+## Install from a built wheel
+
+A built wheel (from `./build.sh`) already bundles the frontend assets, so no
+separate frontend build is needed. Install it with `uv pip`:
+
+```bash
+uv pip install dist/trilobite-0.1.0-py3-none-any.whl
+trilobite   # starts uvicorn on 0.0.0.0:8000
+```
+
+`uv pip install` installs into the active environment. For an isolated global
+CLI use `uv tool install dist/trilobite-0.1.0-py3-none-any.whl` instead.
+
+To build the wheel yourself:
+
+```bash
+./build.sh   # builds frontend + sdist/wheel into dist/
+```
+
 ## Configure
 
 Copy the example config and edit it:
 
 ```bash
 mkdir -p ~/.config/trilobite
-cp config_example/config.yaml ~/.config/trilobite/config.yaml
+cp src/trilobite/config_example/config.yaml ~/.config/trilobite/config.yaml
 ```
 
-The config lives at `~/.config/trilobite/` (or `$XDG_CONFIG_HOME/trilobite`). On first run it is seeded from `config_example/`; an existing project-local `config/` is migrated automatically.
+The config lives at `~/.config/trilobite/` (or `$XDG_CONFIG_HOME/trilobite`). On first run it is seeded from the bundled `src/trilobite/config_example/`; an existing project-local `config/` is migrated automatically.
 
 Edit `~/.config/trilobite/config.yaml`:
 

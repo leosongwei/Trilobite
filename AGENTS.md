@@ -11,7 +11,7 @@ Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/Fa
 * `history.py` — 对话历史管理。持久化到 JSON 文件，提供 API 调用的消息合并（连续同 role 消息合并避免 API 报错）。
 * `tool_call.py` — 工具注册与分发。维护工具列表，将 `exit_plan_mode` 作为内置 virtual tool 注入。
 * `compaction.py` — 上下文压缩。当 token 使用超过阈值时，将旧对话压缩为摘要，拼接回历史。
-* `config.py` — 配置管理。首次运行自动从 `config_example/` 复制默认配置；加载 `system_prompt.txt` 和 `compaction_prompt.txt`。
+* `config.py` — 配置管理。首次运行自动从包内 `config_example/` 复制默认配置；加载 `system_prompt.txt` 和 `compaction_prompt.txt`。
 * `tokens.py` — 简易 token 估算（字符级，区分 ASCII/CJK）。
 * `file_access.py` — 文件路径解析和安全检查（敏感文件过滤）。
 * `tools/` — 四个具体工具：
@@ -49,11 +49,42 @@ Agent 调用 `exit_plan_mode` 时前端展示审批横幅，用户批准后切�
 
 Token 超过 `compaction_trigger_ratio` 阈值时触发压缩。提示词采用 kimi 风格的第一人称 handoff note。TODO 列表自动附带，不转录。
 
-## 配置 (`config_example/`)
+## 配置 (`src/trilobite/config_example/`)
 
 * `config.yaml` — API 密钥、模型、token 上限、压缩触发比例
 * `system_prompt.txt` — 系统提示词（含权限说明）
 * `compaction_prompt.txt` — 压缩摘要提示词（kimi 风格）
+
+# 构建
+
+一条命令打包成 pip 包（先构建前端，再打 wheel/sdist）：
+
+```bash
+./build.sh
+```
+
+`build.sh` 做两件事：
+
+1. `cd frontend && npm ci && npm run build` -- 前端产物输出到 `src/trilobite/static/`（vite `outDir` 配置），含 `assets/`、`mathjax/`、`vendor/` 等。
+2. `uv build` -- 生成 sdist + wheel 到 `dist/`（`trilobite-<ver>-py3-none-any.whl` 和 `.tar.gz`）。
+
+## 数据文件如何进包
+
+`src/trilobite/static/` 被 `.gitignore` 忽略且不在 git 追踪中，所以**不能**依赖 `include_package_data` 的 VCS 机制（会漏掉 static）。改用：
+
+* `MANIFEST.in` 的 `recursive-include` 把 `src/trilobite/static/` 和 `src/trilobite/config_example/` 塞进 sdist（纯文件系统 glob，不读 `.gitignore`）。
+* `pyproject.toml` 设 `include-package-data = true`，wheel 从 sdist 构建时一并带上这些数据文件。
+
+`config_example/` 已移入包内（`src/trilobite/config_example/`），`config.py` 用 `Path(__file__).parent / "config_example"` 定位，`server.py` 同理用 `__file__` 定位 `static/`，所以装进 site-packages 后路径天然正确，后端代码无需感知安装位置。
+
+## 安装与运行
+
+```bash
+pip install dist/trilobite-0.1.0-py3-none-any.whl
+trilobite   # entry point，启动 uvicorn (0.0.0.0:8000)
+```
+
+首次运行会从包内 `config_example/` 把默认配置 seed 到 `~/.config/trilobite/`。
 
 # 风格和注意事项
 
