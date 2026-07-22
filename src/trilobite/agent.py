@@ -213,11 +213,10 @@ class Agent:
                     if self._check_steer():
                         await self._send_stream_event({"type": "status", "text": "steered - processing new input..."})
                 else:
-                    if content:
-                        assistant_final: dict = {"role": "assistant", "content": content}
-                        if thinking:
-                            assistant_final["reasoning_content"] = thinking
-                        self.history.append(assistant_final)
+                    assistant_final: dict = {"role": "assistant", "content": content or ""}
+                    if thinking:
+                        assistant_final["reasoning_content"] = thinking
+                    self.history.append(assistant_final)
                     self._save_history()
                     await self._send_stream_event({"type": "done"})
                     break
