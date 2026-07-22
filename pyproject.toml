@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "trilobite"
 version = "0.1.0"
@@ -17,8 +21,7 @@ trilobite = "src.trilobite.server:main"
 [tool.uv.sources]
 trilobite = { workspace = true }
 
-[tool.setuptools]
-packages = ["src"]
-
-[tool.setuptools.package-dir]
-"src" = "src"
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+namespaces = true
