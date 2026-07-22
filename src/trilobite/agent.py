@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -10,7 +11,7 @@ from pathlib import Path
 import httpx
 
 from src.trilobite.compaction import compact_if_needed
-from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, load_system_prompt
+from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt
 from src.trilobite.history import History
 from src.trilobite.tool_call import execute_tool, get_tool_definitions
 
@@ -49,6 +50,7 @@ class _Delta:
 @dataclass
 class _Choice:
     delta: _Delta = field(default_factory=_Delta)
+    finish_reason: str | None = None
 
 @dataclass
 class _Usage:
@@ -78,6 +80,7 @@ async def _chat_completion_stream(
     http: httpx.AsyncClient,
     api_key: str,
     body: dict,
+    log: logging.Logger | None = None,
 ):
     """Stream SSE chunks from an OpenAI-compatible chat/completions endpoint."""
     headers = {
@@ -85,43 +88,85 @@ async def _chat_completion_stream(
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
     }
-    async with http.stream(
-        "POST",
-        "/chat/completions",
-        json=body,
-        headers=headers,
-    ) as response:
-        response.raise_for_status()
-        async for line in response.aiter_lines():
-            if not line.startswith("data: "):
-                continue
-            data_str = line[6:]
-            if data_str == "[DONE]":
-                break
-            try:
-                data = json.loads(data_str)
-                choices = []
-                for c in data.get("choices", []):
-                    d = c.get("delta", {})
-                    tc_list = []
-                    for t in d.get("tool_calls", []):
-                        tc_list.append(_ToolCall(
-                            id=t.get("id", ""),
-                            function=_Function(
-                                name=t.get("function", {}).get("name", ""),
-                                arguments=t.get("function", {}).get("arguments", ""),
+    if log:
+        log.info("STREAM request model=%s messages=%d tools=%d reasoning=%s max_tokens=%s",
+                 body.get("model"), len(body.get("messages", [])),
+                 len(body.get("tools", []) or []), body.get("reasoning_effort"), body.get("max_tokens"))
+    chunk_count = 0
+    finish_reasons: list[str | None] = []
+    try:
+        async with http.stream(
+            "POST",
+            "/chat/completions",
+            json=body,
+            headers=headers,
+        ) as response:
+            if log:
+                log.info("STREAM response status=%s content-type=%s",
+                         response.status_code, response.headers.get("content-type"))
+            response.raise_for_status()
+            done_seen = False
+            async for line in response.aiter_lines():
+                if log:
+                    log.debug("STREAM raw> %s", line[:800])
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    done_seen = True
+                    if log:
+                        log.info("STREAM [DONE] after %d chunks, finish_reasons=%s",
+                                 chunk_count, finish_reasons)
+                    break
+                try:
+                    data = json.loads(data_str)
+                    choices = []
+                    for c in data.get("choices", []):
+                        d = c.get("delta", {})
+                        tc_list = []
+                        for t in d.get("tool_calls", []):
+                            tc_list.append(_ToolCall(
+                                id=t.get("id", ""),
+                                function=_Function(
+                                    name=t.get("function", {}).get("name", ""),
+                                    arguments=t.get("function", {}).get("arguments", ""),
+                                ),
+                            ))
+                        fr = c.get("finish_reason")
+                        choices.append(_Choice(
+                            delta=_Delta(
+                                content=d.get("content"),
+                                reasoning_content=d.get("reasoning_content"),
+                                tool_calls=tc_list if tc_list else None,
                             ),
+                            finish_reason=fr,
                         ))
-                    choices.append(_Choice(delta=_Delta(
-                        content=d.get("content"),
-                        reasoning_content=d.get("reasoning_content"),
-                        tool_calls=tc_list if tc_list else None,
-                    )))
-                usage_raw = data.get("usage")
-                usage = _Usage(total_tokens=usage_raw.get("total_tokens", 0)) if usage_raw else None
-                yield _StreamChunk(choices=choices, usage=usage)
-            except json.JSONDecodeError:
-                continue
+                    usage_raw = data.get("usage")
+                    usage = _Usage(total_tokens=usage_raw.get("total_tokens", 0)) if usage_raw else None
+                    chunk_count += 1
+                    if log:
+                        for idx, ch in enumerate(choices):
+                            dlt = ch.delta
+                            log.debug("STREAM chunk#%d c[%d] finish=%s content=%d reasoning=%d tc=%d",
+                                      chunk_count, idx, ch.finish_reason,
+                                      len(dlt.content) if dlt.content else 0,
+                                      len(dlt.reasoning_content) if dlt.reasoning_content else 0,
+                                      len(dlt.tool_calls) if dlt.tool_calls else 0)
+                            if ch.finish_reason:
+                                finish_reasons.append(ch.finish_reason)
+                    yield _StreamChunk(choices=choices, usage=usage)
+                except json.JSONDecodeError:
+                    if log:
+                        log.warning("STREAM json decode error: %s", data_str[:200])
+                    continue
+            if not done_seen:
+                if log:
+                    log.warning("STREAM ended WITHOUT [DONE] after %d chunks, finish_reasons=%s",
+                                chunk_count, finish_reasons)
+    except Exception as e:
+        if log:
+            log.exception("STREAM error: %r", e)
+        raise
 
 
 class Agent:
@@ -142,8 +187,16 @@ class Agent:
             timeout=httpx.Timeout(600, connect=10),
         )
         self.model = config["model"]
+        self._log = logging.getLogger(f"trilobite.agent.{name}")
+        if not self._log.handlers:
+            self._log.setLevel(logging.DEBUG)
+            _fh = logging.FileHandler(self.session_dir / "agent.log", encoding="utf-8")
+            _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            self._log.addHandler(_fh)
+        self._log.propagate = False
         self.reasoning_effort = config.get("reasoning_effort", "max")
         self.max_context_tokens = int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS))
+        self.max_tokens = int(config.get("max_tokens", DEFAULT_MAX_TOKENS))
         self.compaction_trigger_ratio = float(config.get("compaction_trigger_ratio", 0.7))
         self.system_prompt = load_system_prompt()
         self.working_context = self._load_working_context()
@@ -175,12 +228,13 @@ class Agent:
         if tools is not None:
             body["tools"] = tools
         body["stream"] = stream
+        body["max_tokens"] = self.max_tokens
         if stream:
             body["stream_options"] = {"include_usage": True}
             if self.reasoning_effort:
                 body["reasoning_effort"] = self.reasoning_effort
                 body["thinking"] = {"type": "enabled"}
-            return _chat_completion_stream(self._http, self.config["api_key"], body)
+            return _chat_completion_stream(self._http, self.config["api_key"], body, log=self._log)
         else:
             headers = {
                 "Authorization": f"Bearer {self.config['api_key']}",
@@ -377,6 +431,13 @@ class Agent:
                 content = "".join(content_parts)
                 thinking = "".join(thinking_parts)
 
+                self._log.info(
+                    "TURN result content_len=%d thinking_len=%d tool_calls=%d token_count=%d plan_mode=%s",
+                    len(content), len(thinking), len(tool_calls), self._token_count, self._plan_mode,
+                )
+                if not content and not thinking and not tool_calls:
+                    self._log.warning("TURN produced EMPTY assistant output (no content/thinking/tool_calls)")
+
                 if tool_calls:
                     assistant_msg: dict = {"role": "assistant", "tool_calls": tool_calls}
                     if content:
@@ -462,6 +523,7 @@ class Agent:
         except asyncio.CancelledError:
             content = "".join(content_parts)
             thinking = "".join(thinking_parts)
+            self._log.warning("RUN cancelled content_len=%d thinking_len=%d", len(content), len(thinking))
             if content or thinking:
                 msg: dict = {"role": "assistant", "content": content or ""}
                 if thinking:
@@ -484,6 +546,8 @@ class Agent:
             if hasattr(e, "status_code"):
                 status_code = e.status_code
 
+            self._log.exception("RUN error status=%s type=%s code=%s msg=%s",
+                                status_code, error_type, error_code, msg)
             await self._send_stream_event({
                 "type": "error",
                 "text": msg,

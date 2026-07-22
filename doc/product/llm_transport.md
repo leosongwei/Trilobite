@@ -29,6 +29,25 @@ Agent 通过 HTTP 直接调用 OpenAI 兼容的 chat completions API（如 DeepS
 
 创建 session 时生成并持久化到 `session.json` 的 `session_id` 字段，重启后复用，不会因重载 Agent 而更换。
 
+## 请求体
+
+`chat_completion()` 构造的 body 关键字段：
+
+| 字段 | 来源 | 说明 |
+|---|---|---|
+| `model` | config | 模型名 |
+| `messages` | history | 对话消息 |
+| `tools` | tool_call | 工具定义（可选） |
+| `stream` | 参数 | 是否流式 |
+| `stream_options` | 固定 | `{include_usage: true}`，流式时附带 token 用量 |
+| `reasoning_effort` | config | 思考强度，流式时发送 |
+| `thinking` | 固定 | `{type: enabled}`，流式时启用思考 |
+| `max_tokens` | config | **单次 completion 的输出 token 上限** |
+
+`max_tokens`（单次输出上限，默认 65536）与 `max_context_tokens`（上下文窗口，默认 1048576）是两个不同维度：前者限制单轮回复能生成多少 token，后者限制整段历史能占多大窗口。
+
+> 历史教训：若不传 `max_tokens`，API 默认 4096。配合 `reasoning_effort: max` 时，模型可能在 reasoning 阶段耗尽 4096 token，导致 `finish_reason=length`、正文 `content` 一字未生即被截断，表现为"卡住/空回复"。务必显式设置足够大的 `max_tokens`。
+
 ## 流式响应解析
 
 自定义 SSE parser（约 30 行），将 `data: {...}` 行解析为 `_StreamChunk` 数据类，字段名与 OpenAI SDK chunk 一致：
@@ -43,6 +62,27 @@ chunk.usage.total_tokens
 ## 非流式调用
 
 `Agent.chat_completion(messages, stream=False)` — 用于 compaction 等场景，返回 `resp.json()` 字典。
+
+## 调试日志
+
+每个 session 的 LLM 通信细节记录到 `sessions/<name>/agent.log`，用于排查流式输出被截断等问题。
+
+日志由 `Agent.__init__` 创建的 `logging.FileHandler` 写入，logger 名 `trilobite.agent.<name>`，不向上传播。记录内容：
+
+| 事件 | 级别 | 说明 |
+|---|---|---|
+| `STREAM request` | INFO | 请求 model / 消息数 / 工具数 / reasoning |
+| `STREAM response` | INFO | 响应 status / content-type |
+| `STREAM raw>` | DEBUG | 每条 SSE 原始行（截断 800 字符） |
+| `STREAM chunk#N` | DEBUG | 每个 chunk 的 content/reasoning/tool_calls 长度与 `finish_reason` |
+| `STREAM [DONE]` | INFO | 正常结束，附带 finish_reasons 列表 |
+| `STREAM ended WITHOUT [DONE]` | WARNING | 流提前关闭、未收到 `[DONE]` |
+| `STREAM error` | ERROR | 网络/HTTP 异常 |
+| `TURN result` | INFO | 每轮累积的 content/thinking/tool_calls 长度、token 数、plan 模式 |
+| `TURN produced EMPTY assistant output` | WARNING | content/thinking/tool_calls 全为空（即复现的截断现象） |
+| `RUN cancelled` / `RUN error` | WARNING/ERROR | 取消或异常时记录残余输出 |
+
+排查「只输出思考、没有正文」时，重点看 `finish_reason`（`length` 说明被 token 上限截断；`stop` 说明模型主动结束）、`STREAM ended WITHOUT [DONE]`（连接异常关闭）以及 `TURN produced EMPTY`。
 
 ## 相关代码
 

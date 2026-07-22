@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 DEFAULT_MAX_CONTEXT_TOKENS = 1_048_576
+DEFAULT_MAX_TOKENS = 65_536
 
 DEFAULT_CONFIG = {
     "model": "deepseek-chat",
@@ -12,6 +13,7 @@ DEFAULT_CONFIG = {
     "api_url": "https://api.deepseek.com/v1",
     "reasoning_effort": "max",
     "max_context_tokens": str(DEFAULT_MAX_CONTEXT_TOKENS),
+    "max_tokens": str(DEFAULT_MAX_TOKENS),
     "compaction_trigger_ratio": "0.7",
 }
 
