@@ -14,6 +14,7 @@ DEFAULT_CONFIG = {
     "reasoning_effort": "max",
     "max_context_tokens": str(DEFAULT_MAX_CONTEXT_TOKENS),
     "max_tokens": str(DEFAULT_MAX_TOKENS),
+    "log_level": "WARNING",
     "compaction_trigger_ratio": "0.7",
 }
 

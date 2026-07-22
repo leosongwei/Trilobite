@@ -189,10 +189,10 @@ class Agent:
         self.model = config["model"]
         self._log = logging.getLogger(f"trilobite.agent.{name}")
         if not self._log.handlers:
-            self._log.setLevel(logging.DEBUG)
             _fh = logging.FileHandler(self.session_dir / "agent.log", encoding="utf-8")
             _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
             self._log.addHandler(_fh)
+        self._log.setLevel(config.get("log_level", "WARNING"))
         self._log.propagate = False
         self.reasoning_effort = config.get("reasoning_effort", "max")
         self.max_context_tokens = int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS))

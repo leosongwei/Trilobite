@@ -67,7 +67,9 @@ chunk.usage.total_tokens
 
 每个 session 的 LLM 通信细节记录到 `sessions/<name>/agent.log`，用于排查流式输出被截断等问题。
 
-日志由 `Agent.__init__` 创建的 `logging.FileHandler` 写入，logger 名 `trilobite.agent.<name>`，不向上传播。记录内容：
+日志由 `Agent.__init__` 创建的 `logging.FileHandler` 写入，logger 名 `trilobite.agent.<name>`，不向上传播。日志级别由 config 的 `log_level` 控制，**默认 `WARNING`**（只记录异常：`STREAM ended WITHOUT [DONE]`、`STREAM error`、`RUN cancelled/error`、`TURN produced EMPTY`）。需要排查时改为 `DEBUG` 可记录每条 SSE 原始行与每个 chunk 的解析结果。
+
+记录内容：
 
 | 事件 | 级别 | 说明 |
 |---|---|---|
