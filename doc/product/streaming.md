@@ -51,7 +51,7 @@ per-session 事件总线，维护：
 | `tool_start` | `tool, args` | 工具开始执行 |
 | `tool_result` | `tool, result, diff_prev?, diff_current?` | 工具结果 |
 | `usage` | `token_count, max_context_tokens` | token 用量 |
-| `status` | `text` | 状态横幅（如 compaction、steered） |
+| `status` | `text` | 状态横幅（如 compaction） |
 | `plan_exit_request` | — | 请求退出 plan 模式 |
 | `permission_request` | `path, tool, message` | 请求文件访问权限 |
 | `done` | — | run 正常结束，置 `is_running=false` |

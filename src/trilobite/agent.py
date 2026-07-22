@@ -510,8 +510,7 @@ class Agent:
                         self.history.append(history_msg)
 
                     # Check for steering between tool calls
-                    if self._check_steer():
-                        await self._send_stream_event({"type": "status", "text": "steered - processing new input..."})
+                    self._check_steer()
                 else:
                     assistant_final: dict = {"role": "assistant", "content": content or ""}
                     if thinking:
