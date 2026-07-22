@@ -71,16 +71,6 @@ class Agent:
     def set_plan_mode(self, mode: bool):
         self._plan_mode = mode
 
-    def _check_mode_notification(self):
-        """Append a mode-change notification to history if the mode has changed
-        since the last time the model was notified. Coalesces rapid toggles."""
-        if self._last_notified_mode is None:
-            self._last_notified_mode = self._plan_mode
-        elif self._plan_mode != self._last_notified_mode:
-            notification = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
-            self.history.append({"role": "user", "content": notification})
-            self._last_notified_mode = self._plan_mode
-
     async def _send_stream_event(self, event: dict):
         if self._stream_queue is not None:
             await self._stream_queue.put(event)
@@ -94,12 +84,23 @@ class Agent:
 
         self._ensure_system_message()
 
+        # Check for mode change once per run (when user sends a message).
+        # Injected into messages list, not stored in history.
+        mode_notification: str | None = None
+        if self._last_notified_mode is None:
+            self._last_notified_mode = self._plan_mode
+        elif self._plan_mode != self._last_notified_mode:
+            mode_notification = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
+            self._last_notified_mode = self._plan_mode
+
         try:
             while True:
                 if await compact_if_needed(self):
                     continue
-                self._check_mode_notification()
                 messages = self.history.get_api_messages()
+                if mode_notification:
+                    messages.insert(1, {"role": "user", "content": mode_notification})
+                    mode_notification = None
 
                 await self._send_stream_event({"type": "turn"})
 
