@@ -36,8 +36,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useStore } from '../store'
+import { getCwd } from '../api'
 
 const emit = defineEmits<{ select: [] }>()
 
@@ -45,6 +46,16 @@ const { state, selectSession, createSession, deleteSession, addDir, removeDir } 
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
+
+onMounted(async () => {
+  try {
+    const cwd = await getCwd()
+    workingDir.value = cwd
+    name.value = cwd.split('/').pop() || cwd
+  } catch {
+    // keep empty
+  }
+})
 
 async function handleSelect(sessionName: string) {
   await selectSession(sessionName)

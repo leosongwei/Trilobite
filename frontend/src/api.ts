@@ -4,6 +4,12 @@ function encode(name: string): string {
   return encodeURIComponent(name)
 }
 
+export async function getCwd(): Promise<string> {
+  const res = await fetch('/api/cwd')
+  const data = await res.json()
+  return data.cwd
+}
+
 export async function getSessions(): Promise<Session[]> {
   const res = await fetch('/api/sessions')
   return res.json()

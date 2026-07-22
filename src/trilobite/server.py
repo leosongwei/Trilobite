@@ -45,6 +45,11 @@ async def startup():
     config = init_config()
 
 
+@app.get("/api/cwd")
+async def get_cwd():
+    return {"cwd": str(Path.cwd())}
+
+
 @app.get("/api/sessions")
 async def list_sessions():
     sessions_dir = get_sessions_dir()

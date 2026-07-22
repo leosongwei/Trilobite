@@ -4,7 +4,7 @@
       <div class="empty-state">Select or create a session</div>
     </template>
     <template v-else>
-      <template v-for="(item, idx) in state.chatItems" :key="idx">
+      <template v-for="(item, idx) in state.chatItems" :key="state.currentSession + '-' + idx">
         <div v-if="item.kind === 'user'" class="message user">{{ item.content }}</div>
         <TurnBlock
           v-else-if="item.kind === 'turn'"
@@ -22,6 +22,7 @@
 import { ref, watch, nextTick } from 'vue'
 import { useStore } from '../store'
 import TurnBlock from './TurnBlock.vue'
+import { typesetMath } from '../utils/mathjax'
 
 const { state } = useStore()
 const chatRef = ref<HTMLElement>()
@@ -31,6 +32,26 @@ function scrollToBottom() {
     chatRef.value.scrollTop = chatRef.value.scrollHeight
   }
 }
+
+// Typeset math in the chat container after content changes.
+// Debounced to avoid redundant calls during streaming.
+// typesetMath internally serializes calls via a promise chain, so
+// no typeset is ever skipped - they just queue up and run in order.
+let typesetTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleTypeset() {
+  if (typesetTimer) clearTimeout(typesetTimer)
+  typesetTimer = setTimeout(async () => {
+    typesetTimer = null
+    await nextTick()
+    if (chatRef.value) {
+      await typesetMath(chatRef.value)
+    }
+  }, state.isStreaming ? 200 : 50)
+}
+
+// chatItems is replaced on session switch; streamTick bumps during streaming
+watch(() => state.chatItems, () => scheduleTypeset(), { deep: false })
+watch(() => state.streamTick, () => scheduleTypeset())
 
 watch(() => state.chatItems.length, () => nextTick(scrollToBottom))
 watch(() => state.streamTick, () => nextTick(scrollToBottom))
