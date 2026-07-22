@@ -5,6 +5,11 @@
     <main class="main">
       <button class="menu-toggle" @click="sidebarOpen = true">&#9776;</button>
       <ChatView />
+      <div v-if="state.planExitRequest" class="plan-exit-banner">
+        <span>Agent requests to switch to Build mode</span>
+        <button class="approve" @click="approvePlanExit">Approve</button>
+        <button class="reject" @click="rejectPlanExit">Reject</button>
+      </div>
       <ChatInput />
       <TokenBar />
     </main>
@@ -19,7 +24,7 @@ import ChatView from './components/ChatView.vue'
 import ChatInput from './components/ChatInput.vue'
 import TokenBar from './components/TokenBar.vue'
 
-const { state, loadSessions } = useStore()
+const { state, loadSessions, approvePlanExit, rejectPlanExit } = useStore()
 const sidebarOpen = ref(false)
 
 watch(() => state.currentSession, () => {

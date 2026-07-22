@@ -65,6 +65,14 @@ export async function removeDir(name: string, path: string): Promise<string[]> {
   return data.additional_dirs ?? []
 }
 
+export async function planExit(name: string, approved: boolean): Promise<void> {
+  await fetch(`/api/sessions/${encode(name)}/plan_exit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved }),
+  })
+}
+
 export async function getSessionInfo(name: string): Promise<SessionInfo> {
   const res = await fetch(`/api/sessions/${encode(name)}/info`)
   if (!res.ok) throw new Error('Session not found')

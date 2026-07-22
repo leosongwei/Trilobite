@@ -48,6 +48,8 @@ class Agent:
         self._plan_mode: bool = False
         self._last_notified_mode: bool | None = None
         self._additional_dirs: list[Path] = []
+        self._plan_exit_event: asyncio.Event = asyncio.Event()
+        self._plan_exit_approved: bool = False
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
@@ -74,6 +76,10 @@ class Agent:
 
     def set_additional_dirs(self, dirs: list[str]):
         self._additional_dirs = [Path(d).resolve() for d in dirs]
+
+    def resolve_plan_exit(self, approved: bool):
+        self._plan_exit_approved = approved
+        self._plan_exit_event.set()
 
     async def _send_stream_event(self, event: dict):
         if self._stream_queue is not None:
@@ -229,8 +235,21 @@ class Agent:
                         tool_name = tc["function"]["name"]
                         await self._send_stream_event({"type": "tool_start", "tool": tool_name, "args": args})
 
-                        if self._plan_mode and tool_name == "write":
-                            result = "Error: write tool is not available in plan mode. Switch to build mode to make changes."
+                        if tool_name == "exit_plan_mode":
+                            if not self._plan_mode:
+                                result = "Not in plan mode."
+                            else:
+                                await self._send_stream_event({"type": "plan_exit_request"})
+                                await self._plan_exit_event.wait()
+                                self._plan_exit_event.clear()
+                                if self._plan_exit_approved:
+                                    self._plan_mode = False
+                                    self._last_notified_mode = False
+                                    result = "Plan mode exited. All tools are now available."
+                                else:
+                                    result = "User declined. Continue planning in plan mode."
+                        elif self._plan_mode and tool_name == "write":
+                            result = "Error: write tool is not available in plan mode. Call exit_plan_mode to request switching to build mode."
                         else:
                             result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
                         await self._send_stream_event({"type": "tool_result", "tool": tool_name, "result": result})

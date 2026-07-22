@@ -29,6 +29,9 @@ class ModeRequest(BaseModel):
 class AddDirRequest(BaseModel):
     path: str
 
+class PlanExitRequest(BaseModel):
+    approved: bool
+
 class SessionInfo(BaseModel):
     name: str
     working_dir: str
@@ -141,6 +144,14 @@ async def cancel_session(name: str):
     agent = agents.get(name)
     if agent and agent.is_running():
         agent.cancel()
+    return {"status": "ok"}
+
+
+@app.post("/api/sessions/{name}/plan_exit")
+async def plan_exit_decision(name: str, req: PlanExitRequest):
+    agent = agents.get(name)
+    if agent:
+        agent.resolve_plan_exit(req.approved)
     return {"status": "ok"}
 
 

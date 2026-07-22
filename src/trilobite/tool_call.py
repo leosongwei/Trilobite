@@ -17,7 +17,16 @@ _TOOL_MAP: dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
 
 def get_tool_definitions() -> list[dict]:
-    return [t.to_openai_tool() for t in ALL_TOOLS]
+    tools = [t.to_openai_tool() for t in ALL_TOOLS]
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "exit_plan_mode",
+            "description": "Request to exit plan mode and enter build mode. Use this when you have completed your analysis and are ready to make changes. The user must approve the switch.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    })
+    return tools
 
 
 def execute_tool(

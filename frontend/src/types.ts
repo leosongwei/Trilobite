@@ -7,6 +7,7 @@ export type SSEEvent =
   | { type: 'tool_result'; tool: string; result: string }
   | { type: 'usage'; token_count: number; max_context_tokens: number }
   | { type: 'status'; text: string }
+  | { type: 'plan_exit_request' }
   | { type: 'done' }
   | { type: 'cancelled' }
   | { type: 'error'; text: string }

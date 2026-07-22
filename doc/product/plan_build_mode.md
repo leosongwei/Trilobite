@@ -9,7 +9,7 @@ Trilobite 有两种工作模式，由前端切换按钮控制：
 | **Build**（默认） | 完整工具执行 | 可用 |
 | **Plan** | 只读分析 + 方案设计 | 禁用 |
 
-模式是 Agent 上的一个布尔标记，**只能由用户通过前端切换**。LLM 没有任何工具可以切换模式。
+模式是 Agent 上的一个布尔标记，**只能由用户通过前端切换**。LLM 可以通过 `exit_plan_mode` 工具请求用户切换到 Build 模式，但最终决定权在用户。
 
 ## 切换方式
 
@@ -75,10 +75,26 @@ You are permitted to make file changes, run shell commands, and utilize your ars
 Plan 模式下，`write` 工具被执行前拦截，返回错误：
 
 ```
-Error: write tool is not available in plan mode. Switch to build mode to make changes.
+Error: write tool is not available in plan mode. Call exit_plan_mode to request switching to build mode.
 ```
 
 其他工具（`read`、`bash`、`TodoList`）正常执行。工具守卫在每轮工具调用中都生效，与通知注入无关。
+
+### exit_plan_mode 工具
+
+模型可以通过调用 `exit_plan_mode` 工具请求用户切换到 Build 模式。流程：
+
+1. 模型调用 `exit_plan_mode`
+2. Agent 发送 `plan_exit_request` SSE 事件
+3. Agent 暂停，等待用户决策（`asyncio.Event`）
+4. 前端显示审批横幅："Agent requests to switch to Build mode" + Approve/Reject 按钮
+5. 用户点击后，前端调用 `POST /api/sessions/{name}/plan_exit`
+6. Agent 收到决策，继续执行
+
+| 用户操作 | 结果 |
+|----------|------|
+| Approve | 退出 Plan 模式，模型收到 "Plan mode exited. All tools are now available." |
+| Reject | 保持 Plan 模式，模型收到 "User declined. Continue planning in plan mode." |
 
 ### 无循环 reminder
 
@@ -158,6 +174,23 @@ POST /api/sessions/{name}/mode
 Content-Type: application/json
 
 { "mode": "plan" | "build" }
+```
+
+### Plan 退出审批
+
+```http
+POST /api/sessions/{name}/plan_exit
+Content-Type: application/json
+
+{ "approved": true | false }
+```
+
+### SSE 事件
+
+模型调用 `exit_plan_mode` 时发送：
+
+```json
+{ "type": "plan_exit_request" }
 ```
 
 ### Session Info

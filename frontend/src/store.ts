@@ -13,6 +13,7 @@ interface State {
   streamTick: number
   planMode: boolean
   additionalDirs: string[]
+  planExitRequest: boolean
 }
 
 const state = reactive<State>({
@@ -26,6 +27,7 @@ const state = reactive<State>({
   streamTick: 0,
   planMode: false,
   additionalDirs: [],
+  planExitRequest: false,
 })
 
 let currentTurnIdx = -1
@@ -128,6 +130,10 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'status':
       state.statusText = event.text
+      break
+
+    case 'plan_exit_request':
+      state.planExitRequest = true
       break
 
     case 'done':
@@ -308,6 +314,19 @@ export function useStore() {
     state.additionalDirs = await api.removeDir(state.currentSession, path)
   }
 
+  async function approvePlanExit() {
+    if (!state.currentSession) return
+    state.planExitRequest = false
+    state.planMode = false
+    await api.planExit(state.currentSession, true)
+  }
+
+  async function rejectPlanExit() {
+    if (!state.currentSession) return
+    state.planExitRequest = false
+    await api.planExit(state.currentSession, false)
+  }
+
   return {
     state,
     loadSessions,
@@ -320,5 +339,7 @@ export function useStore() {
     setMode,
     addDir,
     removeDir,
+    approvePlanExit,
+    rejectPlanExit,
   }
 }
