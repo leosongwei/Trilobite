@@ -38,13 +38,21 @@ Agent 有两种运行模式：
 * **Plan 模式**（只读）：只能使用 read、bash、TodoList 等非破坏性工具。`write` 被拦截。
 * **Build 模式**（全权限）：所有工具可用。
 
-Agent 调用 `exit_plan_mode` 时前端展示审批横幅，用户批准后切换。
+Agent 调用 `exit_plan_mode` 时前端展示审批横幅，用户批准后切换。按 **Tab** 可在两种模式间切换。
+
+## 文件访问权限
+
+`read`/`write` 工具访问工作区以外的路径时，前端弹出权限请求横幅（Grant/Deny）。批准后目录加入 `additional_dirs` 并持久化到 `session.json`，重启保留。敏感文件直接拒绝。
+
+## 上下文压缩
+
+Token 超过 `compaction_trigger_ratio` 阈值时触发压缩。提示词采用 kimi 风格的第一人称 handoff note。TODO 列表自动附带，不转录。
 
 ## 配置 (`config_example/`)
 
 * `config.yaml` — API 密钥、模型、token 上限、压缩触发比例
-* `system_prompt.txt` — 系统提示词
-* `compaction_prompt.txt` — 压缩摘要提示词
+* `system_prompt.txt` — 系统提示词（含权限说明）
+* `compaction_prompt.txt` — 压缩摘要提示词（kimi 风格）
 
 # 风格和注意事项
 
