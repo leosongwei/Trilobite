@@ -51,9 +51,28 @@ class History:
         self.save()
 
     def get_api_messages(self) -> list[dict]:
-        """Return a copy with consecutive user messages merged."""
+        """Return messages for the API, starting from the last compact marker.
+
+        A compact marker (``{"role": "system", "compact_marker": True}``)
+        acts as a fresh start: every message before the last marker is dropped
+        from the API context. The marker's own content becomes the new system
+        message. This is what separates the *frontend* history (which keeps
+        everything, persisted in the JSON file) from the *API* history (which
+        only sees post-compaction messages).
+
+        Consecutive user messages are merged into one (text joined by \\n\\n)
+        to avoid API issues with repeated same-role messages.
+        """
+        start = 0
+        for i, msg in enumerate(self._messages):
+            if msg.get("compact_marker"):
+                start = i
+
         result: list[dict] = []
-        for msg in self._messages:
+        for msg in self._messages[start:]:
+            if msg.get("compact_marker"):
+                result.append({"role": "system", "content": msg["content"]})
+                continue
             if msg.get("role") == "user" and result and result[-1].get("role") == "user":
                 prev_content = result[-1].get("content", "") or ""
                 cur_content = msg.get("content", "") or ""

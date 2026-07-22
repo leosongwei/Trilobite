@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 
 from src.trilobite.broker import StreamBroker
-from src.trilobite.compaction import compact_if_needed
+from src.trilobite.compaction import should_compact, build_compact_prompt
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt
 from src.trilobite.history import History
 from src.trilobite.tool_call import execute_tool, get_tool_definitions
@@ -203,7 +203,6 @@ class Agent:
         self.working_context = self._load_working_context()
         self.history = History(session_dir / "history.json")
         self._broker = StreamBroker(len(self.history.raw))
-        self._compacted_summary: str | None = None
         self._token_count: int = 0
         self._token_covered: int = 0
         self._task: asyncio.Task | None = None
@@ -302,6 +301,86 @@ class Agent:
     async def _send_stream_event(self, event: dict):
         await self._broker.publish(event, len(self.history.raw))
 
+    def _count_user_messages(self) -> int:
+        """Count real user messages, excluding compact summaries.
+
+        Compact summaries are stored as ``role: user`` (so the API sees them
+        as user content) but are not real user turns, so they must not
+        receive a ``user_seq`` - otherwise revert/edit numbering would drift.
+        """
+        return sum(
+            1 for m in self.history.raw
+            if m.get("role") == "user" and not m.get("compact_summary")
+        )
+
+    def _has_compactable_content(self) -> bool:
+        """Whether there is real conversation after the last compact marker."""
+        start = 0
+        for i, msg in enumerate(self.history.raw):
+            if msg.get("compact_marker"):
+                start = i + 1
+        for msg in self.history.raw[start:]:
+            if msg.get("compact_summary") or msg.get("role") == "system":
+                continue
+            return True
+        return False
+
+    async def _compact_turn(self) -> None:
+        """Run one compaction turn.
+
+        Appends the compact instruction as a user message, streams the model's
+        handoff summary (visible like a normal turn), then inserts a compact
+        marker (rebuilt system prompt) followed by the summary wrapped in
+        ``<compact>`` tags as a user message.
+
+        Resulting history tail::
+
+            ..., {user: compact prompt}, {assistant: summary},
+            {system: rebuilt prompt, compact_marker}, {user: <compact>summary</compact>},
+            ...new conversation...
+
+        ``get_api_messages()`` starts from the marker, so pre-compaction
+        messages are dropped from the API context while remaining in the
+        persisted (frontend) history.
+        """
+        prompt = build_compact_prompt(self)
+        user_seq = self._count_user_messages()
+        self.history.append({"role": "user", "content": prompt})
+        await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
+
+        messages = self.history.get_api_messages()
+        await self._send_stream_event({"type": "turn"})
+        stream = await self.chat_completion(messages=messages, stream=True, tools=None)
+
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta is None:
+                continue
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                thinking_parts.append(delta.reasoning_content)
+                await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
+            if delta.content:
+                content_parts.append(delta.content)
+                await self._send_stream_event({"type": "text", "text": delta.content})
+
+        summary = "".join(content_parts) or "[compaction produced no output]"
+
+        assistant_msg: dict = {"role": "assistant", "content": summary}
+        if thinking_parts:
+            assistant_msg["reasoning_content"] = "".join(thinking_parts)
+        self.history.append(assistant_msg)
+
+        rebuilt_system = self.system_prompt + self.working_context
+        self.history.append({"role": "system", "content": rebuilt_system, "compact_marker": True})
+        self.history.append({"role": "user", "content": f"<compact>\n{summary}\n</compact>", "compact_summary": True})
+        await self._send_stream_event({"type": "compact"})
+
+        self._token_count = 0
+        self._token_covered = len(self.history.raw)
+        self._persist_token_count()
+
     async def run(self):
         self._task = asyncio.current_task()
 
@@ -321,7 +400,8 @@ class Agent:
 
         try:
             while True:
-                if await compact_if_needed(self):
+                if should_compact(self):
+                    await self._compact_turn()
                     await self._broker.commit(len(self.history.raw))
                     continue
                 messages = self.history.get_api_messages()
@@ -572,7 +652,7 @@ class Agent:
         return True
 
     async def steer(self, message: str):
-        user_seq = sum(1 for m in self.history.raw if m.get("role") == "user") + len(self._steer_messages)
+        user_seq = self._count_user_messages() + len(self._steer_messages)
         await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
         self._steer_messages.append(message)
         self._steering.set()
@@ -591,7 +671,7 @@ class Agent:
         message is emitted as a stream event so every subscriber (and any
         reconnecting client) renders it consistently.
         """
-        user_seq = sum(1 for m in self.history.raw if m.get("role") == "user")
+        user_seq = self._count_user_messages()
         self.add_user_message(message)
         self._broker.set_running(True)
         await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
@@ -643,7 +723,7 @@ class Agent:
         reconnect (rerun rebuilds from the truncated history) or just apply a
         local text update (queued).
         """
-        history_users = sum(1 for m in self.history.raw if m.get("role") == "user")
+        history_users = self._count_user_messages()
         if user_seq < history_users:
             if self.is_running():
                 await self.stop()
@@ -667,3 +747,40 @@ class Agent:
         self._steer_messages[k] = message
         await self._send_stream_event({"type": "user_edit", "user_seq": user_seq, "text": message})
         return "queued"
+
+    async def compact_now(self) -> None:
+        """Manually trigger context compaction (the ``/compact`` command).
+
+        Compacts regardless of the token threshold. The compact turn is
+        streamed like normal output. If there is no real conversation to
+        compact (e.g. right after a previous compact), a status notice is sent
+        instead. After compaction, if a steering message arrived mid-compact,
+        a normal run is kicked off to consume it; otherwise the run ends.
+        """
+        self._broker.set_running(True)
+
+        if not self._has_compactable_content():
+            await self._send_stream_event({"type": "status", "text": "nothing to compact"})
+            await self._send_stream_event({
+                "type": "usage",
+                "token_count": self._token_count,
+                "max_context_tokens": self.max_context_tokens,
+            })
+            await self._send_stream_event({"type": "done"})
+            self._broker.set_running(False)
+            self._task = None
+            return
+
+        await self._compact_turn()
+        await self._broker.commit(len(self.history.raw))
+        await self._send_stream_event({
+            "type": "usage",
+            "token_count": self._token_count,
+            "max_context_tokens": self.max_context_tokens,
+        })
+        if self._steer_messages:
+            self._task = asyncio.create_task(self.run())
+        else:
+            await self._send_stream_event({"type": "done"})
+            self._broker.set_running(False)
+            self._task = None

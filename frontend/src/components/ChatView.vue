@@ -12,6 +12,7 @@
           :streaming="state.isStreaming && idx === state.chatItems.length - 1"
         />
         <div v-else-if="item.kind === 'error'" class="message error">{{ item.content }}</div>
+        <div v-else-if="item.kind === 'compact'" class="compact-divider" />
       </template>
       <div v-if="state.statusText" class="status-banner">{{ state.statusText }}</div>
     </template>

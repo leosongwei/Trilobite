@@ -3,6 +3,7 @@ export type SSEEvent =
   | { type: 'user'; text: string; user_seq: number }
   | { type: 'user_edit'; user_seq: number; text: string }
   | { type: 'turn' }
+  | { type: 'compact' }
   | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }
   | { type: 'tool_stream'; tool_name: string; args: string; complete: boolean }
@@ -26,11 +27,13 @@ export interface ToolCall {
 }
 
 export interface HistoryMessage {
-  role: 'user' | 'assistant' | 'tool'
+  role: 'user' | 'assistant' | 'tool' | 'system'
   content?: string
   reasoning_content?: string
   tool_calls?: ToolCall[]
   tool_call_id?: string
+  compact_marker?: boolean
+  compact_summary?: boolean
 }
 
 export interface Session {
@@ -81,4 +84,8 @@ export interface ErrorItem {
   content: string
 }
 
-export type ChatItem = UserItem | TurnItem | ErrorItem
+export interface CompactItem {
+  kind: 'compact'
+}
+
+export type ChatItem = UserItem | TurnItem | ErrorItem | CompactItem

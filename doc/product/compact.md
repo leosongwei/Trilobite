@@ -2,14 +2,24 @@
 
 ## 概述
 
-当对话历史接近模型的上下文窗口上限时，agent 会自动压缩历史：将较早的对话交给 LLM 生成摘要，用摘要替换旧消息，保留最近的消息。这样 agent 可以在长对话中持续工作而不超出上下文限制。
+当对话历史接近模型的上下文窗口上限时，agent 会自动压缩上下文。压缩不会删除任何历史消息——**前端历史与后端 API 历史分离**：所有消息始终保留在 `history.json` 中供前端完整展示，而发给 LLM 的消息从最后一个 compact marker 开始截取。这样既不丢失对话记录，又能控制 API 上下文大小。
+
+## Compact marker
+
+压缩时在历史中插入一个 marker 消息：
+
+```json
+{"role": "system", "content": "<重建的系统提示词>", "compact_marker": true}
+```
+
+`get_api_messages()` 找到最后一个 `compact_marker`，从它开始取消息发给 LLM。marker 之前的所有消息不再进入 API 请求，但仍留在 `history.json` 中。前端把 marker 渲染为一道分隔线（"context compacted"），不显示系统提示词内容。
 
 ## 触发条件
 
 每个 agent 循环开始时检查是否需要压缩。估算公式：
 
 ```
-estimated = token_count（上次 API 返回的真实 token 数）
+estimated = token_count（上次 API 返回的真实 token 数，仅反映 marker 之后的消息）
           + estimate(未覆盖的历史消息)
           + estimate(工具定义)
 ```
@@ -20,121 +30,54 @@ estimated = token_count（上次 API 返回的真实 token 数）
 - `max_context_tokens`：1,048,576（1M）
 - `compaction_trigger_ratio`：0.7（即 70% 时触发）
 
+## 手动触发：/compact 命令
+
+用户可以在输入框发送 `/compact` 手动触发压缩，无需等到 token 超阈值。
+
+- 前端输入 `/` 时弹出命令补全菜单（纯客户端提示，实际发送的仍是文本，由后端匹配）。
+- 后端 `POST /message` 识别 `message.strip() == "/compact"`：若 agent 正在运行则返回 409，否则调用 `agent.compact_now()`。
+- `compact_now()` 强制压缩（跳过阈值检查），走与自动压缩相同的流程。压缩期间若有 steering 消息到达，则压缩结束后继续 run 消费它们。若没有可压缩的对话内容（如刚压缩完又立即触发），发送 status 提示而非实际压缩。
+
 ## 压缩流程
 
+压缩不再单独调用 completion API，而是作为一次正常对话回合执行：
+
 ```
-1. 分割历史：找到最近的分割点，将历史分为"待压缩"和"保留"两部分
-2. 重新构建 system 消息（使用当前配置）
-3. 发送压缩请求：system + 待压缩消息 + 压缩指令 -> LLM 生成摘要
-4. 用 [system, 摘要, "Understood", ...保留消息] 替换整个历史
-5. 重置 token 计数
+1. 追加 compact 指令（compaction_prompt.txt + todo list）作为 user 消息
+2. 流式调用 LLM（tools=None），模型输出 handoff 摘要——前端实时可见
+3. 追加 assistant 消息（摘要原文）
+4. 重建系统提示词（system_prompt + AGENTS.md），追加为 compact marker
+5. 追加 compact summary：{role: user, content: "<compact>摘要</compact>", compact_summary: true}
+6. 发送 `compact` SSE 事件，前端据此在 live view 插入分隔线（与刷新后 parseHistory 重建一致）
+7. 重置 token 计数，commit broker
 ```
 
-### 分割点的选择
+压缩后 history 尾部结构：
 
-`find_compact_boundary` 从历史末尾向前找，保留最近 2~6 条消息，在安全的位置切分。安全切分点需要满足：
+```
+..., {user: compact指令}, {assistant: 摘要},
+{system: 重建提示词, compact_marker}, {user: <compact>摘要</compact>, compact_summary},
+...新对话...
+```
 
-- 切分点的前一条不是 `user` 消息（避免拆散 user-assistant 对）
-- 切分点的前一条不是带 `tool_calls` 的 `assistant` 消息（避免拆散工具调用组）
-- 切分点的后一条不是 `tool` 消息（同上）
+### compact summary 与前端显示
 
-## 重新构建 system 消息
+模型输出的摘要作为 assistant 消息（步骤 3）保留在前端历史中，是压缩过程的可见记录。marker 之后的 `<compact>` 摘要（步骤 5）则是后续 API 调用实际携带的上下文载体，内容与前者相同，因此前端不渲染它（`parseHistory` 跳过 `compact_summary`），避免同一份摘要显示两次。这样 live view 和刷新后都只显示一次摘要 + 一道分隔线。
 
-compaction 时**重新构建** system 消息，使用当前的 `~/.config/trilobite/system_prompt.txt` 和 `<working_dir>/AGENTS.md`。这与正常请求不同（正常请求从 history 中读取已存的 system 消息）。
+### live view 的分隔线
+
+压缩完成后后端发送 `compact` SSE 事件，前端收到后关闭当前 turn 并插入分隔线，因此 live view 在流式摘要末尾就能看到分隔线，无需刷新。刷新时 `parseHistory` 从完整历史重建，marker 同样渲染为分隔线，两者一致。
+
+### compact summary 为 user 角色
+
+marker（system）后面如果直接跟 assistant 消息会让模型困惑（没有对应的 user 输入）。因此 compact summary 以 `role: user` 存储，但前端通过 `compact_summary` 标记渲染为 assistant 风格的 turn。`<compact>` 标签帮助模型区分这是上下文摘要而非真实用户输入。
+
+### user_seq 与 compact summary
+
+compact summary 虽然是 `role: user`，但不是真实的用户消息，不参与 `user_seq` 编号（`_count_user_messages` 排除它），保证 revert/edit 功能的序号正确。
+
+## 重新构建系统提示词
+
+compaction 时**重新构建**系统提示词，使用当前的 `~/.config/trilobite/system_prompt.txt` 和 `<working_dir>/AGENTS.md`。这与正常请求不同（正常请求从 history 中读取已存的 system 消息）。
 
 原因：compaction 本质上是开启一段新对话，应该使用最新的项目配置。
-
-## 压缩后的历史结构
-
-```json
-[
-  { "role": "system", "content": "（重新构建的 system prompt + working_context）" },
-  { "role": "user", "content": "[Context summary]\n<LLM 生成的摘要>" },
-  { "role": "assistant", "content": "Understood. Continuing with the task." },
-  ...最近的消息...
-]
-```
-
-## 实际例子
-
-### 压缩前
-
-假设对话已经很长，token 估算超过阈值。此时 history 有 20 条消息：
-
-```json
-[
-  { "role": "system", "content": "你是一个编码助手。\n\n<AGENTS.md>\n..." },
-  { "role": "user", "content": "帮我创建一个 Web 服务器" },
-  { "role": "assistant", "tool_calls": [...] },
-  { "role": "tool", "content": "..." },
-  { "role": "assistant", "content": "我创建了一个 FastAPI 服务器..." },
-  { "role": "user", "content": "加上数据库连接" },
-  { "role": "assistant", "tool_calls": [...] },
-  { "role": "tool", "content": "..." },
-  { "role": "assistant", "content": "已经加上了 SQLite 连接..." },
-  ...更多对话...
-  { "role": "user", "content": "现在帮我加个测试" },
-  { "role": "assistant", "tool_calls": [...] },
-  { "role": "tool", "content": "..." }
-]
-```
-
-### 分割
-
-`find_compact_boundary` 决定保留最后 4 条消息（2 个 user-assistant 对），前 16 条待压缩。
-
-### 压缩请求
-
-发送给 LLM 的 messages：
-
-```json
-[
-  { "role": "system", "content": "（重新构建的 system prompt）" },
-  { "role": "user", "content": "帮我创建一个 Web 服务器" },
-  { "role": "assistant", "tool_calls": [...] },
-  ...前 16 条消息...
-  { "role": "user", "content": "请总结以上对话的关键信息..." }
-]
-```
-
-LLM 返回摘要：
-
-```
-用户要求创建 Web 服务器，使用了 FastAPI。随后添加了 SQLite 数据库连接，
-创建了 User 模型。目前项目结构包含 main.py、database.py 和 models.py。
-```
-
-### 压缩后
-
-history 被替换为：
-
-```json
-[
-  { "role": "system", "content": "（重新构建的 system prompt）" },
-  { "role": "user", "content": "[Context summary]\n用户要求创建 Web 服务器，使用了 FastAPI。随后添加了 SQLite 数据库连接，创建了 User 模型。目前项目结构包含 main.py、database.py 和 models.py。" },
-  { "role": "assistant", "content": "Understood. Continuing with the task." },
-  ...最后 4 条消息...
-]
-```
-
-### token 计数重置
-
-压缩后 `_token_count = 0`，`_token_covered = 0`。下一次 API 请求会获得新的真实 token 数，从此开始累计。这意味着压缩后不会立即再次触发压缩。
-
-## 前端提示
-
-压缩进行时，后端发送 `status` SSE 事件：
-
-```json
-{ "type": "status", "text": "compacting context..." }
-```
-
-前端将其显示为状态条，让用户知道正在进行上下文压缩。
-
-压缩重写了 history（`replace_all`），因此 run 循环在 compaction 返回后会调用 `StreamBroker.commit`：把已提交历史长度推进到当前长度并清空回放缓冲，避免重连客户端的 `init` 快照与回放缓冲重复（详见 `streaming.md`）。
-
-## 边界情况
-
-- **历史太短**：`find_compact_boundary` 在消息数 ≤ 3 时返回 -1，不执行压缩。
-- **找不到安全分割点**：返回 -1，不执行压缩（token 会继续增长直到下次检查）。
-- **压缩 API 调用失败**：摘要内容设为 `"[compaction failed - older context dropped]"`，旧消息被丢弃但保留最近消息。

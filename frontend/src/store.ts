@@ -92,6 +92,14 @@ function handleSSEEvent(event: SSEEvent) {
       newTurn()
       break
 
+    case 'compact': {
+      // Compaction just finished: close the streamed summary turn and insert
+      // the divider so the live view matches the rebuilt history on refresh.
+      closeTurn()
+      state.chatItems.push({ kind: 'compact' })
+      break
+    }
+
     case 'thinking': {
       const turn = getCurrentTurn()
       if (turn) turn.thinking += event.text
@@ -179,6 +187,7 @@ function handleSSEEvent(event: SSEEvent) {
     case 'done':
     case 'cancelled':
       state.isStreaming = false
+      state.statusText = null
       closeTurn()
       break
 
@@ -209,7 +218,25 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
   while (i < history.length) {
     const msg = history[i]
 
+    // System messages: the initial prompt is invisible; a compact marker
+    // renders as a divider line.
+    if (msg.role === 'system') {
+      if (msg.compact_marker) {
+        items.push({ kind: 'compact' })
+      }
+      i++
+      continue
+    }
+
     if (msg.role === 'user') {
+      // A compact summary is stored as role:user so the API sees it as user
+      // content after the marker. It only serves the API context (the streamed
+      // assistant summary is the visible record), so it is not rendered here.
+      // It must not receive a user_seq, matching _count_user_messages.
+      if (msg.compact_summary) {
+        i++
+        continue
+      }
       items.push({ kind: 'user', content: msg.content || '', userSeq: userSeq++ })
       i++
       continue

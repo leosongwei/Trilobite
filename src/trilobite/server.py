@@ -142,6 +142,11 @@ def _get_or_create_agent(name: str) -> Agent:
 @app.post("/api/sessions/{name}/message")
 async def send_message(name: str, req: MessageRequest):
     agent = _get_or_create_agent(name)
+    if req.message.strip() == "/compact":
+        if agent.is_running():
+            raise HTTPException(status_code=409, detail="agent is running, stop it first")
+        await agent.compact_now()
+        return {"status": "compacted"}
     if agent.is_running():
         await agent.steer(req.message)
         return {"status": "steered"}
