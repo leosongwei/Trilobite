@@ -47,6 +47,7 @@ class Agent:
         self._steer_messages: list[str] = []
         self._plan_mode: bool = False
         self._last_notified_mode: bool | None = None
+        self._additional_dirs: list[Path] = []
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
@@ -70,6 +71,9 @@ class Agent:
 
     def set_plan_mode(self, mode: bool):
         self._plan_mode = mode
+
+    def set_additional_dirs(self, dirs: list[str]):
+        self._additional_dirs = [Path(d).resolve() for d in dirs]
 
     async def _send_stream_event(self, event: dict):
         if self._stream_queue is not None:
@@ -228,7 +232,7 @@ class Agent:
                         if self._plan_mode and tool_name == "write":
                             result = "Error: write tool is not available in plan mode. Switch to build mode to make changes."
                         else:
-                            result = execute_tool(tool_name, args, self.working_dir, self.session_dir)
+                            result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
                         await self._send_stream_event({"type": "tool_result", "tool": tool_name, "result": result})
 
                         self.history.append({

@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
 
+from src.trilobite.file_access import resolve_file_path
 from src.trilobite.tools.tool import Tool
 
 
@@ -37,15 +38,16 @@ class ReadTool(Tool):
         self,
         working_dir: Path,
         session_dir: Path,
+        additional_dirs: list[Path] | None = None,
         filename: str = "",
         limit_lines: int = 50,
         start_line: int = 0,
         limit_chars: int = 10000,
         **kwargs: Any,
     ) -> str:
-        filepath = (working_dir / filename).resolve()
-        if not filepath.is_relative_to(working_dir):
-            return "Error: Access denied - file is outside working directory"
+        filepath, error = resolve_file_path(filename, working_dir, additional_dirs)
+        if error:
+            return error
         if not filepath.exists():
             return f"Error: File not found: {filename}"
         if filepath.is_dir():

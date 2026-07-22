@@ -20,8 +20,19 @@ def get_tool_definitions() -> list[dict]:
     return [t.to_openai_tool() for t in ALL_TOOLS]
 
 
-def execute_tool(tool_name: str, arguments: dict[str, Any], working_dir: Path, session_dir: Path) -> str:
+def execute_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    working_dir: Path,
+    session_dir: Path,
+    additional_dirs: list[Path] | None = None,
+) -> str:
     tool = _TOOL_MAP.get(tool_name)
     if tool is None:
         return f"Unknown tool: {tool_name}"
-    return tool.execute(working_dir=working_dir, session_dir=session_dir, **arguments)
+    return tool.execute(
+        working_dir=working_dir,
+        session_dir=session_dir,
+        additional_dirs=additional_dirs or [],
+        **arguments,
+    )

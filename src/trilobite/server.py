@@ -26,6 +26,9 @@ class MessageRequest(BaseModel):
 class ModeRequest(BaseModel):
     mode: str
 
+class AddDirRequest(BaseModel):
+    path: str
+
 class SessionInfo(BaseModel):
     name: str
     working_dir: str
@@ -104,6 +107,7 @@ async def send_message(name: str, req: MessageRequest):
             config=config,
         )
         agent.set_plan_mode(info.get("plan_mode", False))
+        agent.set_additional_dirs(info.get("additional_dirs", []))
         agents[name] = agent
 
     if agent.is_running():
@@ -158,6 +162,26 @@ async def set_mode(name: str, req: ModeRequest):
     return {"status": "ok", "mode": req.mode}
 
 
+@app.post("/api/sessions/{name}/dirs")
+async def add_dir(name: str, req: AddDirRequest):
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+
+    info = json.loads((session_dir / "session.json").read_text())
+    dirs = info.get("additional_dirs", [])
+    if req.path not in dirs:
+        dirs.append(req.path)
+    info["additional_dirs"] = dirs
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+
+    agent = agents.get(name)
+    if agent:
+        agent.set_additional_dirs(dirs)
+
+    return {"status": "ok", "additional_dirs": dirs}
+
+
 @app.get("/api/sessions/{name}/info")
 async def get_session_info(name: str):
     agent = agents.get(name)
@@ -173,6 +197,7 @@ async def get_session_info(name: str):
             "token_count": 0,
             "max_context_tokens": int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS)),
             "plan_mode": info.get("plan_mode", False),
+            "additional_dirs": info.get("additional_dirs", []),
         }
     return {
         "name": name,
@@ -181,6 +206,7 @@ async def get_session_info(name: str):
         "token_count": agent._token_count,
         "max_context_tokens": agent.max_context_tokens,
         "plan_mode": agent._plan_mode,
+        "additional_dirs": [str(d) for d in agent._additional_dirs],
     }
 
 

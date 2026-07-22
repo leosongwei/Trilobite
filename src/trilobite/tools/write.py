@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
 
+from src.trilobite.file_access import resolve_file_path
 from src.trilobite.tools.tool import Tool
 
 
@@ -30,14 +31,15 @@ class WriteTool(Tool):
         self,
         working_dir: Path,
         session_dir: Path,
+        additional_dirs: list[Path] | None = None,
         filename: str = "",
         old_str: str = "",
         new_str: str = "",
         **kwargs: Any,
     ) -> str:
-        filepath = (working_dir / filename).resolve()
-        if not filepath.is_relative_to(working_dir):
-            return "Error: Access denied - file is outside working directory"
+        filepath, error = resolve_file_path(filename, working_dir, additional_dirs)
+        if error:
+            return error
 
         existed = filepath.exists()
         is_dir = existed and filepath.is_dir()
