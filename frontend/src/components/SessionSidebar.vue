@@ -20,15 +20,17 @@
       </div>
     </div>
     <div v-if="state.currentSession" class="dirs-section">
-      <label>Allowed directories:</label>
-      <div v-for="d in state.additionalDirs" :key="d" class="dir-item">
-        <span class="dir-path" :title="d">{{ d }}</span>
-        <span class="delete" @click="handleRemoveDir(d)">&times;</span>
-      </div>
-      <div class="dir-add">
-        <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
-        <button @click="handleAddDir">+</button>
-      </div>
+      <details>
+        <summary>Allowed directories ({{ state.additionalDirs.length }})</summary>
+        <div v-for="d in state.additionalDirs" :key="d" class="dir-item">
+          <span class="dir-path" :title="d">{{ d }}</span>
+          <span class="delete" @click="handleRemoveDir(d)">&times;</span>
+        </div>
+        <div class="dir-add">
+          <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
+          <button @click="handleAddDir">+</button>
+        </div>
+      </details>
     </div>
   </aside>
 </template>

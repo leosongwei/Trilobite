@@ -78,7 +78,15 @@ body {
   padding: 8px 16px;
   border-top: 1px solid #313244;
 }
-.dirs-section label { font-size: 11px; color: #6c7086; display: block; margin-bottom: 4px; }
+.dirs-section summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: #6c7086;
+  margin-bottom: 4px;
+}
+.dirs-section summary:hover { color: #a6adc8; }
+.dirs-section .dir-item,
+.dirs-section .dir-add { margin-top: 4px; }
 .dir-item {
   display: flex;
   justify-content: space-between;
