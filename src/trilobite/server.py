@@ -96,6 +96,8 @@ async def create_session(req: SessionCreate):
         session_dir=session_dir,
         config=config,
     )
+    info["session_id"] = agent.session_id
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
     agents[name] = agent
     return {"status": "ok", "name": name}
 
@@ -124,6 +126,7 @@ async def send_message(name: str, req: MessageRequest):
             working_dir=info["working_dir"],
             session_dir=session_dir,
             config=config,
+            session_id=info.get("session_id"),
         )
         agent.set_plan_mode(info.get("plan_mode", False))
         agent.set_additional_dirs(info.get("additional_dirs", []))

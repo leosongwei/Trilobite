@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -10,6 +12,20 @@ from src.trilobite.compaction import compact_if_needed
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, load_system_prompt
 from src.trilobite.history import History
 from src.trilobite.tool_call import execute_tool, get_tool_definitions
+
+_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+def _generate_session_id() -> str:
+    """Generate an opencode-style session ID: ses_ + 26 chars."""
+    ts_ms = int(time.time() * 1000)
+    # descending: bitwise NOT of (timestamp * 4096 + counter)
+    current = (ts_ms << 12)  # * 4096, counter 0 is fine
+    value = ~current & 0xFFFFFFFFFFFFFFFF  # 64-bit NOT
+    time_hex = "".join(
+        f"{(value >> (40 - 8 * i)) & 0xFF:02x}" for i in range(6)
+    )
+    rand = "".join(_CHARS[b % 62] for b in os.urandom(14))
+    return f"ses_{time_hex}{rand}"
 
 PLAN_MODE_NOTIFICATION = (
     "Your operational mode has changed from build to plan.\n"
@@ -25,18 +41,19 @@ BUILD_MODE_NOTIFICATION = (
 
 
 class Agent:
-    def __init__(self, name: str, working_dir: str, session_dir: Path, config: dict[str, str]):
+    def __init__(self, name: str, working_dir: str, session_dir: Path, config: dict[str, str], session_id: str | None = None):
         self.name = name
         self.working_dir = Path(working_dir).resolve()
         self.session_dir = session_dir
         self.config = config
+        self._session_id = session_id or _generate_session_id()
         self.client = AsyncOpenAI(
             api_key=config["api_key"],
             base_url=config["api_url"],
             default_headers={
                 "User-Agent": "opencode/1.18.4",
-                "x-session-affinity": name,
-                "X-Session-Id": name,
+                "x-session-affinity": self._session_id,
+                "X-Session-Id": self._session_id,
             },
         )
         self.model = config["model"]
@@ -61,6 +78,10 @@ class Agent:
         self._permission_event: asyncio.Event = asyncio.Event()
         self._permission_approved: bool = False
         self._permission_path: str = ""
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
