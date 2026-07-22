@@ -170,7 +170,7 @@ async def get_history(name: str):
         if history_path.exists():
             return json.loads(history_path.read_text())
         return []
-    return agent.history
+    return agent.history.raw
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")

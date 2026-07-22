@@ -33,10 +33,10 @@ history.insert(0, {"role": "system", "content": system_prompt + working_context}
 
 ### 正常请求
 
-system 消息已经在 history 中，直接将整个 history 作为 messages 发送：
+system 消息已经在 history 中，通过 `get_api_messages()` 获取（会合并连续 user 消息，但 system 消息不受影响）：
 
 ```python
-messages = self.history  # 第一条就是 system 消息
+messages = self.history.get_api_messages()  # 第一条就是 system 消息
 ```
 
 **不重新构建** system 消息。即使此时 `config/system_prompt.txt` 或 `AGENTS.md` 发生了变化，history 中的 system 消息保持不变。

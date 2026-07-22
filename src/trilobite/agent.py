@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 
 from src.trilobite.compaction import compact_if_needed
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, load_system_prompt
+from src.trilobite.history import History
 from src.trilobite.tool_call import execute_tool, get_tool_definitions
 
 
@@ -24,7 +25,7 @@ class Agent:
         self.compaction_trigger_ratio = float(config.get("compaction_trigger_ratio", 0.7))
         self.system_prompt = load_system_prompt()
         self.working_context = self._load_working_context()
-        self.history: list[dict] = []
+        self.history = History(session_dir / "history.json")
         self._compacted_summary: str | None = None
         self._token_count: int = 0
         self._token_covered: int = 0
@@ -32,9 +33,6 @@ class Agent:
         self._stream_queue: asyncio.Queue[dict] | None = None
         self._steering: asyncio.Event = asyncio.Event()
         self._steer_messages: list[str] = []
-
-        self.history_path = session_dir / "history.json"
-        self._load_history()
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
@@ -47,13 +45,6 @@ class Agent:
                 return ""
         return ""
 
-    def _load_history(self):
-        if self.history_path.exists():
-            try:
-                self.history = json.loads(self.history_path.read_text())
-            except Exception:
-                self.history = []
-
     def _ensure_system_message(self):
         """Ensure history starts with a system message.
 
@@ -62,11 +53,6 @@ class Agent:
         """
         if not self.history or self.history[0].get("role") != "system":
             self.history.insert(0, {"role": "system", "content": self.system_prompt + self.working_context})
-            self._save_history()
-
-    def _save_history(self):
-        self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.history_path.write_text(json.dumps(self.history, indent=2, ensure_ascii=False))
 
     async def _send_stream_event(self, event: dict):
         if self._stream_queue is not None:
@@ -85,7 +71,7 @@ class Agent:
             while True:
                 if await compact_if_needed(self):
                     continue
-                messages = self.history
+                messages = self.history.get_api_messages()
 
                 await self._send_stream_event({"type": "turn"})
 
@@ -219,8 +205,6 @@ class Agent:
                             "content": result,
                         })
 
-                    self._save_history()
-
                     # Check for steering between tool calls
                     if self._check_steer():
                         await self._send_stream_event({"type": "status", "text": "steered - processing new input..."})
@@ -229,7 +213,6 @@ class Agent:
                     if thinking:
                         assistant_final["reasoning_content"] = thinking
                     self.history.append(assistant_final)
-                    self._save_history()
                     await self._send_stream_event({"type": "done"})
                     break
 
@@ -241,7 +224,6 @@ class Agent:
                 if thinking:
                     msg["reasoning_content"] = thinking
                 self.history.append(msg)
-                self._save_history()
             await self._send_stream_event({"type": "cancelled"})
             raise
         except Exception as e:
@@ -255,11 +237,10 @@ class Agent:
         """Check if steering messages were queued and add them to history. Returns True if steered."""
         if not self._steer_messages:
             return False
-        msg = "\n\n".join(self._steer_messages)
+        messages = [{"role": "user", "content": m} for m in self._steer_messages]
         self._steer_messages.clear()
         self._steering.clear()
-        self.history.append({"role": "user", "content": msg})
-        self._save_history()
+        self.history.extend(messages)
         return True
 
     def steer(self, message: str):
@@ -268,7 +249,6 @@ class Agent:
 
     def add_user_message(self, message: str):
         self.history.append({"role": "user", "content": message})
-        self._save_history()
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()

@@ -2,7 +2,30 @@
 
 ## 概述
 
-对话历史是 agent 的记忆载体，持久化在 `config/sessions/<session_name>/history.json`。每次用户请求和 API 返回都会全量序列化到这个文件。history 的第一条消息始终是 system 消息（详见 [context_building.md](./context_building.md)）。
+对话历史是 agent 的记忆载体，由 `History` 类管理，持久化在 `config/sessions/<session_name>/history.json`。每次用户请求和 API 返回都会全量序列化到这个文件。history 的第一条消息始终是 system 消息（详见 [context_building.md](./context_building.md)）。
+
+## History 类
+
+`History` 类封装了历史的读取、保存和 API 投影功能：
+
+| 方法 | 说明 |
+|------|------|
+| `append(msg)` | 追加一条消息并保存 |
+| `extend(msgs)` | 批量追加并保存 |
+| `insert(i, msg)` | 在指定位置插入并保存 |
+| `replace_all(msgs)` | 替换全部消息并保存 |
+| `get_api_messages()` | 返回合并后的消息列表（用于发送 API） |
+| `raw` | 原始消息列表（用于 compaction、history endpoint 等） |
+
+### 存储与投影的分离
+
+消息在 history.json 中**逐条独立存储**，保留原始边界。发送给 API 时，`get_api_messages()` 会将连续的 user 消息合并为一条（文本用 `\n\n` 连接），避免连续同角色消息导致 API 异常。
+
+```
+history.json 存储:                    API 收到:
+{"role": "user", "content": "用 Python"}     ┐
+{"role": "user", "content": "另外加上日志"}  ┘ -> {"role": "user", "content": "用 Python\n\n另外加上日志"}
+```
 
 ## 消息类型
 
@@ -62,12 +85,12 @@ history 中包含四种角色的消息：
 
 ## 保存时机
 
-以下操作后都会全量序列化 history 到 `history.json`：
+以下操作后都会自动序列化 history 到 `history.json`（`append`/`extend`/`insert`/`replace_all` 均自动保存）：
 
 | 时机 | 代码位置 | 说明 |
 |------|----------|------|
 | 添加用户消息 | `add_user_message()` | 用户发送消息时 |
-| 保存 assistant + tool 消息 | `run()` 工具调用分支 | 每轮工具调用结束后 |
+| 保存 assistant + tool 消息 | `run()` 工具调用分支 | 每条消息追加时 |
 | 保存 assistant 最终回复 | `run()` done 分支 | 模型给出最终答案时 |
 | Steering 消息注入 | `_check_steer()` | 用户在运行中追加消息时 |
 | 取消时保存部分输出 | `run()` CancelledError | 保留已有的思维链和文本 |
@@ -140,6 +163,8 @@ history 中包含四种角色的消息：
 
 用户发送"写个脚本"，模型开始调用工具。在工具执行间隙，用户追加"用 Python"：
 
+history.json 中**独立存储**每条 steering 消息：
+
 ```json
 [
   { "role": "system", "content": "..." },
@@ -157,14 +182,25 @@ history 中包含四种角色的消息：
 ]
 ```
 
-steering 消息在工具调用结束后被注入到 history 中，下一轮 API 请求会看到这条新输入。
-
 ### 多条 steering 消息
 
-用户在同一个工具执行间隙连发多条消息时，所有消息都会被保留，合并为一条 user 消息（用空行分隔），避免出现连续的 user 消息导致 API 异常：
+用户在同一个工具执行间隙连发多条消息时，每条消息**独立存储**在 history 中：
 
+```json
+[
+  { "role": "tool", "tool_call_id": "call_1", "content": "..." },
+  { "role": "user", "content": "用 Python" },
+  { "role": "user", "content": "另外加上日志" }
+]
 ```
-用户连发: "用 Python" + "另外加上日志"
-->
-{"role": "user", "content": "用 Python\n\n另外加上日志"}
+
+发送给 API 时，`get_api_messages()` 自动合并连续的 user 消息：
+
+```json
+[
+  { "role": "tool", "tool_call_id": "call_1", "content": "..." },
+  { "role": "user", "content": "用 Python\n\n另外加上日志" }
+]
 ```
+
+这样既保留了原始消息边界（history.json 忠实记录），又避免了 API 对连续同角色消息的兼容性问题。

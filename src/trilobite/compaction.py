@@ -43,7 +43,8 @@ async def compact_if_needed(agent: Agent) -> bool:
         return False
 
     # System message is always at index 0; skip it for boundary finding
-    conv_history = agent.history[1:] if agent.history and agent.history[0].get("role") == "system" else agent.history
+    raw = agent.history.raw
+    conv_history = raw[1:] if raw and raw[0].get("role") == "system" else raw
 
     boundary = find_compact_boundary(conv_history)
     if boundary < 1:
@@ -90,21 +91,20 @@ async def compact_if_needed(agent: Agent) -> bool:
     agent._compacted_summary = summary
     summary_msg = f"[Context summary]\n{summary}"
 
-    agent.history = [
+    agent.history.replace_all([
         system_msg,
         {"role": "user", "content": summary_msg},
         {"role": "assistant", "content": "Understood. Continuing with the task."},
         *recent_messages,
-    ]
+    ])
     agent._token_count = 0
     agent._token_covered = 0
-    agent._save_history()
     return True
 
 
 def _should_compact(agent: Agent) -> bool:
     tools = get_tool_definitions()
-    pending = agent.history[agent._token_covered :]
+    pending = agent.history.raw[agent._token_covered :]
     estimated = (
         agent._token_count
         + estimate_tokens_for_messages(pending)
