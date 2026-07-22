@@ -31,7 +31,7 @@ separate frontend build is needed. Install it with `uv pip`:
 
 ```bash
 uv pip install dist/trilobite-0.1.0-py3-none-any.whl
-trilobite   # starts uvicorn on 0.0.0.0:8000
+trilobite   # starts uvicorn on 0.0.0.0:2345
 ```
 
 `uv pip install` installs into the active environment. For an isolated global
@@ -76,7 +76,7 @@ You can also customize:
 uv run trilobite
 ```
 
-Then open http://localhost:8000.
+Then open http://localhost:2345.
 
 ### Frontend development
 
@@ -86,7 +86,7 @@ For hot-reload during frontend development:
 # Terminal 1: backend
 uv run trilobite
 
-# Terminal 2: Vite dev server (proxies /api to :8000)
+# Terminal 2: Vite dev server (proxies /api to :2345)
 cd frontend && npm run dev
 ```
 

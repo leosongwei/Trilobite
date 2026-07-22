@@ -81,7 +81,7 @@ Token 超过 `compaction_trigger_ratio` 阈值时触发压缩。提示词采用 
 
 ```bash
 pip install dist/trilobite-0.1.0-py3-none-any.whl
-trilobite   # entry point，启动 uvicorn (0.0.0.0:8000)
+trilobite   # entry point，启动 uvicorn (0.0.0.0:2345)
 ```
 
 首次运行会从包内 `config_example/` 把默认配置 seed 到 `~/.config/trilobite/`。
