@@ -3,7 +3,6 @@
     <ThinkingBlock
       v-if="turn.thinking"
       :content="turn.thinking"
-      :default-open="streaming"
     />
     <div
       v-if="turn.text"

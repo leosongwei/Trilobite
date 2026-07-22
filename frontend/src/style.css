@@ -180,14 +180,29 @@ body {
   margin-bottom: 6px;
   color: #6a9955;
   font-style: italic;
-  white-space: pre-wrap;
+  line-height: 1.5;
 }
-.turn-block .thinking summary {
+.turn-block .thinking-header {
   cursor: pointer;
   color: #6a9955;
   font-style: normal;
+  user-select: none;
 }
-.turn-block .thinking summary:hover { color: #8bc36a; }
+.turn-block .thinking-header:hover { color: #8bc36a; }
+.turn-block .thinking-toggle { margin-right: 4px; }
+.turn-block .thinking-body {
+  position: relative;
+  max-height: 4.5em; /* ~3 lines */
+  overflow: hidden;
+  margin-bottom: 2px;
+}
+.turn-block .thinking-content {
+  display: block;
+  white-space: pre-wrap;
+}
+.turn-block .thinking-body.expanded {
+  max-height: none;
+}
 
 .tool-entry { margin: 4px 0 8px 8px; }
 .tool-action {
