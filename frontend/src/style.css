@@ -73,6 +73,52 @@ body {
 .session-item.active { background: #45475a; }
 .session-item .delete { color: #f38ba8; cursor: pointer; padding: 0 4px; }
 
+/* Additional dirs */
+.dirs-section {
+  padding: 8px 16px;
+  border-top: 1px solid #313244;
+}
+.dirs-section label { font-size: 11px; color: #6c7086; display: block; margin-bottom: 4px; }
+.dir-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  margin-bottom: 2px;
+  background: #1e1e2e;
+  border-radius: 4px;
+}
+.dir-path {
+  font-size: 12px;
+  color: #a6adc8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.dir-add { display: flex; gap: 4px; margin-top: 4px; }
+.dir-add input {
+  flex: 1;
+  padding: 6px;
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  color: #cdd6f4;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.dir-add button {
+  padding: 6px 10px;
+  background: #313244;
+  color: #cdd6f4;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+}
+.dir-add button:hover { background: #45475a; }
+
 /* Main */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .chat { flex: 1; overflow-y: auto; padding: 16px; }

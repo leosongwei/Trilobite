@@ -182,6 +182,25 @@ async def add_dir(name: str, req: AddDirRequest):
     return {"status": "ok", "additional_dirs": dirs}
 
 
+@app.delete("/api/sessions/{name}/dirs")
+async def remove_dir(name: str, req: AddDirRequest):
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+
+    info = json.loads((session_dir / "session.json").read_text())
+    dirs = info.get("additional_dirs", [])
+    dirs = [d for d in dirs if d != req.path]
+    info["additional_dirs"] = dirs
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+
+    agent = agents.get(name)
+    if agent:
+        agent.set_additional_dirs(dirs)
+
+    return {"status": "ok", "additional_dirs": dirs}
+
+
 @app.get("/api/sessions/{name}/info")
 async def get_session_info(name: str):
     agent = agents.get(name)

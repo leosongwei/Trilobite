@@ -43,6 +43,7 @@ export interface SessionInfo {
   token_count: number
   max_context_tokens: number
   plan_mode: boolean
+  additional_dirs: string[]
 }
 
 export type ToolStatus = 'streaming' | 'running' | 'done'

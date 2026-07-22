@@ -12,6 +12,7 @@ interface State {
   statusText: string | null
   streamTick: number
   planMode: boolean
+  additionalDirs: string[]
 }
 
 const state = reactive<State>({
@@ -24,6 +25,7 @@ const state = reactive<State>({
   statusText: null,
   streamTick: 0,
   planMode: false,
+  additionalDirs: [],
 })
 
 let currentTurnIdx = -1
@@ -209,6 +211,7 @@ export function useStore() {
     await loadHistory()
     const info = await api.getSessionInfo(name)
     state.planMode = info.plan_mode
+    state.additionalDirs = info.additional_dirs ?? []
   }
 
   async function createSession(name: string, workingDir: string) {
@@ -219,6 +222,7 @@ export function useStore() {
     state.tokenCount = 0
     state.statusText = null
     state.planMode = false
+    state.additionalDirs = []
     await loadSessions()
     const info = await api.getSessionInfo(name)
     state.maxTokens = info.max_context_tokens
@@ -233,6 +237,7 @@ export function useStore() {
       state.maxTokens = 0
       state.statusText = null
       state.planMode = false
+      state.additionalDirs = []
       closeTurn()
     }
     await loadSessions()
@@ -247,6 +252,7 @@ export function useStore() {
     state.maxTokens = info.max_context_tokens
     state.tokenCount = info.token_count
     state.planMode = info.plan_mode
+    state.additionalDirs = info.additional_dirs ?? []
   }
 
   async function sendMessage(message: string) {
@@ -292,6 +298,16 @@ export function useStore() {
     state.planMode = mode === 'plan'
   }
 
+  async function addDir(path: string) {
+    if (!state.currentSession) return
+    state.additionalDirs = await api.addDir(state.currentSession, path)
+  }
+
+  async function removeDir(path: string) {
+    if (!state.currentSession) return
+    state.additionalDirs = await api.removeDir(state.currentSession, path)
+  }
+
   return {
     state,
     loadSessions,
@@ -302,5 +318,7 @@ export function useStore() {
     sendMessage,
     stopAgent,
     setMode,
+    addDir,
+    removeDir,
   }
 }

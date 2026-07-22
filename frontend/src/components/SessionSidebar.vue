@@ -19,6 +19,17 @@
         <span class="delete" @click.stop="handleDelete(s.name)">&times;</span>
       </div>
     </div>
+    <div v-if="state.currentSession" class="dirs-section">
+      <label>Allowed directories:</label>
+      <div v-for="d in state.additionalDirs" :key="d" class="dir-item">
+        <span class="dir-path" :title="d">{{ d }}</span>
+        <span class="delete" @click="handleRemoveDir(d)">&times;</span>
+      </div>
+      <div class="dir-add">
+        <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
+        <button @click="handleAddDir">+</button>
+      </div>
+    </div>
   </aside>
 </template>
 
@@ -28,9 +39,10 @@ import { useStore } from '../store'
 
 const emit = defineEmits<{ select: [] }>()
 
-const { state, selectSession, createSession, deleteSession } = useStore()
+const { state, selectSession, createSession, deleteSession, addDir, removeDir } = useStore()
 const name = ref('')
 const workingDir = ref('')
+const newDir = ref('')
 
 async function handleSelect(sessionName: string) {
   await selectSession(sessionName)
@@ -54,5 +66,16 @@ async function handleCreate() {
 async function handleDelete(sessionName: string) {
   if (!confirm(`Delete session "${sessionName}"?`)) return
   await deleteSession(sessionName)
+}
+
+async function handleAddDir() {
+  const path = newDir.value.trim()
+  if (!path) return
+  await addDir(path)
+  newDir.value = ''
+}
+
+async function handleRemoveDir(path: string) {
+  await removeDir(path)
 }
 </script>

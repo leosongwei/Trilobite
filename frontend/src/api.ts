@@ -45,6 +45,26 @@ export async function setMode(name: string, mode: 'plan' | 'build'): Promise<voi
   })
 }
 
+export async function addDir(name: string, path: string): Promise<string[]> {
+  const res = await fetch(`/api/sessions/${encode(name)}/dirs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  const data = await res.json()
+  return data.additional_dirs ?? []
+}
+
+export async function removeDir(name: string, path: string): Promise<string[]> {
+  const res = await fetch(`/api/sessions/${encode(name)}/dirs`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  const data = await res.json()
+  return data.additional_dirs ?? []
+}
+
 export async function getSessionInfo(name: string): Promise<SessionInfo> {
   const res = await fetch(`/api/sessions/${encode(name)}/info`)
   if (!res.ok) throw new Error('Session not found')
