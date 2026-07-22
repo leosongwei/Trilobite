@@ -14,6 +14,7 @@ interface State {
   planMode: boolean
   additionalDirs: string[]
   planExitRequest: boolean
+  permissionRequest: { path: string; tool: string; message: string } | null
 }
 
 const state = reactive<State>({
@@ -28,6 +29,7 @@ const state = reactive<State>({
   planMode: false,
   additionalDirs: [],
   planExitRequest: false,
+  permissionRequest: null,
 })
 
 let currentTurnIdx = -1
@@ -139,6 +141,14 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'plan_exit_request':
       state.planExitRequest = true
+      break
+
+    case 'permission_request':
+      state.permissionRequest = {
+        path: event.path,
+        tool: event.tool,
+        message: event.message,
+      }
       break
 
     case 'done':
@@ -351,6 +361,24 @@ export function useStore() {
     await api.planExit(state.currentSession, false)
   }
 
+  async function approvePermission() {
+    if (!state.currentSession || !state.permissionRequest) return
+    const permPath = state.permissionRequest.path
+    state.permissionRequest = null
+    // Add the directory to additional_dirs
+    if (!state.additionalDirs.includes(permPath)) {
+      state.additionalDirs.push(permPath)
+      await api.addDir(state.currentSession, permPath)
+    }
+    await api.resolvePermission(state.currentSession, true)
+  }
+
+  async function rejectPermission() {
+    if (!state.currentSession || !state.permissionRequest) return
+    state.permissionRequest = null
+    await api.resolvePermission(state.currentSession, false)
+  }
+
   return {
     state,
     loadSessions,
@@ -365,5 +393,7 @@ export function useStore() {
     removeDir,
     approvePlanExit,
     rejectPlanExit,
+    approvePermission,
+    rejectPermission,
   }
 }

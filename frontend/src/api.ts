@@ -79,6 +79,14 @@ export async function planExit(name: string, approved: boolean): Promise<void> {
   })
 }
 
+export async function resolvePermission(name: string, approved: boolean): Promise<void> {
+  await fetch(`/api/sessions/${encode(name)}/permission`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved }),
+  })
+}
+
 export async function getSessionInfo(name: string): Promise<SessionInfo> {
   const res = await fetch(`/api/sessions/${encode(name)}/info`)
   if (!res.ok) throw new Error('Session not found')

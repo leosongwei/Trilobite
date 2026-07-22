@@ -76,7 +76,7 @@ async def create_session(req: SessionCreate):
         raise HTTPException(400, "Session already exists")
 
     session_dir.mkdir(parents=True, exist_ok=True)
-    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False}
+    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": []}
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 
     agent = Agent(
@@ -157,6 +157,14 @@ async def plan_exit_decision(name: str, req: PlanExitRequest):
     agent = agents.get(name)
     if agent:
         agent.resolve_plan_exit(req.approved)
+    return {"status": "ok"}
+
+
+@app.post("/api/sessions/{name}/permission")
+async def permission_decision(name: str, req: PlanExitRequest):
+    agent = agents.get(name)
+    if agent:
+        agent.resolve_permission(req.approved)
     return {"status": "ok"}
 
 

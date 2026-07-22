@@ -39,7 +39,9 @@ class WriteTool(Tool):
         new_str: str = "",
         **kwargs: Any,
     ) -> str | dict[str, Any]:
-        filepath, error = resolve_file_path(filename, working_dir, additional_dirs)
+        filepath, error, perm_path = resolve_file_path(filename, working_dir, additional_dirs)
+        if perm_path:
+            return {"result": error, "permission": perm_path}
         if error:
             return error
 

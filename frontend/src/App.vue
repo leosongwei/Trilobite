@@ -10,6 +10,11 @@
         <button class="approve" @click="approvePlanExit">Approve</button>
         <button class="reject" @click="rejectPlanExit">Reject</button>
       </div>
+      <div v-if="state.permissionRequest" class="plan-exit-banner">
+        <span>Agent needs access to: {{ state.permissionRequest.path }}</span>
+        <button class="approve" @click="approvePermission">Grant</button>
+        <button class="reject" @click="rejectPermission">Deny</button>
+      </div>
       <ChatInput />
       <TokenBar />
     </main>
@@ -24,7 +29,7 @@ import ChatView from './components/ChatView.vue'
 import ChatInput from './components/ChatInput.vue'
 import TokenBar from './components/TokenBar.vue'
 
-const { state, loadSessions, approvePlanExit, rejectPlanExit } = useStore()
+const { state, loadSessions, approvePlanExit, rejectPlanExit, approvePermission, rejectPermission } = useStore()
 const sidebarOpen = ref(false)
 
 watch(() => state.currentSession, () => {

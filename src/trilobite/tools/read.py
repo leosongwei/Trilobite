@@ -44,8 +44,10 @@ class ReadTool(Tool):
         start_line: int = 0,
         limit_chars: int = 10000,
         **kwargs: Any,
-    ) -> str:
-        filepath, error = resolve_file_path(filename, working_dir, additional_dirs)
+    ) -> str | dict[str, Any]:
+        filepath, error, perm_path = resolve_file_path(filename, working_dir, additional_dirs)
+        if perm_path:
+            return {"result": error, "permission": perm_path}
         if error:
             return error
         if not filepath.exists():

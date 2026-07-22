@@ -46,10 +46,13 @@ def resolve_file_path(
     filename: str,
     working_dir: Path,
     additional_dirs: list[Path] | None = None,
-) -> tuple[Path | None, str | None]:
+) -> tuple[Path | None, str | None, str | None]:
     """Resolve and validate a file path.
 
-    Returns (resolved_path, None) on success, (None, error_message) on failure.
+    Returns:
+        (resolved_path, None, None) on success.
+        (None, error_message, None) on hard error.
+        (None, error_message, permission_path) when access can be granted by user.
     """
     if additional_dirs is None:
         additional_dirs = []
@@ -62,15 +65,14 @@ def resolve_file_path(
         filepath = (working_dir / filename).resolve()
 
     if is_sensitive_file(filepath):
-        return None, f"Error: Access to sensitive file denied: {filename}"
+        return None, f"Error: Access to sensitive file denied: {filename}", None
 
     all_dirs = [working_dir] + additional_dirs
     in_workspace = any(filepath.is_relative_to(d) for d in all_dirs)
 
-    if not in_workspace and not is_absolute:
-        return None, (
-            f"Error: Path escapes working directory: {filename}. "
-            "Use an absolute path to access files outside the workspace."
-        )
+    if not in_workspace:
+        parent = str(filepath.parent)
+        msg = f"Access needed outside workspace: {filename}"
+        return None, msg, parent
 
-    return filepath, None
+    return filepath, None, None

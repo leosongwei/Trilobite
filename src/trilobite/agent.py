@@ -50,6 +50,9 @@ class Agent:
         self._additional_dirs: list[Path] = []
         self._plan_exit_event: asyncio.Event = asyncio.Event()
         self._plan_exit_approved: bool = False
+        self._permission_event: asyncio.Event = asyncio.Event()
+        self._permission_approved: bool = False
+        self._permission_path: str = ""
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
@@ -80,6 +83,22 @@ class Agent:
     def resolve_plan_exit(self, approved: bool):
         self._plan_exit_approved = approved
         self._plan_exit_event.set()
+
+    def resolve_permission(self, approved: bool):
+        self._permission_approved = approved
+        self._permission_event.set()
+
+    def _persist_additional_dirs(self):
+        """Write additional_dirs back to session.json."""
+        import json
+        session_json = self.session_dir / "session.json"
+        if session_json.exists():
+            try:
+                info = json.loads(session_json.read_text())
+                info["additional_dirs"] = [str(d) for d in self._additional_dirs]
+                session_json.write_text(json.dumps(info, indent=2))
+            except Exception:
+                pass
 
     async def _send_stream_event(self, event: dict):
         if self._stream_queue is not None:
@@ -253,6 +272,24 @@ class Agent:
                             tool_result = {"result": "Error: write tool is not available in plan mode. Call exit_plan_mode to request switching to build mode."}
                         else:
                             tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
+
+                        # Handle permission request from tool
+                        if "permission" in tool_result:
+                            perm_path = tool_result["permission"]
+                            await self._send_stream_event({
+                                "type": "permission_request",
+                                "path": perm_path,
+                                "tool": tool_name,
+                                "message": tool_result["result"],
+                            })
+                            self._permission_event.clear()
+                            await self._permission_event.wait()
+                            if self._permission_approved:
+                                self._additional_dirs.append(Path(perm_path).resolve())
+                                self._persist_additional_dirs()
+                                # Retry the tool with updated additional_dirs
+                                tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
+                            # else: keep original error result
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"]}
                         if "diff_prev" in tool_result:

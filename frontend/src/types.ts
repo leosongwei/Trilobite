@@ -8,6 +8,7 @@ export type SSEEvent =
   | { type: 'usage'; token_count: number; max_context_tokens: number }
   | { type: 'status'; text: string }
   | { type: 'plan_exit_request' }
+  | { type: 'permission_request'; path: string; tool: string; message: string }
   | { type: 'done' }
   | { type: 'cancelled' }
   | { type: 'error'; text: string; status_code?: number; error_type?: string; error_code?: string }
