@@ -15,7 +15,7 @@ export async function getSessions(): Promise<Session[]> {
   return res.json()
 }
 
-export async function createSession(name: string, workingDir: string): Promise<void> {
+export async function createSession(name: string, workingDir: string): Promise<string> {
   const res = await fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -25,6 +25,8 @@ export async function createSession(name: string, workingDir: string): Promise<v
     const err = await res.json()
     throw new Error(err.detail || 'Failed to create session')
   }
+  const data = await res.json()
+  return data.name
 }
 
 export async function deleteSession(name: string): Promise<void> {

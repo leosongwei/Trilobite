@@ -255,8 +255,8 @@ export function useStore() {
   }
 
   async function createSession(name: string, workingDir: string) {
-    await api.createSession(name, workingDir)
-    state.currentSession = name
+    const actualName = await api.createSession(name, workingDir)
+    state.currentSession = actualName
     closeTurn()
     state.chatItems = []
     state.tokenCount = 0
@@ -264,7 +264,7 @@ export function useStore() {
     state.planMode = false
     state.additionalDirs = []
     await loadSessions()
-    const info = await api.getSessionInfo(name)
+    const info = await api.getSessionInfo(actualName)
     state.maxTokens = info.max_context_tokens
   }
 

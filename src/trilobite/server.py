@@ -69,24 +69,35 @@ async def list_sessions():
     return result
 
 
+def _resolve_session_name(name: str) -> str:
+    """If a session with `name` already exists, append (2), (3), etc. until unique."""
+    sessions_dir = get_sessions_dir()
+    candidate = name
+    if (sessions_dir / candidate).exists():
+        n = 2
+        while (sessions_dir / f"{name}({n})").exists():
+            n += 1
+        candidate = f"{name}({n})"
+    return candidate
+
+
 @app.post("/api/sessions")
 async def create_session(req: SessionCreate):
-    session_dir = get_sessions_dir() / req.name
-    if session_dir.exists():
-        raise HTTPException(400, "Session already exists")
+    name = _resolve_session_name(req.name)
+    session_dir = get_sessions_dir() / name
 
     session_dir.mkdir(parents=True, exist_ok=True)
-    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": []}
+    info = {"name": name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": []}
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 
     agent = Agent(
-        name=req.name,
+        name=name,
         working_dir=req.working_dir,
         session_dir=session_dir,
         config=config,
     )
-    agents[req.name] = agent
-    return {"status": "ok", "name": req.name}
+    agents[name] = agent
+    return {"status": "ok", "name": name}
 
 
 @app.delete("/api/sessions/{name}")

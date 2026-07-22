@@ -47,14 +47,8 @@ const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
 
-onMounted(async () => {
-  try {
-    const cwd = await getCwd()
-    workingDir.value = cwd
-    name.value = cwd.split('/').pop() || cwd
-  } catch {
-    // keep empty
-  }
+onMounted(() => {
+  resetDefaults()
 })
 
 async function handleSelect(sessionName: string) {
@@ -69,10 +63,20 @@ async function handleCreate() {
   }
   try {
     await createSession(name.value.trim(), workingDir.value.trim())
-    name.value = ''
-    workingDir.value = ''
+    resetDefaults()
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function resetDefaults() {
+  try {
+    const cwd = await getCwd()
+    workingDir.value = cwd
+    name.value = cwd.split('/').pop() || cwd
+  } catch {
+    name.value = ''
+    workingDir.value = ''
   }
 }
 
