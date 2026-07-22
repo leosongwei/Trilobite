@@ -308,13 +308,35 @@ button[title="Stop"]:not(:disabled):hover { background: #d73a3a; }
 
 /* ── Token bar ── */
 .token-bar {
-  padding: 4px 16px 8px;
+  position: relative;
+  margin: 4px 16px 8px;
+  height: 20px;
+  background: #2a2a2a;
+  border-radius: 4px;
+  overflow: hidden;
   font-size: 11px;
-  color: #858585;
   font-family: ui-monospace, 'Cascadia Code', monospace;
 }
-.token-bar.warn { color: #cca700; }
-.token-bar.danger { color: #f44747; }
+.token-bar-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: #3a3a3a;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.token-bar.safe .token-bar-fill { background: #1a3a1a; }
+.token-bar.warn .token-bar-fill { background: #3a3a1a; }
+.token-bar.danger .token-bar-fill { background: #3a1a1a; }
+.token-bar-text {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: 100%;
+  padding: 0 8px;
+  color: #fff;
+}
 
 .empty-state {
   display: flex;
@@ -361,7 +383,7 @@ button[title="Stop"]:not(:disabled):hover { background: #d73a3a; }
   .tool-result { max-height: 200px; }
   .input-area { padding: 8px; }
   .input-area textarea { min-height: 36px; }
-  .token-bar { padding: 4px 8px 8px; }
+  .token-bar { margin: 4px 8px 8px; }
 }
 
 /* ── Markdown ── */

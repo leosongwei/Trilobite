@@ -1,5 +1,8 @@
 <template>
-  <div class="token-bar" :class="barClass">{{ barText }}</div>
+  <div class="token-bar" :class="barClass">
+    <div class="token-bar-fill" :style="{ width: fillPct + '%' }"></div>
+    <span class="token-bar-text">{{ barText }}</span>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -19,10 +22,18 @@ const barText = computed(() => {
   return 'Tokens: \u2014'
 })
 
+const fillPct = computed(() => {
+  if (state.maxTokens > 0) {
+    return Math.min(100, (state.tokenCount / state.maxTokens) * 100)
+  }
+  return 0
+})
+
 const barClass = computed(() => {
   if (state.maxTokens > 0) {
-    if (state.tokenCount >= state.maxTokens * 0.9) return 'danger'
-    if (state.tokenCount >= state.maxTokens * 0.7) return 'warn'
+    if (state.tokenCount >= state.maxTokens * 0.6) return 'danger'
+    if (state.tokenCount >= state.maxTokens * 0.3) return 'warn'
+    return 'safe'
   }
   return ''
 })

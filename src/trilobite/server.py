@@ -237,7 +237,7 @@ async def get_session_info(name: str):
             "name": name,
             "working_dir": info["working_dir"],
             "is_running": False,
-            "token_count": 0,
+            "token_count": info.get("token_count", 0),
             "max_context_tokens": int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS)),
             "plan_mode": info.get("plan_mode", False),
             "additional_dirs": info.get("additional_dirs", []),

@@ -90,12 +90,20 @@ class Agent:
 
     def _persist_additional_dirs(self):
         """Write additional_dirs back to session.json."""
+        self._update_session_json({"additional_dirs": [str(d) for d in self._additional_dirs]})
+
+    def _persist_token_count(self):
+        """Write token_count back to session.json."""
+        self._update_session_json({"token_count": self._token_count})
+
+    def _update_session_json(self, updates: dict):
+        """Update fields in session.json."""
         import json
         session_json = self.session_dir / "session.json"
         if session_json.exists():
             try:
                 info = json.loads(session_json.read_text())
-                info["additional_dirs"] = [str(d) for d in self._additional_dirs]
+                info.update(updates)
                 session_json.write_text(json.dumps(info, indent=2))
             except Exception:
                 pass
@@ -159,6 +167,7 @@ class Agent:
                     if chunk.usage:
                         self._token_count = chunk.usage.total_tokens
                         self._token_covered = len(self.history)
+                        self._persist_token_count()
 
                     if delta is None:
                         continue
