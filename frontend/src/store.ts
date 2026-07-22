@@ -297,9 +297,28 @@ async function runStream(name: string) {
   }
 }
 
+// ── session list polling ────────────────────────────────────────────────────
+// The SSE stream is per-session, so it carries nothing about *other* sessions.
+// The sidebar lists every session, so it is refreshed on a short poll: cheap
+// (the endpoint just reads session.json files) and enough to make new/deleted
+// sessions and running state appear across multiple browsers.
+let sessionPollTimer: ReturnType<typeof setInterval> | null = null
+
+function ensureSessionPolling() {
+  if (sessionPollTimer !== null) return
+  sessionPollTimer = setInterval(async () => {
+    try {
+      state.sessions = await api.getSessions()
+    } catch {
+      // transient error; the next tick retries
+    }
+  }, 3000)
+}
+
 export function useStore() {
   async function loadSessions() {
     state.sessions = await api.getSessions()
+    ensureSessionPolling()
   }
 
   async function selectSession(name: string) {

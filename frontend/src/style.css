@@ -90,6 +90,9 @@ body {
 }
 .session-item:hover { background: #2a2d2e; }
 .session-item.active { background: #37373d; }
+.session-item .session-label { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-item .running-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: trilobite-pulse 1.4s ease-in-out infinite; }
+@keyframes trilobite-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .session-item .delete { color: #c72e2e; cursor: pointer; padding: 0 4px; opacity: 0; }
 .session-item:hover .delete { opacity: 1; }
 

@@ -15,7 +15,10 @@
         :class="{ active: s.name === state.currentSession }"
         @click="handleSelect(s.name)"
       >
-        <span>{{ s.name }}</span>
+        <span class="session-label">
+          <span v-if="s.is_running" class="running-dot" title="running"></span>
+          {{ s.name }}
+        </span>
         <span class="delete" @click.stop="handleDelete(s.name)">&times;</span>
       </div>
     </div>
