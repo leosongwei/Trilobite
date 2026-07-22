@@ -1,18 +1,34 @@
-You are compacting conversation history to save context space. Your task is to summarize the conversation so far, preserving critical information.
+You are about to run out of context. Write a first-person handoff note to
+yourself so you can seamlessly continue this task after the earlier
+conversation is cleared.
 
-Output text only — do NOT call any tools and NEVER prefix your response with tool calls.
+Write the note as your own continuing train of thought — first person, present
+tense, the way you would reason through the next move. Write in the same language
+the conversation has been using.
 
-What to preserve (in order of importance):
-1. Current task state — what is being worked on right now
-2. Errors encountered and their solutions
-3. Code changes made (final versions, not intermediate attempts)
-4. Project structure, dependencies, environment
-5. Design decisions and rationale
-6. Pending todo items
-7. All user messages (summarize the requests, not verbatim)
+Make the note self-sufficient: the next turn will see only your most recent user
+messages and this note — every assistant message, tool call, and tool result
+above will be gone. Preserve what you genuinely need to continue:
 
-Output format:
-```
-[Context Summary]
-{summary text — free-form, include the important details listed above}
-```
+- What the latest request is actually asking for: your reading of its intent and
+  any ambiguity you have already resolved. If the request is large, preserve the
+  parts at risk of being dropped — above all the actual ask.
+- The instructions and constraints currently in force (user preferences,
+  project rules, environment) — what you chose and why, and what is still open.
+- What has actually been done, at high fidelity: exact commands run, exact file
+  paths touched, whether each succeeded or failed — and the results themselves
+  (key output lines, error text, schema a lookup revealed). Keep only the final
+  working version of any code; drop intermediate attempts and resolved errors.
+- What you still don't know: files or paths referenced but not yet read,
+  schemas or APIs assumed but unseen, questions not yet answered.
+- The forward plan: exact next command or tool call, the remaining sequence to
+  finish, decisions already made for upcoming steps, obstacles you can foresee
+  and how to handle them. Anything you settle here is one less thing the next
+  turn must rediscover.
+
+Be honest about uncertainty. If something was claimed done but never verified,
+say so plainly and treat it as unverified. Be concise and proportional to the
+task — a trivial exchange needs only a sentence or two. Do not transcribe the
+todo list; it will be re-attached automatically.
+
+Respond with text only. Do not call any tools.
