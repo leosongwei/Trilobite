@@ -13,7 +13,7 @@
         :key="s.name"
         class="session-item"
         :class="{ active: s.name === state.currentSession }"
-        @click="selectSession(s.name)"
+        @click="handleSelect(s.name)"
       >
         <span>{{ s.name }}</span>
         <span class="delete" @click.stop="handleDelete(s.name)">&times;</span>
@@ -26,9 +26,16 @@
 import { ref } from 'vue'
 import { useStore } from '../store'
 
+const emit = defineEmits<{ select: [] }>()
+
 const { state, selectSession, createSession, deleteSession } = useStore()
 const name = ref('')
 const workingDir = ref('')
+
+async function handleSelect(sessionName: string) {
+  await selectSession(sessionName)
+  emit('select')
+}
 
 async function handleCreate() {
   if (!name.value.trim() || !workingDir.value.trim()) {
