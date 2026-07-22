@@ -30,7 +30,15 @@ class Agent:
         self.working_dir = Path(working_dir).resolve()
         self.session_dir = session_dir
         self.config = config
-        self.client = AsyncOpenAI(api_key=config["api_key"], base_url=config["api_url"])
+        self.client = AsyncOpenAI(
+            api_key=config["api_key"],
+            base_url=config["api_url"],
+            default_headers={
+                "User-Agent": "opencode/1.18.4",
+                "x-session-affinity": name,
+                "X-Session-Id": name,
+            },
+        )
         self.model = config["model"]
         self.reasoning_effort = config.get("reasoning_effort", "max")
         self.max_context_tokens = int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS))
