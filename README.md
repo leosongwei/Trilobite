@@ -81,3 +81,39 @@ Open http://localhost:5173. Changes to `.vue`/`.ts` files update instantly.
 - Context automatically compacts via LLM summarization when approaching the token limit
 - Stop button (■) cancels current thinking while preserving partial output
 - Press Enter to send, type while the agent is running to steer
+
+### System prompt assembly
+
+Each API request sends the following message sequence:
+
+```
+[
+  { "role": "system",    "content": system_prompt + working_context },
+  ...conversation history (user / assistant / tool messages)...
+]
+```
+
+Where the system message is concatenated as:
+
+| Part | Source | Description |
+|------|--------|-------------|
+| `system_prompt` | `config/system_prompt.txt` | Base instructions for the agent |
+| `working_context` | `<working_dir>/AGENTS.md` | If present, wrapped in `<AGENTS.md>...</AGENTS.md>` and appended |
+
+On context compaction, the system prompt + working context is reused, and the compacted history begins with a `[Context summary]` followed by `[Working context - project rules]`.
+
+### Agent loop
+
+Each user message triggers an agentic loop that runs until the model produces a final answer with no tool calls:
+
+1. **Compaction check** — if token usage exceeds the trigger ratio, summarize older history via LLM and replace it with a compact summary.
+2. **Build messages** — concatenate `system_prompt + working_context` as the system message, followed by the full conversation history.
+3. **Stream API call** — send the messages with tool definitions and thinking mode enabled; stream back thinking tokens, text content, and tool call arguments.
+4. **Accumulate response** — collect streamed `reasoning_content`, `content`, and `tool_calls` into complete pieces.
+5. **Branch**:
+   - **If tool calls returned** — execute each tool sequentially in the working directory, append tool results to history, then check for steering input (see below) and loop back to step 1.
+   - **If no tool calls** — the text content is the final answer; save it to history, emit `done`, and exit the loop.
+
+**Steering**: while the loop is running, the user can type new messages. These are queued and injected into history between tool-call rounds, so the next API call sees the new input without interrupting the current stream.
+
+**Cancellation**: the stop button cancels the current task. Partial thinking and text are saved to history before exiting.
