@@ -113,47 +113,67 @@ async def delete_session(name: str):
     return {"status": "ok"}
 
 
+def _get_or_create_agent(name: str) -> Agent:
+    """Return the in-memory agent for a session, creating it from disk if needed.
+
+    Shared by the message, stream, cancel and other endpoints so that a session
+    is always loaded consistently.
+    """
+    agent = agents.get(name)
+    if agent is not None:
+        return agent
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    info = json.loads((session_dir / "session.json").read_text())
+    agent = Agent(
+        name=name,
+        working_dir=info["working_dir"],
+        session_dir=session_dir,
+        config=config,
+        session_id=info.get("session_id"),
+    )
+    agent.set_plan_mode(info.get("plan_mode", False))
+    agent.set_additional_dirs(info.get("additional_dirs", []))
+    agents[name] = agent
+    return agent
+
+
 @app.post("/api/sessions/{name}/message")
 async def send_message(name: str, req: MessageRequest):
-    agent = agents.get(name)
-    if agent is None:
-        session_dir = get_sessions_dir() / name
-        if not session_dir.exists():
-            raise HTTPException(404, "Session not found")
-        info = json.loads((session_dir / "session.json").read_text())
-        agent = Agent(
-            name=name,
-            working_dir=info["working_dir"],
-            session_dir=session_dir,
-            config=config,
-            session_id=info.get("session_id"),
-        )
-        agent.set_plan_mode(info.get("plan_mode", False))
-        agent.set_additional_dirs(info.get("additional_dirs", []))
-        agents[name] = agent
-
+    agent = _get_or_create_agent(name)
     if agent.is_running():
-        agent.steer(req.message)
+        await agent.steer(req.message)
         return {"status": "steered"}
+    # The agent runs as an independent task; the HTTP response returns
+    # immediately. Output is delivered through the /stream subscription
+    # endpoint, so closing the browser never cancels an in-progress run.
+    await agent.start(req.message)
+    return {"status": "started"}
 
-    agent.add_user_message(req.message)
-    stream_queue: asyncio.Queue[dict] = asyncio.Queue()
+
+@app.get("/api/sessions/{name}/stream")
+async def stream_session(name: str, request: Request):
+    agent = _get_or_create_agent(name)
+    queue, snapshot = await agent.attach_subscriber()
 
     async def event_stream():
-        task = asyncio.create_task(agent.run(stream_queue))
         try:
+            # init carries a consistent snapshot of committed history plus the
+            # current run state; the broker then replays the in-progress run's
+            # buffered events through this same queue before live events.
+            yield f"data: {json.dumps({'type': 'init', **snapshot}, ensure_ascii=False)}\n\n"
             while True:
-                event = await stream_queue.get()
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                if event.get("type") in ("done", "error", "cancelled"):
-                    break
-        finally:
-            if not task.done():
-                task.cancel()
                 try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        break
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            agent.detach_subscriber(queue)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

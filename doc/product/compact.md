@@ -131,6 +131,8 @@ history 被替换为：
 
 前端将其显示为状态条，让用户知道正在进行上下文压缩。
 
+压缩重写了 history（`replace_all`），因此 run 循环在 compaction 返回后会调用 `StreamBroker.commit`：把已提交历史长度推进到当前长度并清空回放缓冲，避免重连客户端的 `init` 快照与回放缓冲重复（详见 `streaming.md`）。
+
 ## 边界情况
 
 - **历史太短**：`find_compact_boundary` 在消息数 ≤ 3 时返回 -1，不执行压缩。

@@ -5,8 +5,9 @@
 Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/FastAPI)** 和 **前端 (Vue 3/TypeScript)** 两部分。
 ## 后端 (`src/trilobite/`)
 
-* `server.py` — FastAPI 应用入口，提供 REST API 和 SSE 流式端点，挂载静态前端文件。
+* `server.py` - FastAPI 应用入口。`POST /message` 启动/转向 agent（返回 JSON，agent 作为独立 task 运行，关闭浏览器不会取消运行）；`GET /stream` SSE 订阅端点广播实时输出；挂载静态前端文件。
 * `agent.py` — 核心 Agent 类。管理会话生命周期：加载 working context (`AGENTS.md`)，与 LLM 流式对话，循环执行 tool calls，支持 plan/build 双模式切换和用户 steering。
+* `broker.py` - 流式事件总线（StreamBroker）。解耦 agent 运行与 HTTP 请求：事件广播到所有订阅者，维护当前 run 的回放缓冲和已提交历史长度（`persisted_len`），支持浏览器多开、关闭重开、切 tab 恢复。详见 `doc/product/streaming.md`。
 * `history.py` — 对话历史管理。持久化到 JSON 文件，提供 API 调用的消息合并（连续同 role 消息合并避免 API 报错）。
 * `tool_call.py` — 工具注册与分发。维护工具列表，将 `exit_plan_mode` 作为内置 virtual tool 注入。
 * `compaction.py` — 上下文压缩。当 token 使用超过阈值时，将旧对话压缩为摘要，拼接回历史。
@@ -25,7 +26,7 @@ Vue 3 + TypeScript，构建后输出到 `src/trilobite/static/`，由 FastAPI �
 
 * `main.ts` — 入口
 * `App.vue` — 根组件，布局 sidebar + chat + token bar
-* `store.ts` — 全局状态：sessions、chat items、SSE 流处理、plan mode
+* `store.ts` - 全局状态：sessions、chat items、SSE 订阅流处理（`init` 重建对话、事件驱动 isStreaming、断线自动重连）、plan mode
 * `api.ts` — HTTP API 封装
 * `types.ts` — TypeScript 类型定义
 * `components/` — ChatView、ChatInput、SessionSidebar、TokenBar、TurnBlock、ThinkingBlock、ToolEntry

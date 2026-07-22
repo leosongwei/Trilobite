@@ -33,12 +33,17 @@ export async function deleteSession(name: string): Promise<void> {
   await fetch(`/api/sessions/${encode(name)}`, { method: 'DELETE' })
 }
 
-export async function sendMessageSteer(name: string, message: string): Promise<void> {
-  await fetch(`/api/sessions/${encode(name)}/message`, {
+export async function sendMessage(name: string, message: string): Promise<{ status: string }> {
+  const res = await fetch(`/api/sessions/${encode(name)}/message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
   })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to send message')
+  }
+  return res.json()
 }
 
 export async function cancelSession(name: string): Promise<void> {
@@ -101,16 +106,12 @@ export async function getHistory(name: string): Promise<HistoryMessage[]> {
   return res.json()
 }
 
-export async function* sendMessageStream(
+export async function* subscribeStream(
   name: string,
-  message: string,
+  signal: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
-  const res = await fetch(`/api/sessions/${encode(name)}/message`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
-  })
-
+  const res = await fetch(`/api/sessions/${encode(name)}/stream`, { signal })
+  if (!res.ok) throw new Error('Stream connection failed')
   if (!res.body) throw new Error('No response body')
 
   const reader = res.body.getReader()
@@ -126,20 +127,13 @@ export async function* sendMessageStream(
     buffer = lines.pop() || ''
 
     for (const line of lines) {
+      // SSE comments (e.g. ": keepalive") don't start with "data: "
       if (!line.startsWith('data: ')) continue
       try {
         yield JSON.parse(line.slice(6)) as SSEEvent
       } catch {
         // skip malformed lines
       }
-    }
-  }
-
-  if (buffer.startsWith('data: ')) {
-    try {
-      yield JSON.parse(buffer.slice(6)) as SSEEvent
-    } catch {
-      // ignore incomplete buffer
     }
   }
 }

@@ -63,7 +63,24 @@ function closeTurn() {
 
 function handleSSEEvent(event: SSEEvent) {
   switch (event.type) {
+    case 'init': {
+      state.chatItems = parseHistory(event.history)
+      state.isStreaming = event.is_running
+      state.tokenCount = event.token_count
+      state.maxTokens = event.max_context_tokens
+      state.planMode = event.plan_mode
+      state.additionalDirs = event.additional_dirs ?? []
+      closeTurn()
+      break
+    }
+
+    case 'user': {
+      state.chatItems.push({ kind: 'user', content: event.text })
+      break
+    }
+
     case 'turn':
+      state.isStreaming = true
       newTurn()
       break
 
@@ -153,10 +170,12 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'done':
     case 'cancelled':
+      state.isStreaming = false
       closeTurn()
       break
 
     case 'error': {
+      state.isStreaming = false
       let content = ''
       if (event.status_code) {
         content += `[HTTP ${event.status_code}] `
@@ -238,6 +257,46 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
   return items
 }
 
+// ── stream subscription ────────────────────────────────────────────────────
+// One SSE subscription tracks the current session. Switching sessions aborts
+// the old stream and opens a new one; the init event plus the replayed buffer
+// reconstruct state, so closing/reopening a tab or opening a second window
+// always shows the live (or in-progress) output.
+let streamAbort: AbortController | null = null
+let streamSession: string | null = null
+
+async function connectStream(name: string) {
+  if (streamAbort) streamAbort.abort()
+  streamSession = name
+  void runStream(name)
+}
+
+function disconnectStream() {
+  streamSession = null
+  if (streamAbort) streamAbort.abort()
+  streamAbort = null
+}
+
+async function runStream(name: string) {
+  while (streamSession === name) {
+    const ac = new AbortController()
+    streamAbort = ac
+    try {
+      const stream = api.subscribeStream(name, ac.signal)
+      for await (const event of stream) {
+        if (streamSession !== name) break
+        handleSSEEvent(event)
+      }
+    } catch (e) {
+      // Aborted (session switch / disconnect) - stop the loop.
+      if (ac.signal.aborted || streamSession !== name) return
+      // Network error - retry after a short backoff.
+    }
+    if (streamSession !== name) return
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+}
+
 export function useStore() {
   async function loadSessions() {
     state.sessions = await api.getSessions()
@@ -246,12 +305,11 @@ export function useStore() {
   async function selectSession(name: string) {
     state.currentSession = name
     closeTurn()
+    state.chatItems = []
     state.statusText = null
+    state.isStreaming = false
     await loadSessions()
-    await loadHistory()
-    const info = await api.getSessionInfo(name)
-    state.planMode = info.plan_mode
-    state.additionalDirs = info.additional_dirs ?? []
+    connectStream(name)
   }
 
   async function createSession(name: string, workingDir: string) {
@@ -263,14 +321,15 @@ export function useStore() {
     state.statusText = null
     state.planMode = false
     state.additionalDirs = []
+    state.isStreaming = false
     await loadSessions()
-    const info = await api.getSessionInfo(actualName)
-    state.maxTokens = info.max_context_tokens
+    connectStream(actualName)
   }
 
   async function deleteSession(name: string) {
     await api.deleteSession(name)
     if (state.currentSession === name) {
+      disconnectStream()
       state.currentSession = null
       state.chatItems = []
       state.tokenCount = 0
@@ -278,53 +337,26 @@ export function useStore() {
       state.statusText = null
       state.planMode = false
       state.additionalDirs = []
+      state.isStreaming = false
       closeTurn()
     }
     await loadSessions()
   }
 
-  async function loadHistory() {
-    if (!state.currentSession) return
-    const history = await api.getHistory(state.currentSession)
-    state.chatItems = parseHistory(history)
-
-    const info = await api.getSessionInfo(state.currentSession)
-    state.maxTokens = info.max_context_tokens
-    state.tokenCount = info.token_count
-    state.planMode = info.plan_mode
-    state.additionalDirs = info.additional_dirs ?? []
-  }
-
   async function sendMessage(message: string) {
     if (!state.currentSession) return
-
-    state.chatItems.push({ kind: 'user', content: message })
-
-    if (state.isStreaming) {
-      await api.sendMessageSteer(state.currentSession, message)
-      return
-    }
-
-    state.isStreaming = true
-    state.statusText = null
-    closeTurn()
-
+    // The user message is rendered from the "user" stream event (emitted by
+    // the agent on start/steer), not pushed here, so reconnects stay
+    // consistent with server-side history.
     try {
-      const stream = api.sendMessageStream(state.currentSession, message)
-      for await (const event of stream) {
-        handleSSEEvent(event)
-      }
+      await api.sendMessage(state.currentSession, message)
     } catch (e) {
       state.chatItems.push({
         kind: 'error',
-        content: `Connection error: ${e instanceof Error ? e.message : String(e)}`,
+        content: `Failed to send: ${e instanceof Error ? e.message : String(e)}`,
       })
+      state.streamTick++
     }
-
-    closeTurn()
-    state.isStreaming = false
-    state.statusText = null
-    state.streamTick++
   }
 
   async function stopAgent() {
@@ -385,7 +417,6 @@ export function useStore() {
     selectSession,
     createSession,
     deleteSession,
-    loadHistory,
     sendMessage,
     stopAgent,
     setMode,

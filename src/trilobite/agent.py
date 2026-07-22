@@ -10,6 +10,7 @@ from pathlib import Path
 
 import httpx
 
+from src.trilobite.broker import StreamBroker
 from src.trilobite.compaction import compact_if_needed
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt
 from src.trilobite.history import History
@@ -201,11 +202,11 @@ class Agent:
         self.system_prompt = load_system_prompt()
         self.working_context = self._load_working_context()
         self.history = History(session_dir / "history.json")
+        self._broker = StreamBroker(len(self.history.raw))
         self._compacted_summary: str | None = None
         self._token_count: int = 0
         self._token_covered: int = 0
         self._task: asyncio.Task | None = None
-        self._stream_queue: asyncio.Queue[dict] | None = None
         self._steering: asyncio.Event = asyncio.Event()
         self._steer_messages: list[str] = []
         self._plan_mode: bool = False
@@ -299,11 +300,9 @@ class Agent:
                 pass
 
     async def _send_stream_event(self, event: dict):
-        if self._stream_queue is not None:
-            await self._stream_queue.put(event)
+        await self._broker.publish(event, len(self.history.raw))
 
-    async def run(self, stream_queue: asyncio.Queue[dict]):
-        self._stream_queue = stream_queue
+    async def run(self):
         self._task = asyncio.current_task()
 
         content_parts: list[str] = []
@@ -323,6 +322,7 @@ class Agent:
         try:
             while True:
                 if await compact_if_needed(self):
+                    await self._broker.commit(len(self.history.raw))
                     continue
                 messages = self.history.get_api_messages()
                 if mode_notification:
@@ -555,6 +555,12 @@ class Agent:
                 "error_type": error_type,
                 "error_code": error_code,
             })
+        finally:
+            # The run is over regardless of how it ended; clear the running
+            # flag (a safety net — done/cancelled/error already set it) and
+            # drop the task reference so is_running() is accurate.
+            self._broker.set_running(False)
+            self._task = None
 
     def _check_steer(self) -> bool:
         """Check if steering messages were queued and add them to history. Returns True if steered."""
@@ -566,7 +572,8 @@ class Agent:
         self.history.extend(messages)
         return True
 
-    def steer(self, message: str):
+    async def steer(self, message: str):
+        await self._send_stream_event({"type": "user", "text": message})
         self._steer_messages.append(message)
         self._steering.set()
 
@@ -574,7 +581,33 @@ class Agent:
         self.history.append({"role": "user", "content": message})
 
     def is_running(self) -> bool:
-        return self._task is not None and not self._task.done()
+        return self._broker.is_running
+
+    async def start(self, message: str) -> None:
+        """Begin a run independently of any HTTP request lifecycle.
+
+        Closing a browser only drops SSE subscribers; the agent keeps running
+        because the task created here is not tied to any request. The user
+        message is emitted as a stream event so every subscriber (and any
+        reconnecting client) renders it consistently.
+        """
+        self.add_user_message(message)
+        self._broker.set_running(True)
+        await self._send_stream_event({"type": "user", "text": message})
+        self._task = asyncio.create_task(self.run())
+
+    async def attach_subscriber(self) -> tuple[asyncio.Queue, dict]:
+        """Subscribe a client: replay the current run and snapshot history."""
+        return await self._broker.attach(
+            self.history.raw,
+            self._token_count,
+            self.max_context_tokens,
+            self._plan_mode,
+            [str(d) for d in self._additional_dirs],
+        )
+
+    def detach_subscriber(self, q: asyncio.Queue) -> None:
+        self._broker.detach(q)
 
     def cancel(self):
         if self._task and not self._task.done():

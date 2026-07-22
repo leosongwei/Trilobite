@@ -1,4 +1,6 @@
 export type SSEEvent =
+  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[] }
+  | { type: 'user'; text: string }
   | { type: 'turn' }
   | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }
