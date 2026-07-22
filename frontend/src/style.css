@@ -192,6 +192,10 @@ body {
   font-size: 12px;
   margin-bottom: 2px;
 }
+.tool-diff,
+.tool-diff * {
+  font-size: 13px !important;
+}
 .tool-result {
   color: #d4d4d4;
   font-size: 12px;
