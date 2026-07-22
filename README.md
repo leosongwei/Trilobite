@@ -27,15 +27,15 @@ This compiles to `src/trilobite/static/` (gitignored). Runtime only needs FastAP
 ## Install from a built wheel
 
 A built wheel (from `./build.sh`) already bundles the frontend assets, so no
-separate frontend build is needed. Install it with `uv pip`:
+separate frontend build is needed. Install it globally as an isolated CLI tool:
 
 ```bash
-uv pip install dist/trilobite-0.1.0-py3-none-any.whl
+uv tool install dist/trilobite-0.1.0-py3-none-any.whl
 trilobite   # starts uvicorn on 0.0.0.0:2345
 ```
 
-`uv pip install` installs into the active environment. For an isolated global
-CLI use `uv tool install dist/trilobite-0.1.0-py3-none-any.whl` instead.
+`uv tool install` puts the `trilobite` command on your PATH in its own
+isolated environment. Upgrade later with `uv tool upgrade trilobite`.
 
 To build the wheel yourself:
 
