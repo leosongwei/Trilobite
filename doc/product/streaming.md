@@ -74,3 +74,8 @@ per-session 事件总线，维护：
 * `isStreaming` 由 `turn`/`done`/`cancelled`/`error` 事件驱动。
 * `sendMessage` 只 POST，不处理流。
 * 网络断开自动重连（1s 退避）；切换 session 主动 abort 旧连接。
+
+### 工具结果展示（`ToolEntry.vue`）
+
+* `read` 工具的结果默认折叠（`<details>` 收起），仅显示标签行 `[read: <filename>]`，点击展开查看完整输出，避免长文件内容刷屏。
+* `bash`、`write` 等工具仍默认展开（`write` 走 diff 视图）。

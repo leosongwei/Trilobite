@@ -1,18 +1,26 @@
 <template>
   <div class="tool-entry">
-    <div class="tool-action">
-      [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
-    </div>
-    <Diff
-      v-if="tool.diffPrev"
-      class="tool-diff"
-      :mode="'unified'"
-      :theme="'dark'"
-      :language="'plaintext'"
-      :prev="tool.diffPrev"
-      :current="tool.diffCurrent!"
-    />
-    <pre v-else class="tool-result">{{ displayContent }}</pre>
+    <details v-if="isRead" class="tool-collapsible">
+      <summary class="tool-action">
+        [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
+      </summary>
+      <pre class="tool-result">{{ displayContent }}</pre>
+    </details>
+    <template v-else>
+      <div class="tool-action">
+        [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
+      </div>
+      <Diff
+        v-if="tool.diffPrev"
+        class="tool-diff"
+        :mode="'unified'"
+        :theme="'dark'"
+        :language="'plaintext'"
+        :prev="tool.diffPrev"
+        :current="tool.diffCurrent!"
+      />
+      <pre v-else class="tool-result">{{ displayContent }}</pre>
+    </template>
   </div>
 </template>
 
@@ -21,6 +29,8 @@ import { computed } from 'vue'
 import type { ToolDisplay } from '../types'
 
 const props = defineProps<{ tool: ToolDisplay }>()
+
+const isRead = computed(() => props.tool.name === 'read')
 
 const label = computed(() => {
   const args = props.tool.startArgs
