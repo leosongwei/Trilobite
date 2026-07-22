@@ -152,6 +152,21 @@ async def send_message(name: str, req: MessageRequest):
     return {"status": "started"}
 
 
+class RevertRequest(BaseModel):
+    user_seq: int
+    message: str
+
+
+@app.post("/api/sessions/{name}/revert")
+async def revert_message(name: str, req: RevertRequest):
+    agent = _get_or_create_agent(name)
+    try:
+        status = await agent.revert(req.user_seq, req.message)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user message not found")
+    return {"status": status}
+
+
 @app.get("/api/sessions/{name}/stream")
 async def stream_session(name: str, request: Request):
     agent = _get_or_create_agent(name)

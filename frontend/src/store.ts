@@ -75,7 +75,15 @@ function handleSSEEvent(event: SSEEvent) {
     }
 
     case 'user': {
-      state.chatItems.push({ kind: 'user', content: event.text })
+      state.chatItems.push({ kind: 'user', content: event.text, userSeq: event.user_seq })
+      break
+    }
+
+    case 'user_edit': {
+      const item = state.chatItems.find(
+        (it) => it.kind === 'user' && it.userSeq === event.user_seq,
+      )
+      if (item && item.kind === 'user') item.content = event.text
       break
     }
 
@@ -196,12 +204,13 @@ function handleSSEEvent(event: SSEEvent) {
 function parseHistory(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = []
   let i = 0
+  let userSeq = 0
 
   while (i < history.length) {
     const msg = history[i]
 
     if (msg.role === 'user') {
-      items.push({ kind: 'user', content: msg.content || '' })
+      items.push({ kind: 'user', content: msg.content || '', userSeq: userSeq++ })
       i++
       continue
     }
@@ -430,6 +439,25 @@ export function useStore() {
     await api.resolvePermission(state.currentSession, false)
   }
 
+  async function revert(userSeq: number, message: string) {
+    if (!state.currentSession) return
+    try {
+      const res = await api.revert(state.currentSession, userSeq, message)
+      if (res.status === 'rerun') {
+        // Reconnect so init rebuilds chatItems from the truncated history and
+        // the replayed buffer carries the new user message + fresh run.
+        connectStream(state.currentSession)
+      }
+      // 'queued': the user_edit event updates the message in place; no reconnect.
+    } catch (e) {
+      state.chatItems.push({
+        kind: 'error',
+        content: `Failed to revert: ${e instanceof Error ? e.message : String(e)}`,
+      })
+      state.streamTick++
+    }
+  }
+
   return {
     state,
     loadSessions,
@@ -445,5 +473,6 @@ export function useStore() {
     rejectPlanExit,
     approvePermission,
     rejectPermission,
+    revert,
   }
 }

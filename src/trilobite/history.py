@@ -45,6 +45,11 @@ class History:
         self._messages = list(messages)
         self.save()
 
+    def truncate(self, index: int):
+        """Drop every message from ``index`` onward (inclusive)."""
+        self._messages = self._messages[:index]
+        self.save()
+
     def get_api_messages(self) -> list[dict]:
         """Return a copy with consecutive user messages merged."""
         result: list[dict] = []

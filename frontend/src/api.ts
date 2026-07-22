@@ -46,6 +46,19 @@ export async function sendMessage(name: string, message: string): Promise<{ stat
   return res.json()
 }
 
+export async function revert(name: string, userSeq: number, message: string): Promise<{ status: string }> {
+  const res = await fetch(`/api/sessions/${encode(name)}/revert`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_seq: userSeq, message }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to revert')
+  }
+  return res.json()
+}
+
 export async function cancelSession(name: string): Promise<void> {
   await fetch(`/api/sessions/${encode(name)}/cancel`, { method: 'POST' })
 }

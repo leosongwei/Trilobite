@@ -5,7 +5,7 @@
     </template>
     <template v-else>
       <template v-for="(item, idx) in state.chatItems" :key="state.currentSession + '-' + idx">
-        <div v-if="item.kind === 'user'" class="message user">{{ item.content }}</div>
+        <UserMessage v-if="item.kind === 'user'" :item="item" />
         <TurnBlock
           v-else-if="item.kind === 'turn'"
           :turn="item"
@@ -22,6 +22,7 @@
 import { ref, watch, nextTick } from 'vue'
 import { useStore } from '../store'
 import TurnBlock from './TurnBlock.vue'
+import UserMessage from './UserMessage.vue'
 import { typesetMath } from '../utils/mathjax'
 
 const { state } = useStore()

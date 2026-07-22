@@ -1,6 +1,7 @@
 export type SSEEvent =
   | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[] }
-  | { type: 'user'; text: string }
+  | { type: 'user'; text: string; user_seq: number }
+  | { type: 'user_edit'; user_seq: number; text: string }
   | { type: 'turn' }
   | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }
@@ -65,6 +66,7 @@ export interface ToolDisplay {
 export interface UserItem {
   kind: 'user'
   content: string
+  userSeq?: number
 }
 
 export interface TurnItem {

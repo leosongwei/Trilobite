@@ -14,6 +14,7 @@
 | `extend(msgs)` | 批量追加并保存 |
 | `insert(i, msg)` | 在指定位置插入并保存 |
 | `replace_all(msgs)` | 替换全部消息并保存 |
+| `truncate(index)` | 丢弃从 `index` 开始的所有消息并保存（revert 用） |
 | `get_api_messages()` | 返回合并后的消息列表（用于发送 API） |
 | `raw` | 原始消息列表（用于 compaction、history endpoint 等） |
 
@@ -217,3 +218,12 @@ foo(2)     → 再次创建，自动变为 foo(4)
 ```
 
 前端 `createSession` 会接收并采用后端返回的实际名称，确保 UI 显示与持久化一致。
+
+## 编辑重发（revert）
+
+用户可以编辑之前发送的某条消息并从该处重新推理（`POST /api/sessions/{name}/revert`，参数 `user_seq` + `message`）。`Agent.revert` 按该消息是否已被模型读取分两种处理：
+
+* **已在 history 中**（模型已读）：若正在运行先 `stop()`（cancel 并等待 run 结束），用 `history.truncate(target)` 丢弃该 user 消息及其后所有内容，`broker.commit(target)` 重置回放基准，再 `start(message)` 重新推理。端点返回 `rerun`，前端重连 SSE，由 `init`（截断后的历史）+ 回放缓冲（新 user 事件 + 新 run）重建对话。
+* **仍在 steer 队列中**（模型尚未读取）：直接替换队列中对应消息，**不中断运行**，并广播 `user_edit` 事件让前端就地更新气泡文本。端点返回 `queued`，前端无需重连。
+
+`user_seq` 由后端在 `user` 事件中携带（`start`/`steer` 时计算），保证前后端对用户消息序号的理解一致。

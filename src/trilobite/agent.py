@@ -572,7 +572,8 @@ class Agent:
         return True
 
     async def steer(self, message: str):
-        await self._send_stream_event({"type": "user", "text": message})
+        user_seq = sum(1 for m in self.history.raw if m.get("role") == "user") + len(self._steer_messages)
+        await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
         self._steer_messages.append(message)
         self._steering.set()
 
@@ -590,9 +591,10 @@ class Agent:
         message is emitted as a stream event so every subscriber (and any
         reconnecting client) renders it consistently.
         """
+        user_seq = sum(1 for m in self.history.raw if m.get("role") == "user")
         self.add_user_message(message)
         self._broker.set_running(True)
-        await self._send_stream_event({"type": "user", "text": message})
+        await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
         self._task = asyncio.create_task(self.run())
 
     async def attach_subscriber(self) -> tuple[asyncio.Queue, dict]:
@@ -611,3 +613,57 @@ class Agent:
     def cancel(self):
         if self._task and not self._task.done():
             self._task.cancel()
+
+    async def stop(self) -> None:
+        """Cancel an in-progress run and wait for it to fully finish."""
+        task = self._task
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._task = None
+        self._broker.set_running(False)
+
+    async def revert(self, user_seq: int, message: str) -> str:
+        """Edit a previously sent user message and rerun from there.
+
+        Two cases:
+
+        * The message is already in history (the model has seen it): stop the
+          run, truncate history to just before that message, then start a fresh
+          run with the edited text.
+        * The message is still queued as a steering message the model has not
+          read yet: replace it in place without interrupting the run.
+
+        Returns ``"rerun"`` or ``"queued"`` so the client knows whether to
+        reconnect (rerun rebuilds from the truncated history) or just apply a
+        local text update (queued).
+        """
+        history_users = sum(1 for m in self.history.raw if m.get("role") == "user")
+        if user_seq < history_users:
+            if self.is_running():
+                await self.stop()
+            target = -1
+            count = 0
+            for i, msg in enumerate(self.history.raw):
+                if msg.get("role") == "user":
+                    if count == user_seq:
+                        target = i
+                        break
+                    count += 1
+            self.history.truncate(target)
+            await self._broker.commit(target)
+            await self.start(message)
+            return "rerun"
+
+        # Still queued, not yet read by the model: swap the text in place.
+        k = user_seq - history_users
+        if not (0 <= k < len(self._steer_messages)):
+            raise ValueError("user message not found")
+        self._steer_messages[k] = message
+        await self._send_stream_event({"type": "user_edit", "user_seq": user_seq, "text": message})
+        return "queued"
