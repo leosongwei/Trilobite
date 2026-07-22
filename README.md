@@ -4,13 +4,25 @@ A coding agent with a web UI, powered by DeepSeek.
 
 ## Install
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.12+ and [uv](https://docs.ustral.sh/uv/).
 
 ```bash
 git clone <repo-url> trilobite
 cd trilobite
 uv sync
 ```
+
+### Frontend
+
+The web UI is a Vue 3 + TypeScript app in `frontend/`. Build it once after install:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+This compiles to `src/trilobite/static/` (gitignored). Runtime only needs FastAPI.
 
 ## Configure
 
@@ -45,6 +57,20 @@ uv run trilobite
 ```
 
 Then open http://localhost:8000.
+
+### Frontend development
+
+For hot-reload during frontend development:
+
+```bash
+# Terminal 1: backend
+uv run trilobite
+
+# Terminal 2: Vite dev server (proxies /api to :8000)
+cd frontend && npm run dev
+```
+
+Open http://localhost:5173. Changes to `.vue`/`.ts` files update instantly.
 
 ## How it works
 

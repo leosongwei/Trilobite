@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -12,7 +12,6 @@ from src.trilobite.agent import Agent
 from src.trilobite.config import init_config, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
 
 app = FastAPI(title="Trilobite")
-app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 agents: dict[str, Agent] = {}
 config: dict = {}
@@ -35,12 +34,6 @@ class SessionInfo(BaseModel):
 async def startup():
     global config
     config = init_config()
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    index_path = Path(__file__).parent / "static" / "index.html"
-    return index_path.read_text(encoding="utf-8")
 
 
 @app.get("/api/sessions")
@@ -178,6 +171,9 @@ async def get_history(name: str):
             return json.loads(history_path.read_text())
         return []
     return agent.history
+
+
+app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")
 
 
 def main():

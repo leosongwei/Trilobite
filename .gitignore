@@ -26,5 +26,10 @@ config/
 .DS_Store
 Thumbs.db
 
+# Frontend
+frontend/node_modules/
+frontend/*.tsbuildinfo
+src/trilobite/static/
+
 # project
 /config
