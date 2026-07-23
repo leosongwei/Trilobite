@@ -289,7 +289,7 @@ sessions/
    - 主 agent 取消时传播取消给运行中的子 agent（硬停）。
 3. **`server.py`**：创建主 agent 时传 `registry=agents`；`/message` 对 sealed 子 agent 拒绝；新增 `POST /api/sessions/{name}/interrupt`（调 `agent.interrupt()`）；`/stream`、`/history`、`/permission` 对子 session 复用现有逻辑；侧边栏 session 列表返回树结构（带 parent/children）。
 4. **前端**：`store.ts` 会话树 + `subagents`/`subagent_state`/`subagent_permission_request` 事件处理；侧边栏树组件；`ToolEntry`（或新 `SubagentTree` 组件）渲染 `task` 节点；子 session 视图（复用 `ChatView`、运行中显示输入+■ 停止按钮（走 interrupt）、sealed 禁用输入、返回导航）；全局权限横幅。`ChatInput.stop()` 按 `isSubagent` 分流：subagent -> `/interrupt`，主 agent -> `/cancel`。
-5. **提示词**：提示词全部硬编码在 `src/trilobite/prompts.py`（不可配置）：`SYSTEM_PROMPT`（含 `task` 工具使用指引：能直接 read/bash 搞定的别开 subagent；开 subagent 要给自包含 prompt；子 agent 输出对用户不可见，主 agent 需转述）、`SUBAGENT_ROLE_PREFIX`（公共前缀）、`SUBAGENT_ROLE_PROMPTS`（explore/general 角色提示）。
+5. **提示词**：提示词全部硬编码在 `src/trilobite/prompts.py`（不可配置）：`SYSTEM_PROMPT`（含 `task` 工具使用指引：subagent 屏蔽上下文、省主 agent token，是非 needle 查询的探索/上下文收集的**首选**方式，可在单次调用里并行多个独立子任务；needle 查询——已知文件路径、单个定义、2-3 个已知文件——直接用 read/grep 不开 subagent；开 subagent 要给自包含 prompt；子 agent 输出对用户不可见，主 agent 需转述）、`SUBAGENT_ROLE_PREFIX`（公共前缀）、`SUBAGENT_ROLE_PROMPTS`（explore/general 角色提示）。`tool_call.py` 的 `TASK_TOOL_DEF` 描述采用同一正向框架（强调省 token + 探索首选，排除项收窄为 needle 查询）。
 
 ## 十二、风险与决策记录
 
@@ -299,3 +299,4 @@ sessions/
 - **plan 模式派生**：仅 explore（只读），禁 general，保住只读语义。
 - **steering 与 sealed**：用户可 steer 运行中的子 agent（有界任务的中途引导）；run 一旦结束即 sealed，不可复用，但历史长期只读可查。
 - **max_steps=100**：纳入 v1 作防失控兜底。
+- **提示词正向框架**：系统提示词和 `task` 工具描述采用正向框架--把 subagent 定位为"屏蔽上下文、省 token、探索首选"，并给出正面用例（如"错误在哪处理""代码库结构"），排除项收窄为 needle 查询（已知文件路径/单个定义/2-3 个已知文件）。早期版本用"不要为单个 read/bash 能做的事开 subagent""spawning costs a full independent run"这类宽泛否定且在提示词与工具描述里各重复一遍，对 DeepSeek 这类对否定指令敏感的模型造成双倍抑制，使模型几乎从不主动 spawn subagent。对照 opencode 的 `task.txt` 与各模型 `prompt/*.txt`（"prefer to use the Task tool to reduce context usage""proactively use"），正向框架是其模型乐于派生 subagent 的主因。

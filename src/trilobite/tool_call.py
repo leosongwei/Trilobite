@@ -40,14 +40,18 @@ TASK_TOOL_DEF: dict = {
     "function": {
         "name": "task",
         "description": (
-            "Spawn subagents to run tasks in parallel with isolated context. "
-            "Each subagent runs independently and returns only its final summary; "
-            "its intermediate work is invisible to you, so give each a fully "
-            "self-contained prompt (goal, relevant file paths, what to return). "
-            "Use this to offload context-heavy exploration/search, or to run "
-            "independent sub-tasks concurrently. Do NOT use it for anything a "
-            "single read/bash could do. The subagents' output is not shown to "
-            "the user -- you must relay/summarize their results yourself."
+            "Spawn subagents to run tasks in parallel, each with isolated "
+            "context. A subagent shields your context - its intermediate work "
+            "stays out of your history, so only its final summary costs you "
+            "tokens. Use this as the preferred way to explore the codebase or "
+            "gather context for any question that is not a needle query for one "
+            "specific file/class, and to run independent sub-tasks concurrently "
+            "in a single call. Give each a fully self-contained prompt (goal, "
+            "relevant file paths, what to return). Skip the subagent for needle "
+            "queries: a known file path -> read; one specific definition -> "
+            "grep; code within 2-3 known files -> read. The subagents' output "
+            "is not shown to the user -- you must relay/summarize their results "
+            "yourself."
         ),
         "parameters": {
             "type": "object",
