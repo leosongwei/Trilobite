@@ -102,6 +102,8 @@ function closeTurn() {
 function handleSSEEvent(event: SSEEvent) {
   switch (event.type) {
     case 'init': {
+      // DEBUG(issue #5 subagent interrupt): log what init actually carries
+      console.log('[init]', { name: streamSession, is_running: event.is_running, is_subagent: event.is_subagent, sealed: event.sealed })
       state.chatItems = parseHistory(event.history)
       state.isStreaming = event.is_running
       state.tokenCount = event.token_count
