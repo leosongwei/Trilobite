@@ -65,10 +65,7 @@ max_context_tokens: 1048576      # 1M
 compaction_trigger_ratio: 0.7    # compact at 70% of context
 ```
 
-You can also customize:
-
-- `~/.config/trilobite/system_prompt.txt` — the system prompt
-- `~/.config/trilobite/compaction_prompt.txt` — instructions for context compaction
+The agent's prompts (system prompt, compaction prompt, subagent roles) are hardcoded in `src/trilobite/prompts.py` and are not user-configurable.
 
 ## Run
 
@@ -117,7 +114,7 @@ Where the system message is concatenated as:
 
 | Part | Source | Description |
 |------|--------|-------------|
-| `system_prompt` | `~/.config/trilobite/system_prompt.txt` | Base instructions for the agent |
+| `system_prompt` | `SYSTEM_PROMPT` in `src/trilobite/prompts.py` | Base instructions for the agent (hardcoded) |
 | `working_context` | `<working_dir>/AGENTS.md` | If present, wrapped in `<AGENTS.md>...</AGENTS.md>` and appended |
 
 On context compaction, the system prompt + working context is reused, and the compacted history begins with a `[Context summary]` followed by `[Working context - project rules]`.

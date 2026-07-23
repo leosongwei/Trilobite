@@ -13,8 +13,9 @@ import httpx
 
 from src.trilobite.broker import StreamBroker
 from src.trilobite.compaction import should_compact, build_compact_prompt
-from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt, load_subagent_role_prefix, load_subagent_role_prompt
+from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS
 from src.trilobite.history import History
+from src.trilobite.prompts import SYSTEM_PROMPT, subagent_system_prompt
 from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
 from src.trilobite.tools.bash import kill_process_group
 from src.trilobite.tool_call import execute_tool
@@ -217,23 +218,15 @@ class Agent:
         self.max_context_tokens = int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS))
         self.max_tokens = int(config.get("max_tokens", DEFAULT_MAX_TOKENS))
         self.compaction_trigger_ratio = float(config.get("compaction_trigger_ratio", 0.7))
-        self.system_prompt = load_system_prompt()
+        self.system_prompt = SYSTEM_PROMPT
         # Subagents override the system prompt with the role prefix + guidance
         # and use a fixed role permission (never plan/build mode).
         self._subagent_type: str | None = subagent_type
         self._description: str = description or ""
         if subagent_type == "explore":
-            self.system_prompt = (
-                load_system_prompt() + "\n\n"
-                + load_subagent_role_prefix() + "\n\n"
-                + load_subagent_role_prompt("explore")
-            )
+            self.system_prompt = subagent_system_prompt("explore")
         elif subagent_type == "general":
-            self.system_prompt = (
-                load_system_prompt() + "\n\n"
-                + load_subagent_role_prefix() + "\n\n"
-                + load_subagent_role_prompt("general")
-            )
+            self.system_prompt = subagent_system_prompt("general")
         self.working_context = self._load_working_context()
         self.history = History(session_dir / "history.json")
         self._broker = StreamBroker(len(self.history.raw))

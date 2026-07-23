@@ -18,7 +18,7 @@ system 消息的内容是两段拼接：
 
 | 部分 | 来源 | 说明 |
 |------|------|------|
-| `system_prompt` | `~/.config/trilobite/system_prompt.txt` | agent 的基础指令 |
+| `system_prompt` | 代码常量 `SYSTEM_PROMPT`（`src/trilobite/prompts.py`） | agent 的基础指令 |
 | `working_context` | `<working_dir>/AGENTS.md` | 如果工作目录下存在 `AGENTS.md`，将其内容用 `<AGENTS.md>` 标签包裹后追加；不存在则为空 |
 
 ## 生命周期
@@ -39,7 +39,7 @@ system 消息已经在 history 中，通过 `get_api_messages()` 获取（会合
 messages = self.history.get_api_messages()  # 第一条就是 system 消息
 ```
 
-**不重新构建** system 消息。即使此时 `~/.config/trilobite/system_prompt.txt` 或 `AGENTS.md` 发生了变化，history 中的 system 消息保持不变。
+**不重新构建** system 消息。即使此时代码中的 `SYSTEM_PROMPT` 或 `AGENTS.md` 发生了变化，history 中的 system 消息保持不变。
 
 ### Compaction 时
 
@@ -47,7 +47,7 @@ compaction 会**重新构建** system 消息（使用当前配置），因为 co
 
 ## 实际例子
 
-假设 `~/.config/trilobite/system_prompt.txt` 内容为：
+假设系统提示词（`SYSTEM_PROMPT`）内容为：
 
 ```
 你是一个编码助手。
@@ -94,7 +94,7 @@ compaction 会**重新构建** system 消息（使用当前配置），因为 co
 
 ### 后续请求
 
-此时即使修改了 `~/.config/trilobite/system_prompt.txt` 或 `AGENTS.md`，history 中的 system 消息不会改变。下一次 API 请求的 messages 直接来自 history：
+此时即使代码中的 `SYSTEM_PROMPT` 或 `AGENTS.md` 被修改，history 中的 system 消息不会改变。下一次 API 请求的 messages 直接来自 history：
 
 ```json
 [
