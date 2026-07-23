@@ -12,7 +12,8 @@ Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/Fa
 * `tool_call.py` - 工具注册与分发。维护全局工具列表，`EXIT_PLAN_MODE_DEF` 作为 virtual tool 定义；`execute_tool` 执行具体工具。
 * `permission.py` - Agent 权限策略抽象。`AgentPermission` 基类承担两个职责：过滤工具列表（`filter_definitions`）+ 拦截调用（`intercept`）。子类区分两类生命周期：**模式**（`BuildModePermission`/`PlanModePermission`，主 agent 运行时热切换）vs **角色**（`ExploreSubagentPermission`/`GeneralSubagentPermission`，subagent 派生时固化）。详见 `doc/product/plan_build_mode.md`。
 * `compaction.py` — 上下文压缩。当 token 使用超过阈值时，将旧对话压缩为摘要，拼接回历史。
-* `config.py` — 配置管理。首次运行自动从包内 `config_example/` 复制默认配置；加载 `system_prompt.txt` 和 `compaction_prompt.txt`。
+* `config.py` — 配置管理。首次运行自动从包内 `config_example/` 复制默认配置（仅 `config.yaml`）。
+* `prompts.py` — 所有提示词（系统提示词、压缩摘要提示词、subagent 角色提示）的代码常量。提示词不可配置，全部硬编码在此。
 * `tokens.py` — 简易 token 估算（字符级，区分 ASCII/CJK）。
 * `file_access.py` — 文件路径解析和安全检查（敏感文件过滤）。
 * `tools/` — 五个具体工具：
@@ -54,8 +55,8 @@ Token 超过 `compaction_trigger_ratio` 阈值时触发压缩。提示词采用 
 ## 配置 (`src/trilobite/config_example/`)
 
 * `config.yaml` — API 密钥、模型、token 上限、压缩触发比例
-* `system_prompt.txt` — 系统提示词（含权限说明）
-* `compaction_prompt.txt` — 压缩摘要提示词（kimi 风格）
+
+提示词（系统提示词、压缩摘要、subagent 角色）不再放在配置里，而是硬编码在 `src/trilobite/prompts.py`，不可配置。
 
 # 构建
 

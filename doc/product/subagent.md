@@ -99,11 +99,11 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 | `parent_broker` | 父 agent 的 broker 引用，用于权限请求全局广播（见第六节） |
 | `max_steps` | 100（默认） |
 
-子 agent 的 `system_prompt` = 基础 system prompt + **TASK_AGENT_ROLE_PREFIX**（公共前缀，见下）+ 角色提示。
+子 agent 的 `system_prompt` = 基础 system prompt（`SYSTEM_PROMPT`）+ **`SUBAGENT_ROLE_PREFIX`**（公共前缀，见下）+ 角色提示，由 `prompts.subagent_system_prompt()` 拼接。三者均为 `src/trilobite/prompts.py` 中的代码常量。
 
-### TASK_AGENT_ROLE_PREFIX（公共前缀）
+### `SUBAGENT_ROLE_PREFIX`（公共前缀）
 
-所有子 agent 的 system prompt 拼一段固定前缀（抄 kimi-code，统一不漏）：
+所有子 agent 的 system prompt 拼一段固定前缀（抄 kimi-code，统一不漏），即 `src/trilobite/prompts.py` 中的 `SUBAGENT_ROLE_PREFIX` 常量：
 
 > 你正在作为 subagent 运行。所有 `user` 消息来自主 agent 或用户的 steering。主 agent 看不到你的上下文，只能看到你完成任务后的最后一条消息。把主 agent 当作你的调用方。不要直接向终端用户提问；不清楚的在总结里说明。你是一个有界任务，完成后以总结收尾。
 
@@ -289,7 +289,7 @@ sessions/
    - 主 agent 取消时传播取消给运行中的子 agent（硬停）。
 3. **`server.py`**：创建主 agent 时传 `registry=agents`；`/message` 对 sealed 子 agent 拒绝；新增 `POST /api/sessions/{name}/interrupt`（调 `agent.interrupt()`）；`/stream`、`/history`、`/permission` 对子 session 复用现有逻辑；侧边栏 session 列表返回树结构（带 parent/children）。
 4. **前端**：`store.ts` 会话树 + `subagents`/`subagent_state`/`subagent_permission_request` 事件处理；侧边栏树组件；`ToolEntry`（或新 `SubagentTree` 组件）渲染 `task` 节点；子 session 视图（复用 `ChatView`、运行中显示输入+■ 停止按钮（走 interrupt）、sealed 禁用输入、返回导航）；全局权限横幅。`ChatInput.stop()` 按 `isSubagent` 分流：subagent -> `/interrupt`，主 agent -> `/cancel`。
-5. **提示词**：`config_example/` 增加 `subagent_role_prefix.txt`（TASK_AGENT_ROLE_PREFIX）及 explore/general 角色提示；`system_prompt.txt` 增补 `task` 工具使用指引（强调：能直接 read/bash 搞定的别开 subagent；开 subagent 要给自包含 prompt；子 agent 输出对用户不可见，主 agent 需转述）。
+5. **提示词**：提示词全部硬编码在 `src/trilobite/prompts.py`（不可配置）：`SYSTEM_PROMPT`（含 `task` 工具使用指引：能直接 read/bash 搞定的别开 subagent；开 subagent 要给自包含 prompt；子 agent 输出对用户不可见，主 agent 需转述）、`SUBAGENT_ROLE_PREFIX`（公共前缀）、`SUBAGENT_ROLE_PROMPTS`（explore/general 角色提示）。
 
 ## 十二、风险与决策记录
 

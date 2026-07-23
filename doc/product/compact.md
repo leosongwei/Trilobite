@@ -43,10 +43,10 @@ estimated = token_count（上次 API 返回的真实 token 数，仅反映 marke
 压缩不再单独调用 completion API，而是作为一次正常对话回合执行：
 
 ```
-1. 追加 compact 指令（compaction_prompt.txt + todo list）作为 user 消息
+1. 追加 compact 指令（`COMPACTION_PROMPT` + todo list）作为 user 消息
 2. 流式调用 LLM（tools=None），模型输出 handoff 摘要——前端实时可见
 3. 追加 assistant 消息（摘要原文）
-4. 重建系统提示词（system_prompt + AGENTS.md），追加为 compact marker
+4. 重建系统提示词（`SYSTEM_PROMPT` + AGENTS.md），追加为 compact marker
 5. 追加 compact summary：{role: user, content: "<compact>摘要</compact>", compact_summary: true}
 6. 发送 `compact` SSE 事件，前端据此在 live view 插入分隔线（与刷新后 parseHistory 重建一致）
 7. 重置 token 计数，commit broker
@@ -78,6 +78,6 @@ compact summary 虽然是 `role: user`，但不是真实的用户消息，不参
 
 ## 重新构建系统提示词
 
-compaction 时**重新构建**系统提示词，使用当前的 `~/.config/trilobite/system_prompt.txt` 和 `<working_dir>/AGENTS.md`。这与正常请求不同（正常请求从 history 中读取已存的 system 消息）。
+compaction 时**重新构建**系统提示词，使用当前的 `SYSTEM_PROMPT`（代码常量）和 `<working_dir>/AGENTS.md`。这与正常请求不同（正常请求从 history 中读取已存的 system 消息）。
 
 原因：compaction 本质上是开启一段新对话，应该使用最新的项目配置。

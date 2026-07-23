@@ -59,59 +59,6 @@ def init_config() -> dict:
     return config
 
 
-def load_system_prompt() -> str:
-    return _load_prompt("system_prompt.txt", "You are a helpful coding agent.")
-
-
-def load_compaction_prompt() -> str:
-    return _load_prompt(
-        "compaction_prompt.txt",
-        "Summarize the conversation history, preserving critical information. Output text only.",
-    )
-
-
-def load_subagent_role_prefix() -> str:
-    """Common prefix prepended to every subagent's system prompt."""
-    return _load_prompt(
-        "subagent_role_prefix.txt",
-        (
-            "You are running as a subagent. All user messages come from the main "
-            "agent or user steering. The main agent cannot see your context; it "
-            "only sees your final message when you finish. Treat the main agent "
-            "as your caller. Do not ask the end user questions directly; if "
-            "something is unclear, say so in your summary. You are a bounded "
-            "task: finish with a concise summary of what you found or did."
-        ),
-    )
-
-
-def load_subagent_role_prompt(subagent_type: str) -> str:
-    """Role-specific guidance appended after the common prefix."""
-    return _load_prompt(
-        f"subagent_{subagent_type}.txt",
-        {
-            "explore": (
-                "You are a read-only code exploration subagent. You can read files "
-                "and run read-only shell commands (grep, find, ls, git log, etc.). "
-                "Do not modify anything. Map out the relevant code and report "
-                "exact file paths, line numbers, and how things connect."
-            ),
-            "general": (
-                "You are a general-purpose subagent. You can read, edit, and run "
-                "shell commands to complete the assigned sub-task. Make minimal, "
-                "scoped changes. When done, summarize what you changed and why."
-            ),
-        }.get(subagent_type, ""),
-    )
-
-
-def _load_prompt(filename: str, fallback: str) -> str:
-    prompt_path = get_config_dir() / filename
-    if prompt_path.exists():
-        return prompt_path.read_text(encoding="utf-8")
-    return fallback
-
-
 def get_sessions_dir() -> Path:
     sessions_dir = get_config_dir() / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
