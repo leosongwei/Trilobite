@@ -1,5 +1,5 @@
 export type SSEEvent =
-  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[] }
+  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; sealed?: boolean; subagent_type?: string | null; description?: string }
   | { type: 'user'; text: string; user_seq: number }
   | { type: 'user_edit'; user_seq: number; text: string }
   | { type: 'turn' }
@@ -13,8 +13,12 @@ export type SSEEvent =
   | { type: 'status'; text: string }
   | { type: 'plan_exit_request' }
   | { type: 'permission_request'; path: string; tool: string; message: string }
+  | { type: 'subagents'; parent: string; children: SubagentChild[] }
+  | { type: 'subagent_state'; session: string; state: string }
+  | { type: 'subagent_permission_request'; child_session: string; child_type: string; child_description: string; path: string; tool: string; message: string }
   | { type: 'done' }
   | { type: 'cancelled' }
+  | { type: 'interrupted' }
   | { type: 'error'; text: string; status_code?: number; error_type?: string; error_code?: string }
 
 export interface ToolCall {
@@ -42,6 +46,10 @@ export interface Session {
   is_running: boolean
   history_length: number
   plan_mode: boolean
+  parent_session?: string
+  subagent_type?: string
+  description?: string
+  sealed?: boolean
 }
 
 export interface SessionInfo {
@@ -56,6 +64,13 @@ export interface SessionInfo {
 
 export type ToolStatus = 'streaming' | 'running' | 'done'
 
+export interface SubagentChild {
+  session: string
+  type: string
+  description: string
+  state: string
+}
+
 export interface ToolDisplay {
   name: string
   status: ToolStatus
@@ -64,6 +79,7 @@ export interface ToolDisplay {
   result?: string
   diffPrev?: string
   diffCurrent?: string
+  subagents?: SubagentChild[]
 }
 
 export interface UserItem {

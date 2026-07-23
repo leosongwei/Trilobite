@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import type { Session, ChatItem, ToolDisplay, HistoryMessage, SSEEvent, TurnItem } from './types'
+import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem } from './types'
 import * as api from './api'
 
 interface State {
@@ -15,6 +15,18 @@ interface State {
   additionalDirs: string[]
   planExitRequest: boolean
   permissionRequest: { path: string; tool: string; message: string } | null
+  isSubagent: boolean
+  sealed: boolean
+  subagentType: string | null
+  subagentDescription: string
+  subagentPermissionRequest: {
+    childSession: string
+    childType: string
+    childDescription: string
+    path: string
+    tool: string
+    message: string
+  } | null
 }
 
 const state = reactive<State>({
@@ -30,6 +42,11 @@ const state = reactive<State>({
   additionalDirs: [],
   planExitRequest: false,
   permissionRequest: null,
+  isSubagent: false,
+  sealed: false,
+  subagentType: null,
+  subagentDescription: '',
+  subagentPermissionRequest: null,
 })
 
 let currentTurnIdx = -1
@@ -47,6 +64,27 @@ function getCurrentTool(): ToolDisplay | null {
   if (!turn) return null
   if (currentToolIdx < 0) return null
   return turn.tools[currentToolIdx] ?? null
+}
+
+function parseSubagentsFromResult(result: string): SubagentChild[] {
+  // Recover the subagent tree from a persisted <task_result> on reconnect.
+  const children: SubagentChild[] = []
+  const re = /<subagent\s+([^>]*)>/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(result)) !== null) {
+    const attrs = m[1]
+    const get = (k: string) => {
+      const mm = attrs.match(new RegExp(`${k}="([^"]*)"`))
+      return mm ? mm[1] : ''
+    }
+    children.push({
+      session: get('session'),
+      type: get('type'),
+      description: get('description'),
+      state: get('state') || 'completed',
+    })
+  }
+  return children
 }
 
 function newTurn() {
@@ -70,6 +108,10 @@ function handleSSEEvent(event: SSEEvent) {
       state.maxTokens = event.max_context_tokens
       state.planMode = event.plan_mode
       state.additionalDirs = event.additional_dirs ?? []
+      state.isSubagent = event.is_subagent ?? false
+      state.sealed = event.sealed ?? false
+      state.subagentType = event.subagent_type ?? null
+      state.subagentDescription = event.description ?? ''
       closeTurn()
       break
     }
@@ -184,10 +226,52 @@ function handleSSEEvent(event: SSEEvent) {
       }
       break
 
+    case 'subagents': {
+      // Attach the spawned subagent list to the currently running `task` tool.
+      const turn = getCurrentTurn()
+      if (turn) {
+        const taskTool = turn.tools.find((t) => t.name === 'task' && t.status !== 'done')
+        if (taskTool) taskTool.subagents = event.children
+      }
+      break
+    }
+
+    case 'subagent_state': {
+      // Update a child's state on the task tool node, and reflect running
+      // state in the session list so the sidebar stays in sync.
+      const turn = getCurrentTurn()
+      if (turn) {
+        for (const t of turn.tools) {
+          if (t.subagents) {
+            const child = t.subagents.find((c) => c.session === event.session)
+            if (child) child.state = event.state
+          }
+        }
+      }
+      if (event.state !== 'running') {
+        const s = state.sessions.find((x) => x.name === event.session)
+        if (s) s.is_running = false
+      }
+      break
+    }
+
+    case 'subagent_permission_request':
+      state.subagentPermissionRequest = {
+        childSession: event.child_session,
+        childType: event.child_type,
+        childDescription: event.child_description,
+        path: event.path,
+        tool: event.tool,
+        message: event.message,
+      }
+      break
+
     case 'done':
     case 'cancelled':
+    case 'interrupted':
       state.isStreaming = false
       state.statusText = null
+      if (event.type === 'interrupted' && state.isSubagent) state.sealed = true
       closeTurn()
       break
 
@@ -268,10 +352,14 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
         let toolIdx = 0
         while (i < history.length && history[i].role === 'tool') {
           if (toolIdx < turn.tools.length) {
-            turn.tools[toolIdx].result = history[i].content || ''
+            const tw = turn.tools[toolIdx]
+            tw.result = history[i].content || ''
             if ((history[i] as any).diff_prev) {
-              turn.tools[toolIdx].diffPrev = (history[i] as any).diff_prev
-              turn.tools[toolIdx].diffCurrent = (history[i] as any).diff_current
+              tw.diffPrev = (history[i] as any).diff_prev
+              tw.diffCurrent = (history[i] as any).diff_current
+            }
+            if (tw.name === 'task' && tw.result) {
+              tw.subagents = parseSubagentsFromResult(tw.result)
             }
           }
           toolIdx++
@@ -363,6 +451,10 @@ export function useStore() {
     state.chatItems = []
     state.statusText = null
     state.isStreaming = false
+    state.isSubagent = false
+    state.sealed = false
+    state.subagentType = null
+    state.subagentDescription = ''
     await loadSessions()
     connectStream(name)
   }
@@ -466,6 +558,25 @@ export function useStore() {
     await api.resolvePermission(state.currentSession, false)
   }
 
+  async function interruptSubagent(name: string) {
+    await api.interruptSession(name)
+  }
+
+  async function approveSubagentPermission() {
+    if (!state.subagentPermissionRequest) return
+    const { childSession, path } = state.subagentPermissionRequest
+    state.subagentPermissionRequest = null
+    await api.addDir(childSession, path)
+    await api.resolvePermission(childSession, true)
+  }
+
+  async function rejectSubagentPermission() {
+    if (!state.subagentPermissionRequest) return
+    const { childSession } = state.subagentPermissionRequest
+    state.subagentPermissionRequest = null
+    await api.resolvePermission(childSession, false)
+  }
+
   async function revert(userSeq: number, message: string) {
     if (!state.currentSession) return
     try {
@@ -500,6 +611,9 @@ export function useStore() {
     rejectPlanExit,
     approvePermission,
     rejectPermission,
+    interruptSubagent,
+    approveSubagentPermission,
+    rejectSubagentPermission,
     revert,
   }
 }

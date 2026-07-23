@@ -63,6 +63,7 @@ async def list_sessions():
                     info["is_running"] = agent.is_running() if agent else False
                     info["history_length"] = len(agent.history) if agent else 0
                     info["plan_mode"] = agent._plan_mode if agent else info.get("plan_mode", False)
+                    info["sealed"] = agent.is_sealed() if agent else bool(info.get("subagent_type"))
                     result.append(info)
                 except Exception:
                     pass
@@ -95,6 +96,7 @@ async def create_session(req: SessionCreate):
         working_dir=req.working_dir,
         session_dir=session_dir,
         config=config,
+        registry=agents,
     )
     info["session_id"] = agent.session_id
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
@@ -104,12 +106,25 @@ async def create_session(req: SessionCreate):
 
 @app.delete("/api/sessions/{name}")
 async def delete_session(name: str):
-    if name in agents:
-        agents.pop(name)
-    session_dir = get_sessions_dir() / name
-    if session_dir.exists():
-        import shutil
-        shutil.rmtree(session_dir)
+    # Cascade: also delete child subagent sessions spawned by this one.
+    sessions_dir = get_sessions_dir()
+    child_names = []
+    if sessions_dir.exists():
+        for sd in sessions_dir.iterdir():
+            if sd.is_dir() and (sd / "session.json").exists():
+                try:
+                    info = json.loads((sd / "session.json").read_text())
+                    if info.get("parent_session") == name:
+                        child_names.append(sd.name)
+                except Exception:
+                    pass
+    for n in [name] + child_names:
+        if n in agents:
+            agents.pop(n)
+        sd = sessions_dir / n
+        if sd.exists():
+            import shutil
+            shutil.rmtree(sd)
     return {"status": "ok"}
 
 
@@ -126,12 +141,32 @@ def _get_or_create_agent(name: str) -> Agent:
     if not session_dir.exists():
         raise HTTPException(404, "Session not found")
     info = json.loads((session_dir / "session.json").read_text())
+    subagent_type = info.get("subagent_type")
+    if subagent_type:
+        # A subagent session restored from disk: rebuild as a sealed, view-only
+        # agent (its run is long over; it cannot accept new input).
+        agent = Agent(
+            name=name,
+            working_dir=info["working_dir"],
+            session_dir=session_dir,
+            config=config,
+            session_id=info.get("session_id"),
+            registry=agents,
+            subagent_type=subagent_type,
+            description=info.get("description"),
+            depth=info.get("depth", 1),
+            sealed=True,
+        )
+        agent.set_additional_dirs(info.get("additional_dirs", []))
+        agents[name] = agent
+        return agent
     agent = Agent(
         name=name,
         working_dir=info["working_dir"],
         session_dir=session_dir,
         config=config,
         session_id=info.get("session_id"),
+        registry=agents,
     )
     agent.set_plan_mode(info.get("plan_mode", False))
     agent.set_additional_dirs(info.get("additional_dirs", []))
@@ -142,6 +177,8 @@ def _get_or_create_agent(name: str) -> Agent:
 @app.post("/api/sessions/{name}/message")
 async def send_message(name: str, req: MessageRequest):
     agent = _get_or_create_agent(name)
+    if agent.is_sealed():
+        raise HTTPException(status_code=409, detail="subagent session has ended, no longer accepts input")
     if req.message.strip() == "/compact":
         if agent.is_running():
             raise HTTPException(status_code=409, detail="agent is running, stop it first")
@@ -203,6 +240,15 @@ async def cancel_session(name: str):
     agent = agents.get(name)
     if agent and agent.is_running():
         agent.cancel()
+    return {"status": "ok"}
+
+
+@app.post("/api/sessions/{name}/interrupt")
+async def interrupt_session(name: str):
+    """Interrupt a running subagent: it stops work and produces a summary."""
+    agent = agents.get(name)
+    if agent and agent.is_running():
+        agent.interrupt()
     return {"status": "ok"}
 
 

@@ -1,6 +1,7 @@
 <template>
   <div class="input-area">
     <button
+      v-if="!state.isSubagent"
       class="mode-toggle"
       :class="{ plan: state.planMode }"
       @click="toggleMode"
@@ -8,29 +9,34 @@
     >
       {{ state.planMode ? 'Plan\u00A0' : 'Build' }}
     </button>
-    <div class="input-wrap">
-      <div v-if="showCommands" class="command-menu">
-        <div
-          v-for="c in filteredCommands"
-          :key="c.cmd"
-          class="command-item"
-          @mousedown.prevent="pickCommand(c.cmd)"
-        >
-          <span class="command-cmd">{{ c.cmd }}</span>
-          <span class="command-desc">{{ c.desc }}</span>
-        </div>
-      </div>
-      <textarea
-        v-model="message"
-        placeholder="Type a message... (type / for commands)"
-        rows="1"
-        ref="textareaRef"
-        @keydown.enter.exact.prevent="handleSend"
-        @keydown.tab.prevent="tabComplete"
-      ></textarea>
+    <div v-if="state.isSubagent && state.sealed" class="sealed-notice">
+      This subagent has ended (view-only).
     </div>
-    <button @click="handleSend">Send</button>
-    <button @click="stop" :disabled="!state.isStreaming" title="Stop">&#9632;</button>
+    <template v-else>
+      <div class="input-wrap">
+        <div v-if="showCommands" class="command-menu">
+          <div
+            v-for="c in filteredCommands"
+            :key="c.cmd"
+            class="command-item"
+            @mousedown.prevent="pickCommand(c.cmd)"
+          >
+            <span class="command-cmd">{{ c.cmd }}</span>
+            <span class="command-desc">{{ c.desc }}</span>
+          </div>
+        </div>
+        <textarea
+          v-model="message"
+          :placeholder="state.isSubagent ? 'Steer the subagent...' : 'Type a message... (type / for commands)'"
+          rows="1"
+          ref="textareaRef"
+          @keydown.enter.exact.prevent="handleSend"
+          @keydown.tab.prevent="tabComplete"
+        ></textarea>
+      </div>
+      <button @click="handleSend">Send</button>
+      <button v-if="!state.isSubagent" @click="stop" :disabled="!state.isStreaming" title="Stop">&#9632;</button>
+    </template>
   </div>
 </template>
 

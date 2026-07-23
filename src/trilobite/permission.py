@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.trilobite.tool_call import ALL_TOOLS, EXIT_PLAN_MODE_DEF
+from src.trilobite.tool_call import ALL_TOOLS, EXIT_PLAN_MODE_DEF, TASK_TOOL_DEF
 
 
 class AgentPermission(ABC):
@@ -53,12 +53,19 @@ class AgentPermission(ABC):
     #: so it is a mode concern, not a role concern.
     exposes_exit_plan_mode: bool = False
 
+    #: whether the ``task`` (subagent spawn) tool is offered. Only primary
+    #: agents (build/plan modes) offer it; subagent roles never do, which is
+    #: what enforces the single-layer nesting limit.
+    exposes_task: bool = False
+
     def filter_definitions(self) -> list[dict]:
         """Tool definitions to send to the LLM for this policy."""
         allowed = set(self.tool_names)
         defs = [t.to_openai_tool() for t in ALL_TOOLS if t.name in allowed]
         if self.exposes_exit_plan_mode:
             defs.append(EXIT_PLAN_MODE_DEF)
+        if self.exposes_task:
+            defs.append(TASK_TOOL_DEF)
         return defs
 
     @abstractmethod
@@ -74,19 +81,22 @@ class AgentPermission(ABC):
 
 
 class BuildModePermission(AgentPermission):
-    """Primary agent, build mode: full tool access, no mode-transition tool."""
+    """Primary agent, build mode: full tool access, can spawn subagents."""
 
     tool_names = ("read", "write", "bash", "TodoList")
+    exposes_task = True
 
     def intercept(self, tool_name: str) -> str | None:
         return None
 
 
 class PlanModePermission(AgentPermission):
-    """Primary agent, plan mode: read-only, may request an exit to build."""
+    """Primary agent, plan mode: read-only, may request an exit to build,
+    may spawn read-only (explore) subagents."""
 
     tool_names = ("read", "bash", "TodoList")
     exposes_exit_plan_mode = True
+    exposes_task = True
 
     def intercept(self, tool_name: str) -> str | None:
         if tool_name == "write":
@@ -101,7 +111,8 @@ class ExploreSubagentPermission(AgentPermission):
     """Read-only exploration subagent.
 
     A role, not a mode -- fixed at spawn time, never switched. Cannot edit
-    files, cannot manage the todo list, cannot spawn further subagents.
+    files, cannot manage the todo list, and crucially cannot spawn further
+    subagents (``task`` is absent), which enforces the single-layer limit.
     """
 
     tool_names = ("read", "bash")
