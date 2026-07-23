@@ -12,11 +12,20 @@ LineEndingStyle = Literal["lf", "crlf", "mixed"]
 class EditTool(Tool):
     name = "edit"
     description = (
-        "Perform exact string replacements in an existing file. You must have "
-        "read the file first and take old_string from the read output. By "
-        "default old_string must be unique in the file; set replace_all to "
-        "replace every occurrence. old_string must not be empty - use the "
-        "write tool to create or overwrite a file."
+        "Exact string replacement in an existing file - the mandatory tool for "
+        "every incremental change, however small. Do NOT use edit (or write) "
+        "to rewrite a whole file; for a complete replacement use write.\n"
+        "Rules:\n"
+        "- Read the file first and copy old_string verbatim from the read "
+        "output. Never edit from memory or stale context.\n"
+        "- old_string must be unique in the file unless replace_all is set. "
+        "If it matches several places, add more surrounding context.\n"
+        "- Do NOT make consecutive edit calls on the same file in one "
+        "response: an earlier edit can invalidate a later old_string. Re-read "
+        "before the next edit.\n"
+        "- The read output uses LF; provide LF in old_string/new_string. For a "
+        "CRLF file edit matches on LF and writes CRLF back automatically.\n"
+        "- old_string must not be empty - use write to create or overwrite."
     )
     parameters = {
         "type": "object",
@@ -28,9 +37,9 @@ class EditTool(Tool):
             "old_string": {
                 "type": "string",
                 "description": (
-                    "The exact text to replace, copied from the read output "
-                    "(without the line-number prefix). Must be non-empty and "
-                    "unique unless replace_all is set."
+                    "The exact text to replace, copied verbatim from the read "
+                    "output. Must be non-empty and unique unless replace_all "
+                    "is set."
                 ),
             },
             "new_string": {
