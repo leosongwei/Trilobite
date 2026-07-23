@@ -78,6 +78,16 @@ per-session 事件总线，维护：
 * `revert(userSeq, message)`：编辑历史用户消息并重发。返回 `rerun` 则重连 SSE 重建对话；返回 `queued` 则由 `user_edit` 事件就地更新气泡，不重连（详见 [history.md](./history.md)）。
 * 网络断开自动重连（1s 退避）；切换 session 主动 abort 旧连接。
 
+### 自适应加载（`ChatView.vue`）
+
+切到历史很长的 session 时，一次性渲染全部 `chatItems` 会让浏览器卡顿很久，因此 `ChatView` 对消息列表做**窗口化**：
+
+* 只渲染靠近底部的 `INITIAL_VISIBLE`（10）条消息；`visibleItems = chatItems.slice(windowStart)`，`windowStart = length - effectiveRender`。
+* 用户滚到顶部（`scrollTop <= TOP_THRESHOLD`）时向上扩窗 `LOAD_MORE`（10）条，扩窗前后用 `scrollHeight` 差值恢复 `scrollTop`，保持视觉位置不跳。顶部有"滚动到顶部加载更早的消息…"提示。
+* 若可见内容比视口还短却仍有更早消息（极短消息场景），`fillViewport` 自动扩窗直到填满视口，避免出现无法滚动加载的空白死区；仅在非流式时运行。
+* 流式输出持续向底部追加，窗口始终包含末尾，所以最新内容永远可见；`streamTick`/`chatItems.length` 的 watcher 继续把视图钉在底部，行为与窗口化前一致。
+* 切 session 时 `renderCount` 重置回 `INITIAL_VISIBLE`；窗口扩大引入新 DOM 节点后同样触发 MathJax typeset。
+
 ### 工具结果展示（`ToolEntry.vue`）
 
 * `read` 工具的结果默认折叠（`<details>` 收起），仅显示标签行 `[read: <filename>]`，点击展开查看完整输出，避免长文件内容刷屏。
