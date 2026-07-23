@@ -14,7 +14,8 @@ from src.trilobite.broker import StreamBroker
 from src.trilobite.compaction import should_compact, build_compact_prompt
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt
 from src.trilobite.history import History
-from src.trilobite.tool_call import execute_tool, get_tool_definitions
+from src.trilobite.permission import AgentPermission, BuildModePermission, PlanModePermission
+from src.trilobite.tool_call import execute_tool
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -208,7 +209,7 @@ class Agent:
         self._task: asyncio.Task | None = None
         self._steering: asyncio.Event = asyncio.Event()
         self._steer_messages: list[str] = []
-        self._plan_mode: bool = False
+        self._permission: AgentPermission = BuildModePermission()
         self._last_notified_mode: bool | None = None
         self._additional_dirs: list[Path] = []
         self._plan_exit_event: asyncio.Event = asyncio.Event()
@@ -264,8 +265,23 @@ class Agent:
         if not self.history or self.history[0].get("role") != "system":
             self.history.insert(0, {"role": "system", "content": self.system_prompt + self.working_context})
 
-    def set_plan_mode(self, mode: bool):
-        self._plan_mode = mode
+    @property
+    def _plan_mode(self) -> bool:
+        """True when the primary agent is running in plan mode.
+
+        Derived from the active permission policy rather than stored as a
+        separate flag, so the permission is the single source of truth.
+        """
+        return isinstance(self._permission, PlanModePermission)
+
+    def set_plan_mode(self, mode: bool) -> None:
+        """Switch the primary agent between plan and build mode.
+
+        This swaps the permission policy in place -- a mode change on a
+        running agent, not a new agent definition. The notification logic
+        in ``run`` notices the swap and tells the model.
+        """
+        self._permission = PlanModePermission() if mode else BuildModePermission()
 
     def set_additional_dirs(self, dirs: list[str]):
         self._additional_dirs = [Path(d).resolve() for d in dirs]
@@ -414,7 +430,7 @@ class Agent:
                 stream = await self.chat_completion(
                     messages=messages,
                     stream=True,
-                    tools=get_tool_definitions(),
+                    tools=self._permission.filter_definitions(),
                 )
 
                 content_parts.clear()
@@ -537,7 +553,10 @@ class Agent:
                         await self._send_stream_event({"type": "tool_start", "tool": tool_name, "args": args})
 
                         tool_result: dict[str, Any]
-                        if tool_name == "exit_plan_mode":
+                        blocked = self._permission.intercept(tool_name)
+                        if blocked is not None:
+                            tool_result = {"result": blocked}
+                        elif tool_name == "exit_plan_mode":
                             if not self._plan_mode:
                                 tool_result = {"result": "Not in plan mode."}
                             else:
@@ -545,13 +564,11 @@ class Agent:
                                 await self._plan_exit_event.wait()
                                 self._plan_exit_event.clear()
                                 if self._plan_exit_approved:
-                                    self._plan_mode = False
+                                    self._permission = BuildModePermission()
                                     self._last_notified_mode = False
                                     tool_result = {"result": "Plan mode exited. All tools are now available."}
                                 else:
                                     tool_result = {"result": "User declined. Continue planning in plan mode."}
-                        elif self._plan_mode and tool_name == "write":
-                            tool_result = {"result": "Error: write tool is not available in plan mode. Call exit_plan_mode to request switching to build mode."}
                         else:
                             tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
 

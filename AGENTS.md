@@ -9,7 +9,8 @@ Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/Fa
 * `agent.py` — 核心 Agent 类。管理会话生命周期：加载 working context (`AGENTS.md`)，与 LLM 流式对话，循环执行 tool calls，支持 plan/build 双模式切换和用户 steering。
 * `broker.py` - 流式事件总线（StreamBroker）。解耦 agent 运行与 HTTP 请求：事件广播到所有订阅者，维护当前 run 的回放缓冲和已提交历史长度（`persisted_len`），支持浏览器多开、关闭重开、切 tab 恢复。详见 `doc/product/streaming.md`。
 * `history.py` — 对话历史管理。持久化到 JSON 文件，提供 API 调用的消息合并（连续同 role 消息合并避免 API 报错）。
-* `tool_call.py` — 工具注册与分发。维护工具列表，将 `exit_plan_mode` 作为内置 virtual tool 注入。
+* `tool_call.py` - 工具注册与分发。维护全局工具列表，`EXIT_PLAN_MODE_DEF` 作为 virtual tool 定义；`execute_tool` 执行具体工具。
+* `permission.py` - Agent 权限策略抽象。`AgentPermission` 基类承担两个职责：过滤工具列表（`filter_definitions`）+ 拦截调用（`intercept`）。子类区分两类生命周期：**模式**（`BuildModePermission`/`PlanModePermission`，主 agent 运行时热切换）vs **角色**（`ExploreSubagentPermission`/`GeneralSubagentPermission`，subagent 派生时固化）。详见 `doc/product/plan_build_mode.md`。
 * `compaction.py` — 上下文压缩。当 token 使用超过阈值时，将旧对话压缩为摘要，拼接回历史。
 * `config.py` — 配置管理。首次运行自动从包内 `config_example/` 复制默认配置；加载 `system_prompt.txt` 和 `compaction_prompt.txt`。
 * `tokens.py` — 简易 token 估算（字符级，区分 ASCII/CJK）。
