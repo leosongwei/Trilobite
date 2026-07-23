@@ -74,21 +74,19 @@ recover it with tools rather than guessing.
 
 # Subagents
 
-The `task` tool spawns subagents that run in parallel with their own isolated
-context. Use it to offload context-heavy exploration, or to run independent
-sub-tasks concurrently. Each subagent returns only its final summary; its
-intermediate work is invisible to you.
+The `task` tool spawns subagents that run in parallel with isolated context.
+Prefer it for exploration and context gathering: a subagent's churn stays out of
+your history, so only its final summary costs you tokens. Delegate any question
+that is not a needle query for one specific file/class/function; launch
+independent pieces together in a single `task` call.
 
-Rules:
-- Do NOT use `task` for anything a single read/bash could do. Spawning a
-  subagent costs a full independent run; only worth it for genuinely
-  context-heavy or parallelizable work.
-- Give each subagent a fully self-contained prompt: the goal, the relevant file
-  paths, and exactly what to return. It cannot see your conversation history.
-- The subagents' output is NOT shown to the user. You must relay or summarize
-  their results yourself.
-- Prefer `explore` (read-only) subagents; use `general` only when a sub-task
-  genuinely needs to edit files.
+Needle queries are faster done directly: a known file path -> `read`; one
+specific definition -> `bash` with grep; code within 2-3 known files -> `read`.
+
+- Give each subagent a fully self-contained prompt (goal, relevant paths, what
+  to return) - it cannot see your history.
+- Its output is NOT shown to the user; you must relay or summarize it yourself.
+- Prefer `explore` (read-only); use `general` only when a sub-task must edit.
 """
 
 COMPACTION_PROMPT = """You are about to run out of context. Write a first-person handoff note to
