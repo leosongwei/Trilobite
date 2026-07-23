@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,9 +13,9 @@ import httpx
 
 from src.trilobite.broker import StreamBroker
 from src.trilobite.compaction import should_compact, build_compact_prompt
-from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt
+from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt, load_subagent_role_prefix, load_subagent_role_prompt
 from src.trilobite.history import History
-from src.trilobite.permission import AgentPermission, BuildModePermission, PlanModePermission
+from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
 from src.trilobite.tool_call import execute_tool
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -172,7 +173,22 @@ async def _chat_completion_stream(
 
 
 class Agent:
-    def __init__(self, name: str, working_dir: str, session_dir: Path, config: dict[str, str], session_id: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        working_dir: str,
+        session_dir: Path,
+        config: dict[str, str],
+        session_id: str | None = None,
+        *,
+        subagent_type: str | None = None,
+        description: str | None = None,
+        registry: dict[str, Agent] | None = None,
+        parent: Agent | None = None,
+        depth: int = 0,
+        max_steps: int | None = None,
+        sealed: bool = False,
+    ):
         self.name = name
         self.working_dir = Path(working_dir).resolve()
         self.session_dir = session_dir
@@ -201,6 +217,22 @@ class Agent:
         self.max_tokens = int(config.get("max_tokens", DEFAULT_MAX_TOKENS))
         self.compaction_trigger_ratio = float(config.get("compaction_trigger_ratio", 0.7))
         self.system_prompt = load_system_prompt()
+        # Subagents override the system prompt with the role prefix + guidance
+        # and use a fixed role permission (never plan/build mode).
+        self._subagent_type: str | None = subagent_type
+        self._description: str = description or ""
+        if subagent_type == "explore":
+            self.system_prompt = (
+                load_system_prompt() + "\n\n"
+                + load_subagent_role_prefix() + "\n\n"
+                + load_subagent_role_prompt("explore")
+            )
+        elif subagent_type == "general":
+            self.system_prompt = (
+                load_system_prompt() + "\n\n"
+                + load_subagent_role_prefix() + "\n\n"
+                + load_subagent_role_prompt("general")
+            )
         self.working_context = self._load_working_context()
         self.history = History(session_dir / "history.json")
         self._broker = StreamBroker(len(self.history.raw))
@@ -209,7 +241,12 @@ class Agent:
         self._task: asyncio.Task | None = None
         self._steering: asyncio.Event = asyncio.Event()
         self._steer_messages: list[str] = []
-        self._permission: AgentPermission = BuildModePermission()
+        if subagent_type == "explore":
+            self._permission: AgentPermission = ExploreSubagentPermission()
+        elif subagent_type == "general":
+            self._permission: AgentPermission = GeneralSubagentPermission()
+        else:
+            self._permission: AgentPermission = BuildModePermission()
         self._last_notified_mode: bool | None = None
         self._additional_dirs: list[Path] = []
         self._plan_exit_event: asyncio.Event = asyncio.Event()
@@ -217,6 +254,18 @@ class Agent:
         self._permission_event: asyncio.Event = asyncio.Event()
         self._permission_approved: bool = False
         self._permission_path: str = ""
+        # ── subagent lifecycle ───────────────────────────────────────────
+        self._registry: dict[str, Agent] | None = registry
+        self._parent: Agent | None = parent
+        self._depth: int = depth
+        self._max_steps: int | None = max_steps
+        self._sealed: bool = sealed
+        self._interrupted: bool = False
+        self._step_count: int = 0
+        self._children: list[Agent] = []
+        self._initial_prompt: str = ""
+        self._final_state: str = "completed"
+        self._final_result: str = ""
 
     @property
     def session_id(self) -> str:
@@ -279,9 +328,27 @@ class Agent:
 
         This swaps the permission policy in place -- a mode change on a
         running agent, not a new agent definition. The notification logic
-        in ``run`` notices the swap and tells the model.
+        in ``run`` notices the swap and tells the model. Subagents are fixed
+        roles and ignore this.
         """
+        if self._subagent_type is not None:
+            return
         self._permission = PlanModePermission() if mode else BuildModePermission()
+
+    def is_sealed(self) -> bool:
+        """True for a subagent whose run has ended (view-only, no new input)."""
+        return self._sealed
+
+    def interrupt(self) -> None:
+        """Request a running subagent to stop work and produce a summary.
+
+        Sets the interrupt flag (checked by the run loop at the next safe
+        point) and unblocks a pending permission wait so the loop is not
+        stuck waiting for approval.
+        """
+        self._interrupted = True
+        self._permission_approved = False
+        self._permission_event.set()
 
     def set_additional_dirs(self, dirs: list[str]):
         self._additional_dirs = [Path(d).resolve() for d in dirs]
@@ -416,6 +483,16 @@ class Agent:
 
         try:
             while True:
+                # Subagent interrupt: stop further work and produce a summary.
+                if self._interrupted:
+                    await self._summarize_and_exit()
+                    break
+                # Subagent step cap: prevent runaway loops.
+                if self._max_steps is not None and self._step_count >= self._max_steps:
+                    self._final_state = "error"
+                    self._final_result = f"max_steps ({self._max_steps}) exceeded"
+                    await self._send_stream_event({"type": "error", "text": self._final_result})
+                    break
                 if should_compact(self):
                     await self._compact_turn()
                     await self._broker.commit(len(self.history.raw))
@@ -534,6 +611,8 @@ class Agent:
                 if not content and not thinking and not tool_calls:
                     self._log.warning("TURN produced EMPTY assistant output (no content/thinking/tool_calls)")
 
+                self._step_count += 1
+
                 if tool_calls:
                     assistant_msg: dict = {"role": "assistant", "tool_calls": tool_calls}
                     if content:
@@ -569,18 +648,28 @@ class Agent:
                                     tool_result = {"result": "Plan mode exited. All tools are now available."}
                                 else:
                                     tool_result = {"result": "User declined. Continue planning in plan mode."}
+                        elif tool_name == "task":
+                            tool_result = await self._run_subagents(args)
                         else:
                             tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
 
                         # Handle permission request from tool
                         if "permission" in tool_result:
                             perm_path = tool_result["permission"]
-                            await self._send_stream_event({
-                                "type": "permission_request",
-                                "path": perm_path,
-                                "tool": tool_name,
-                                "message": tool_result["result"],
-                            })
+                            if self._subagent_type is not None and self._parent is not None:
+                                # Subagent: broadcast globally (parent + all
+                                # siblings) so the prompt reaches the user
+                                # regardless of which session they are viewing.
+                                await self._parent._broadcast_subagent_permission(
+                                    self, perm_path, tool_name, tool_result["result"]
+                                )
+                            else:
+                                await self._send_stream_event({
+                                    "type": "permission_request",
+                                    "path": perm_path,
+                                    "tool": tool_name,
+                                    "message": tool_result["result"],
+                                })
                             self._permission_event.clear()
                             await self._permission_event.wait()
                             if self._permission_approved:
@@ -613,12 +702,20 @@ class Agent:
                     if thinking:
                         assistant_final["reasoning_content"] = thinking
                     self.history.append(assistant_final)
+                    self._final_state = "completed"
+                    self._final_result = content or ""
                     await self._send_stream_event({"type": "done"})
                     break
 
         except asyncio.CancelledError:
             content = "".join(content_parts)
             thinking = "".join(thinking_parts)
+            self._final_state = "error"
+            self._final_result = "cancelled"
+            # Propagate cancellation to running subagents (hard stop, no summary).
+            for c in list(self._children):
+                if c._task and not c._task.done():
+                    c._task.cancel()
             self._log.warning("RUN cancelled content_len=%d thinking_len=%d", len(content), len(thinking))
             if content or thinking:
                 msg: dict = {"role": "assistant", "content": content or ""}
@@ -642,6 +739,8 @@ class Agent:
             if hasattr(e, "status_code"):
                 status_code = e.status_code
 
+            self._final_state = "error"
+            self._final_result = msg
             self._log.exception("RUN error status=%s type=%s code=%s msg=%s",
                                 status_code, error_type, error_code, msg)
             await self._send_stream_event({
@@ -652,6 +751,10 @@ class Agent:
                 "error_code": error_code,
             })
         finally:
+            # A subagent's run has ended for any reason -> it is now sealed
+            # (view-only, no new input).
+            if self._subagent_type is not None:
+                self._sealed = True
             # The run is over regardless of how it ended; clear the running
             # flag (a safety net — done/cancelled/error already set it) and
             # drop the task reference so is_running() is accurate.
@@ -696,13 +799,18 @@ class Agent:
 
     async def attach_subscriber(self) -> tuple[asyncio.Queue, dict]:
         """Subscribe a client: replay the current run and snapshot history."""
-        return await self._broker.attach(
+        q, snapshot = await self._broker.attach(
             self.history.raw,
             self._token_count,
             self.max_context_tokens,
             self._plan_mode,
             [str(d) for d in self._additional_dirs],
         )
+        snapshot["is_subagent"] = self._subagent_type is not None
+        snapshot["sealed"] = self._sealed
+        snapshot["subagent_type"] = self._subagent_type
+        snapshot["description"] = self._description
+        return q, snapshot
 
     def detach_subscriber(self, q: asyncio.Queue) -> None:
         self._broker.detach(q)
@@ -710,6 +818,9 @@ class Agent:
     def cancel(self):
         if self._task and not self._task.done():
             self._task.cancel()
+        # Propagate cancellation to running subagents (hard stop, no summary).
+        for c in list(self._children):
+            c.cancel()
 
     async def stop(self) -> None:
         """Cancel an in-progress run and wait for it to fully finish."""
@@ -722,8 +833,156 @@ class Agent:
                 pass
             except Exception:
                 pass
+        for c in list(self._children):
+            await c.stop()
         self._task = None
         self._broker.set_running(False)
+
+    # ── subagent spawning ────────────────────────────────────────────────
+
+    def _create_child(self, subagent_type: str, description: str, prompt: str) -> Agent:
+        """Build a child Agent for one subtask (does not start it)."""
+        shortid = uuid.uuid4().hex[:8]
+        child_name = f"{self.name}__{shortid}"
+        child_dir = self.session_dir.parent / child_name
+        child_dir.mkdir(parents=True, exist_ok=True)
+        info = {
+            "name": child_name,
+            "working_dir": str(self.working_dir),
+            "parent_session": self.name,
+            "subagent_type": subagent_type,
+            "description": description,
+            "depth": self._depth + 1,
+            "additional_dirs": [str(d) for d in self._additional_dirs],
+        }
+        (child_dir / "session.json").write_text(json.dumps(info, indent=2))
+        child = Agent(
+            name=child_name,
+            working_dir=str(self.working_dir),
+            session_dir=child_dir,
+            config=self.config,
+            subagent_type=subagent_type,
+            description=description,
+            registry=self._registry,
+            parent=self,
+            depth=self._depth + 1,
+            max_steps=int(self.config.get("subagent_max_steps", 100)),
+        )
+        child.set_additional_dirs([str(d) for d in self._additional_dirs])
+        child.add_user_message(prompt)
+        child._initial_prompt = prompt
+        if self._registry is not None:
+            self._registry[child_name] = child
+        return child
+
+    async def _run_as_subagent(self) -> None:
+        """Mark running, emit the initial prompt as a user event, then run.
+
+        Each subagent runs as its own asyncio task so it can be steered or
+        interrupted/cancelled independently.
+        """
+        self._broker.set_running(True)
+        await self._send_stream_event({"type": "user", "text": self._initial_prompt, "user_seq": 0})
+        await self.run()
+
+    async def _run_subagents(self, args: dict) -> dict[str, Any]:
+        """Spawn one or more subagents in parallel, gather their results."""
+        specs = args.get("tasks") or []
+        if not isinstance(specs, list) or not specs:
+            return {"result": "Error: task tool requires a non-empty 'tasks' array."}
+
+        children: list[Agent] = []
+        errors: list[str] = []
+        for spec in specs:
+            if not isinstance(spec, dict):
+                errors.append("[invalid task spec]")
+                continue
+            stype = spec.get("subagent_type")
+            desc = spec.get("description", "subagent")
+            prompt = spec.get("prompt", "")
+            if stype not in ("explore", "general"):
+                errors.append(f"[{desc}] invalid subagent_type: {stype}")
+                continue
+            if self._plan_mode and stype == "general":
+                errors.append(f"[{desc}] plan mode can only spawn explore (read-only) subagents")
+                continue
+            if self._depth >= 1:
+                errors.append(f"[{desc}] subagent nesting limit reached")
+                continue
+            children.append(self._create_child(stype, desc, prompt))
+
+        await self._send_stream_event({
+            "type": "subagents",
+            "parent": self.name,
+            "children": [
+                {"session": c.name, "type": c._subagent_type, "description": c._description, "state": "running"}
+                for c in children
+            ],
+        })
+
+        self._children = children
+        tasks = [asyncio.create_task(c._run_as_subagent()) for c in children]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._children = []
+
+        parts: list[str] = []
+        for c in children:
+            state = c._final_state
+            text = c._final_result
+            parts.append(
+                f'<subagent session="{c.name}" type="{c._subagent_type}" '
+                f'description="{c._description}" state="{state}">\n'
+                f"<result>{text}</result>\n</subagent>"
+            )
+            await self._send_stream_event({"type": "subagent_state", "session": c.name, "state": state})
+
+        body = "\n".join(parts)
+        if errors:
+            body = "\n".join(errors) + "\n" + body
+        return {"result": f"<task_result>\n{body}\n</task_result>"}
+
+    async def _summarize_and_exit(self) -> None:
+        """Produce a final summary turn after an interrupt, then exit.
+
+        No further tool calls are allowed; one tool-less LLM call yields the
+        summary that becomes this subagent's result.
+        """
+        summary_prompt = "你被中断了。请简明总结你目前的发现/进展，然后停止。"
+        self.history.append({"role": "user", "content": summary_prompt})
+        await self._send_stream_event({"type": "user", "text": summary_prompt, "user_seq": self._count_user_messages() - 1})
+        await self._send_stream_event({"type": "turn"})
+        messages = self.history.get_api_messages()
+        stream = await self.chat_completion(messages=messages, stream=True, tools=None)
+        parts: list[str] = []
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta is None:
+                continue
+            if getattr(delta, "content", None):
+                parts.append(delta.content)
+                await self._send_stream_event({"type": "text", "text": delta.content})
+        summary = "".join(parts) or "[no summary produced]"
+        self.history.append({"role": "assistant", "content": summary})
+        self._final_state = "interrupted"
+        self._final_result = summary
+        await self._send_stream_event({"type": "interrupted"})
+
+    async def _broadcast_subagent_permission(self, child: Agent, path: str, tool: str, message: str) -> None:
+        """Fan a subagent's permission request to the parent and all running
+        sibling subagents, so the prompt is visible no matter which session
+        the user is currently viewing."""
+        event = {
+            "type": "subagent_permission_request",
+            "child_session": child.name,
+            "child_type": child._subagent_type,
+            "child_description": child._description,
+            "path": path,
+            "tool": tool,
+            "message": message,
+        }
+        await self._send_stream_event(event)
+        for c in list(self._children):
+            await c._send_stream_event(event)
 
     async def revert(self, user_seq: int, message: str) -> str:
         """Edit a previously sent user message and rerun from there.

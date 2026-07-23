@@ -63,6 +63,10 @@ export async function cancelSession(name: string): Promise<void> {
   await fetch(`/api/sessions/${encode(name)}/cancel`, { method: 'POST' })
 }
 
+export async function interruptSession(name: string): Promise<void> {
+  await fetch(`/api/sessions/${encode(name)}/interrupt`, { method: 'POST' })
+}
+
 export async function setMode(name: string, mode: 'plan' | 'build'): Promise<void> {
   await fetch(`/api/sessions/${encode(name)}/mode`, {
     method: 'POST',

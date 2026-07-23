@@ -1,6 +1,24 @@
 <template>
   <div class="tool-entry">
-    <details v-if="isRead" class="tool-collapsible">
+    <template v-if="isTask">
+      <div class="tool-action">
+        [task: {{ taskCount }} subagent{{ taskCount === 1 ? '' : 's' }}]<span v-if="tool.status === 'running'"> running...</span>
+      </div>
+      <div class="subagent-tree">
+        <div
+          v-for="c in subagents"
+          :key="c.session"
+          class="subagent-node"
+          @click="openChild(c.session)"
+          :title="`Open subagent session: ${c.session}`"
+        >
+          <span class="subagent-type" :class="c.type">{{ c.type }}</span>
+          <span class="subagent-desc">{{ c.description }}</span>
+          <span class="subagent-state" :class="c.state">{{ stateLabel(c.state) }}</span>
+        </div>
+      </div>
+    </template>
+    <details v-else-if="isRead" class="tool-collapsible">
       <summary class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
       </summary>
@@ -27,10 +45,32 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ToolDisplay } from '../types'
+import { useStore } from '../store'
 
 const props = defineProps<{ tool: ToolDisplay }>()
+const { selectSession } = useStore()
 
 const isRead = computed(() => props.tool.name === 'read')
+const isTask = computed(() => props.tool.name === 'task')
+
+const subagents = computed(() => props.tool.subagents ?? [])
+
+const taskCount = computed(() => {
+  const tasks = props.tool.startArgs?.tasks
+  return Array.isArray(tasks) ? tasks.length : subagents.value.length
+})
+
+function stateLabel(s: string): string {
+  if (s === 'running') return 'running'
+  if (s === 'completed') return 'done'
+  if (s === 'interrupted') return 'interrupted'
+  if (s === 'error') return 'error'
+  return s
+}
+
+function openChild(session: string) {
+  selectSession(session)
+}
 
 const label = computed(() => {
   const args = props.tool.startArgs

@@ -54,7 +54,7 @@ class StreamBroker:
             if t == "turn":
                 self._turn_buffer.append(event)
                 self._is_running = True
-            elif t in ("done", "cancelled", "error"):
+            elif t in ("done", "cancelled", "error", "interrupted"):
                 self._is_running = False
             else:
                 self._turn_buffer.append(event)
@@ -62,7 +62,7 @@ class StreamBroker:
             for q in list(self._subscribers):
                 q.put_nowait(event)
 
-            if t in ("done", "cancelled", "error"):
+            if t in ("done", "cancelled", "error", "interrupted"):
                 self._persisted_len = history_len
                 self._turn_buffer = []
 

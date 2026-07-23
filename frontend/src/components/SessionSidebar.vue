@@ -8,19 +8,33 @@
       <button @click="handleCreate">+ New Session</button>
     </div>
     <div class="sessions">
-      <div
-        v-for="s in state.sessions"
-        :key="s.name"
-        class="session-item"
-        :class="{ active: s.name === state.currentSession }"
-        @click="handleSelect(s.name)"
-      >
-        <span class="session-label">
-          <span v-if="s.is_running" class="running-dot" title="running"></span>
-          {{ s.name }}
-        </span>
-        <span class="delete" @click.stop="handleDelete(s.name)">&times;</span>
-      </div>
+      <template v-for="s in sessionTree" :key="s.name">
+        <div
+          class="session-item"
+          :class="{ active: s.name === state.currentSession }"
+          @click="handleSelect(s.name)"
+        >
+          <span class="session-label">
+            <span v-if="s.is_running" class="running-dot" title="running"></span>
+            {{ s.name }}
+          </span>
+          <span class="delete" @click.stop="handleDelete(s.name)">&times;</span>
+        </div>
+        <div
+          v-for="c in s.children"
+          :key="c.name"
+          class="session-item child"
+          :class="{ active: c.name === state.currentSession }"
+          @click="handleSelect(c.name)"
+        >
+          <span class="session-label">
+            <span v-if="c.is_running" class="running-dot" title="running"></span>
+            <span class="child-badge" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
+            <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
+            {{ c.description || c.name }}
+          </span>
+        </div>
+      </template>
     </div>
     <div v-if="state.currentSession" class="dirs-section">
       <details>
@@ -39,9 +53,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useStore } from '../store'
 import { getCwd } from '../api'
+import type { Session } from '../types'
 
 const emit = defineEmits<{ select: [] }>()
 
@@ -49,6 +64,27 @@ const { state, selectSession, createSession, deleteSession, addDir, removeDir } 
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
+
+interface SessionNode extends Session {
+  children: Session[]
+}
+
+// Build a one-level tree: top-level sessions with their subagent children
+// nested under them.
+const sessionTree = computed<SessionNode[]>(() => {
+  const all = state.sessions
+  const childrenByParent = new Map<string, Session[]>()
+  for (const s of all) {
+    if (s.parent_session) {
+      const arr = childrenByParent.get(s.parent_session) ?? []
+      arr.push(s)
+      childrenByParent.set(s.parent_session, arr)
+    }
+  }
+  return all
+    .filter((s) => !s.parent_session)
+    .map((s) => ({ ...s, children: childrenByParent.get(s.name) ?? [] }))
+})
 
 onMounted(() => {
   resetDefaults()
