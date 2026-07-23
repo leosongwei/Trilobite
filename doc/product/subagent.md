@@ -179,7 +179,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ## 六、子 agent 权限请求（交互式、全局可见）
 
-子 agent 的 read/write/bash 企图访问工作区 + 继承的 `additional_dirs` 之外的路径时，**触发交互式权限请求**（沿用主 agent 的 `_permission_event` 机制），而非直接拒绝。
+子 agent 的 read/edit/write/bash 企图访问工作区 + 继承的 `additional_dirs` 之外的路径时，**触发交互式权限请求**（沿用主 agent 的 `_permission_event` 机制），而非直接拒绝。
 
 关键要求：**权限提示必须全局可见**--用户当前无论在主 agent session、还是某个兄弟子 session，都能收到提示并审批。提示必须**写明是哪个子 agent、请求访问哪里**。
 

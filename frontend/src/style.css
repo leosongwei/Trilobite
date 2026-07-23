@@ -313,8 +313,8 @@ body {
   font-size: 9px; font-weight: 600; padding: 1px 4px; border-radius: 2px;
   text-transform: uppercase; flex-shrink: 0;
 }
-.subagent-type.explore { background: #1f3a5f; color: #9cdcfe; }
-.subagent-type.general { background: #4a3a1f; color: #d7ba7d; }
+.subagent-type.explore { background: #4a3a1f; color: #d29922; }
+.subagent-type.general { background: #1f3a5f; color: #9cdcfe; }
 .subagent-desc { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cccccc; }
 .subagent-state { font-size: 10px; flex-shrink: 0; }
 .subagent-state.running { color: #3fb950; }
