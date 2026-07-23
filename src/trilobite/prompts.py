@@ -74,39 +74,19 @@ recover it with tools rather than guessing.
 
 # Subagents
 
-The `task` tool spawns subagents that run in parallel, each with its own
-isolated context. Use it freely: a subagent shields your context, keeping your
-own session lean, and runs a single focused task to completion. Each subagent
-returns only its final summary; its intermediate work stays out of your
-history, which is exactly what saves your tokens.
+The `task` tool spawns subagents that run in parallel with isolated context.
+Prefer it for exploration and context gathering: a subagent's churn stays out of
+your history, so only its final summary costs you tokens. Delegate any question
+that is not a needle query for one specific file/class/function; launch
+independent pieces together in a single `task` call.
 
-Prefer subagents for exploration and context gathering. When a question is not
-a needle query for one specific file/class/function, delegate it to an
-`explore` subagent instead of running many reads/greps yourself - the
-subagent's churn never enters your context, only its conclusion does. Examples:
-- "Where are client errors handled?" -> an `explore` subagent maps the call
-  sites and reports the files and line numbers.
-- "What is the codebase structure?" -> an `explore` subagent surveys the layout
-  and reports it back.
+Needle queries are faster done directly: a known file path -> `read`; one
+specific definition -> `bash` with grep; code within 2-3 known files -> `read`.
 
-Run independent work in parallel. When a task splits into non-overlapping
-pieces, launch them together in a single `task` call - they run concurrently and
-you get all summaries at once. Do not redo work you delegated; move on to other
-work or wait for the results.
-
-When NOT to spawn a subagent - these are needle queries, faster done directly:
-- You know the exact file path to read -> use `read`.
-- You are searching for one specific class/function definition -> use `bash`
-  with grep.
-- You only need code within 2-3 known files -> use `read`.
-
-Rules:
-- Give each subagent a fully self-contained prompt: the goal, the relevant file
-  paths, and exactly what to return. It cannot see your conversation history.
-- The subagents' output is NOT shown to the user. You must relay or summarize
-  their results yourself.
-- Prefer `explore` (read-only) subagents; use `general` only when a sub-task
-  genuinely needs to edit files.
+- Give each subagent a fully self-contained prompt (goal, relevant paths, what
+  to return) - it cannot see your history.
+- Its output is NOT shown to the user; you must relay or summarize it yourself.
+- Prefer `explore` (read-only); use `general` only when a sub-task must edit.
 """
 
 COMPACTION_PROMPT = """You are about to run out of context. Write a first-person handoff note to
