@@ -72,15 +72,31 @@ You are permitted to make file changes, run shell commands, and utilize your ars
 
 ### 工具守卫
 
-Plan 模式下，`write` 工具被执行前拦截，返回错误：
+Plan/Build 双模式由 **permission 策略**（`permission.py`）实现，而非散落在 agent 里的布尔标记。每种模式是一个 `AgentPermission` 子类，承担两个职责：
+
+1. **过滤工具列表**：决定向 LLM 暴露哪些工具定义。
+2. **拦截调用**：在实际执行前拦截被禁用的工具调用。
+
+| 模式 | 暴露的工具 | 拦截 |
+|------|-----------|------|
+| Build（`BuildModePermission`） | `read` `write` `bash` `TodoList` | 无 |
+| Plan（`PlanModePermission`） | `read` `bash` `TodoList` `exit_plan_mode` | `write` |
+
+Plan 模式下 `write` **根本不出现在工具列表里**（LLM 看不到它）。若模型仍幻觉式地调用 `write`，`intercept` 兜底拦截并返回错误：
 
 ```
 Error: write tool is not available in plan mode. Call exit_plan_mode to request switching to build mode.
 ```
 
-其他工具（`read`、`bash`、`TodoList`）正常执行。工具守卫在每轮工具调用中都生效，与通知注入无关。
+> 这里刻意区分两类东西：plan/build 是主 agent 的**运行时模式**（在同一个会话里热切换，靠换 permission 实现）；而 explore/general 是未来 subagent 的**声明式角色**（派生时固化，不切换）。它们都是 `AgentPermission` 子类，但生命周期不同，不强行统一成一个"agent 定义 + mode 字段"。
+
+### 模式切换
+
+`Agent._plan_mode` 现在是从当前 permission **派生**的只读 property（`isinstance(self._permission, PlanModePermission)`），不再是独立存储的布尔位。`set_plan_mode(mode)` 通过换 permission 对象完成切换，permission 是单一事实来源。`session.json` 仍持久化 `plan_mode` 布尔值（兼容旧 session），server 启动时调用 `set_plan_mode` 还原。
 
 ### exit_plan_mode 工具
+
+`exit_plan_mode` 是一个 virtual tool（定义在 `tool_call.py` 的 `EXIT_PLAN_MODE_DEF`），**只在 Plan 模式下暴露**。Build 模式不暴露它（build 模式下调用它无意义）。其执行（审批流程）在 `Agent` 中处理，不在 `tool_call.execute_tool`，因为它需要 broker / asyncio 机制。
 
 模型可以通过调用 `exit_plan_mode` 工具请求用户切换到 Build 模式。流程：
 
@@ -93,12 +109,12 @@ Error: write tool is not available in plan mode. Call exit_plan_mode to request 
 
 | 用户操作 | 结果 |
 |----------|------|
-| Approve | 退出 Plan 模式，模型收到 "Plan mode exited. All tools are now available." |
+| Approve | 换为 `BuildModePermission`，模型收到 "Plan mode exited. All tools are now available." |
 | Reject | 保持 Plan 模式，模型收到 "User declined. Continue planning in plan mode." |
 
 ### 无循环 reminder
 
-不注入循环 reminder。模式变更通知在用户发消息时注入一次，模型从通知中得知当前模式。如果模型忘记了并尝试 `write`，工具拒绝消息会提醒它。
+不注入循环 reminder。模式变更通知在用户发消息时注入一次，模型从通知中得知当前模式。如果模型忘记了并尝试 `write`，permission 的 `intercept` 会拦住并提醒它。
 
 ## Plan 输出
 

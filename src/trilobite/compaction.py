@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 from src.trilobite.config import load_compaction_prompt
 from src.trilobite.tokens import estimate_tokens_for_messages, estimate_tokens_for_tools
-from src.trilobite.tool_call import get_tool_definitions
 
 if TYPE_CHECKING:
     from src.trilobite.agent import Agent
@@ -19,7 +18,7 @@ def should_compact(agent: Agent) -> bool:
     the messages added since that call. Together they approximate what the
     next request would cost, so pre-marker messages never skew the estimate.
     """
-    tools = get_tool_definitions()
+    tools = agent._permission.filter_definitions()
     pending = agent.history.raw[agent._token_covered:]
     estimated = (
         agent._token_count

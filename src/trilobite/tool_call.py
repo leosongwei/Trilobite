@@ -15,18 +15,19 @@ ALL_TOOLS = [
 
 _TOOL_MAP: dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
-
-def get_tool_definitions() -> list[dict]:
-    tools = [t.to_openai_tool() for t in ALL_TOOLS]
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "exit_plan_mode",
-            "description": "Request to exit plan mode and enter build mode. Use this when you have completed your analysis and are ready to make changes. The user must approve the switch.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    })
-    return tools
+# Virtual tool: asks the user to switch the primary agent from plan mode to
+# build mode. Only exposed by PlanModePermission (see permission.py). Its
+# execution -- the approval flow -- is handled in Agent, not here, because it
+# needs the broker / asyncio machinery; this is just the definition the LLM
+# sees.
+EXIT_PLAN_MODE_DEF: dict = {
+    "type": "function",
+    "function": {
+        "name": "exit_plan_mode",
+        "description": "Request to exit plan mode and enter build mode. Use this when you have completed your analysis and are ready to make changes. The user must approve the switch.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
 
 
 def execute_tool(
