@@ -1,4 +1,5 @@
 import asyncio
+import importlib.metadata
 import json
 import time
 import uuid
@@ -49,6 +50,15 @@ async def startup():
 @app.get("/api/cwd")
 async def get_cwd():
     return {"cwd": str(Path.cwd())}
+
+
+@app.get("/api/version")
+async def get_version():
+    try:
+        version = importlib.metadata.version("trilobite-code")
+    except importlib.metadata.PackageNotFoundError:
+        version = "unknown"
+    return {"version": version}
 
 
 @app.get("/api/sessions")

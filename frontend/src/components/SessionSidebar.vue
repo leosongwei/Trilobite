@@ -1,7 +1,7 @@
 <template>
   <aside class="sidebar">
     <div class="sidebar-header">
-      <h1>Trilobite</h1>
+      <h1>Trilobite<span v-if="version" class="version"> v{{ version }}</span></h1>
       <input v-model="name" type="text" placeholder="Session name" />
       <label>Working directory:</label>
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
@@ -55,7 +55,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useStore } from '../store'
-import { getCwd } from '../api'
+import { getCwd, getVersion } from '../api'
 import type { Session } from '../types'
 
 const emit = defineEmits<{ select: [] }>()
@@ -64,6 +64,7 @@ const { state, selectSession, createSession, deleteSession, addDir, removeDir } 
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
+const version = ref('')
 
 interface SessionNode extends Session {
   children: Session[]
@@ -95,6 +96,7 @@ const sessionTree = computed<SessionNode[]>(() => {
 
 onMounted(() => {
   resetDefaults()
+  getVersion().then((v) => (version.value = v)).catch(() => {})
 })
 
 async function handleSelect(sessionName: string) {

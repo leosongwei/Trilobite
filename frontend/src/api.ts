@@ -10,6 +10,12 @@ export async function getCwd(): Promise<string> {
   return data.cwd
 }
 
+export async function getVersion(): Promise<string> {
+  const res = await fetch('/api/version')
+  const data = await res.json()
+  return data.version
+}
+
 export async function getSessions(): Promise<Session[]> {
   const res = await fetch('/api/sessions')
   return res.json()

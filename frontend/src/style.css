@@ -45,6 +45,12 @@ body {
   font-weight: 600;
   letter-spacing: 0.5px;
 }
+.sidebar-header .version {
+  font-size: 11px;
+  color: #858585;
+  font-weight: 400;
+  letter-spacing: 0;
+}
 .sidebar-header input {
   width: 100%;
   padding: 7px 10px;
