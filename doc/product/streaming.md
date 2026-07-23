@@ -30,6 +30,7 @@ per-session 事件总线，维护：
 
 * `start(message)` / `steer(message)`：async，发 `user` 事件后启动/转向 run。
 * `run()`：不再接收 queue 参数，通过 `_send_stream_event` → `broker.publish` 广播；run 结束在 `finally` 中兜底清除 running 标志。
+* 工具执行不阻塞事件循环：`execute_tool` 仍是同步函数，但 `run()` 在调用处用 `asyncio.to_thread(...)` 把它丢到工作线程执行。所有 agent / subagent 共享同一个事件循环，若让阻塞调用直接在循环里跑，长 bash 命令会冻住整个循环——SSE 心跳发不出、新连接连 `init` 都拿不到、subagent 跑 bash 时主界面整体卡死（issue #5）。丢线程后循环保持响应；`task` 仍走 `await self._run_subagents`，`execute_tool` 本身不异步化。bash 内部改用 `Popen`+`communicate`（`start_new_session=True`）并经 `on_proc` 把进程句柄回注册到 agent，`interrupt()` 杀整个进程组让长命令立即返回再走总结（详见 subagent.md 的「bash 中断」）。
 * `attach_subscriber()` / `detach_subscriber(q)`：供 `/stream` 端点使用。
 * `is_running()`：基于 broker 状态（`start` 时即置 true，先于第一个 `turn` 事件）。
 

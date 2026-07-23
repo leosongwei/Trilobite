@@ -16,6 +16,7 @@ from src.trilobite.compaction import should_compact, build_compact_prompt
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt, load_subagent_role_prefix, load_subagent_role_prompt
 from src.trilobite.history import History
 from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
+from src.trilobite.tools.bash import kill_process_group
 from src.trilobite.tool_call import execute_tool
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -263,6 +264,10 @@ class Agent:
         self._interrupted: bool = False
         self._step_count: int = 0
         self._children: list[Agent] = []
+        # The Popen of the bash command currently running in a worker thread
+        # (None when idle). Set/cleared via _register_proc so interrupt() can
+        # kill it instead of blocking until the command finishes on its own.
+        self._current_proc = None
         self._initial_prompt: str = ""
         self._final_state: str = "completed"
         self._final_result: str = ""
@@ -340,15 +345,33 @@ class Agent:
         return self._sealed
 
     def interrupt(self) -> None:
-        """Request a running subagent to stop work and produce a summary.
+        """Hard-stop a running subagent's current work, then summarize.
 
-        Sets the interrupt flag (checked by the run loop at the next safe
-        point) and unblocks a pending permission wait so the loop is not
-        stuck waiting for approval.
+        Immediately cancels the in-progress run -- this interrupts an LLM
+        stream (the ``async for chunk in stream`` await) or a bash call right
+        away, instead of waiting for the run loop to reach the next safe
+        point. The run's ``CancelledError`` handler sees the interrupt flag
+        and, rather than a bare cancel, runs one tool-less summary turn and
+        exits. Also kills a running bash process group and unblocks a pending
+        permission wait so nothing is left stuck.
         """
         self._interrupted = True
         self._permission_approved = False
         self._permission_event.set()
+        proc = self._current_proc
+        if proc is not None and proc.poll() is None:
+            kill_process_group(proc)
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+
+    def _register_proc(self, proc) -> None:
+        """Record the bash subprocess currently running (or None when idle).
+
+        Called from the worker thread that runs execute_tool; interrupt()
+        reads this from the event loop thread. Reference assignment is atomic
+        under the GIL, and Popen.kill()/poll() are safe to call cross-thread.
+        """
+        self._current_proc = proc
 
     def set_additional_dirs(self, dirs: list[str]):
         self._additional_dirs = [Path(d).resolve() for d in dirs]
@@ -483,10 +506,6 @@ class Agent:
 
         try:
             while True:
-                # Subagent interrupt: stop further work and produce a summary.
-                if self._interrupted:
-                    await self._summarize_and_exit()
-                    break
                 # Subagent step cap: prevent runaway loops.
                 if self._max_steps is not None and self._step_count >= self._max_steps:
                     self._final_state = "error"
@@ -651,7 +670,15 @@ class Agent:
                         elif tool_name == "task":
                             tool_result = await self._run_subagents(args)
                         else:
-                            tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
+                            # Tools are synchronous (notably bash's subprocess.run
+                            # blocks). Run them in a worker thread so a long bash
+                            # call doesn't freeze the event loop -- otherwise the
+                            # shared loop stalls SSE heartbeats and every other
+                            # agent/subagent on it (issue #5).
+                            tool_result = await asyncio.to_thread(
+                                execute_tool, tool_name, args, self.working_dir,
+                                self.session_dir, self._additional_dirs,
+                                self._register_proc)
 
                         # Handle permission request from tool
                         if "permission" in tool_result:
@@ -676,7 +703,10 @@ class Agent:
                                 self._additional_dirs.append(Path(perm_path).resolve())
                                 self._persist_additional_dirs()
                                 # Retry the tool with updated additional_dirs
-                                tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
+                                tool_result = await asyncio.to_thread(
+                                    execute_tool, tool_name, args, self.working_dir,
+                                    self.session_dir, self._additional_dirs,
+                                    self._register_proc)
                             # else: keep original error result
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"]}
@@ -708,6 +738,27 @@ class Agent:
                     break
 
         except asyncio.CancelledError:
+            if self._interrupted:
+                # A subagent interrupt hard-stops the current turn mid-flight
+                # (LLM stream or bash). Discard the partial output, clear the
+                # pending cancellation, and run one summary turn before exiting
+                # cleanly -- so the parent's task tool gets a summary result
+                # instead of a bare cancellation. (A real cancel from the
+                # parent leaves _interrupted False and falls through to the
+                # hard-stop path below.)
+                if self._task is not None:
+                    self._task.uncancel()
+                self._patch_dangling_tool_calls()
+                try:
+                    await self._summarize_and_exit()
+                except asyncio.CancelledError:
+                    # Parent cancelled us mid-summary: hard-stop, no summary.
+                    raise
+                except Exception as e:
+                    self._final_state = "error"
+                    self._final_result = f"interrupt summary failed: {e}"
+                    await self._send_stream_event({"type": "error", "text": self._final_result})
+                return
             content = "".join(content_parts)
             thinking = "".join(thinking_parts)
             self._final_state = "error"
@@ -940,6 +991,33 @@ class Agent:
         if errors:
             body = "\n".join(errors) + "\n" + body
         return {"result": f"<task_result>\n{body}\n</task_result>"}
+
+    def _patch_dangling_tool_calls(self) -> None:
+        """Fill placeholder tool results for tool_calls lacking a result.
+
+        An interrupt cancels a turn mid-flight. If the cancellation lands
+        after the assistant message (with ``tool_calls``) was appended but
+        before every tool result landed, history is left inconsistent:
+        OpenAI-compatible APIs reject ``tool_calls`` that are not followed by
+        a matching ``tool`` result, which would break the summary turn. Scan
+        the trailing assistant message and append a placeholder result for
+        any unanswered ``tool_call_id``.
+        """
+        raw = self.history.raw
+        if not raw:
+            return
+        last = raw[-1]
+        if last.get("role") != "assistant" or not last.get("tool_calls"):
+            return
+        answered = {m.get("tool_call_id") for m in raw if m.get("role") == "tool"}
+        for tc in last["tool_calls"]:
+            tc_id = tc.get("id")
+            if tc_id and tc_id not in answered:
+                self.history.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": "[interrupted]",
+                })
 
     async def _summarize_and_exit(self) -> None:
         """Produce a final summary turn after an interrupt, then exit.

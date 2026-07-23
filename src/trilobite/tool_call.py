@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.trilobite.tools.read import ReadTool
 from src.trilobite.tools.write import WriteTool
@@ -86,11 +86,15 @@ def execute_tool(
     working_dir: Path,
     session_dir: Path,
     additional_dirs: list[Path] | None = None,
+    on_proc: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     """Execute a tool and return a result dict.
 
     Returns dict with at least "result" (str). May include "diff_prev"
     and "diff_current" for write operations.
+
+    ``on_proc`` is forwarded to tools that spawn a subprocess (bash) so the
+    caller (Agent) can kill the process on interrupt; other tools ignore it.
     """
     tool = _TOOL_MAP.get(tool_name)
     if tool is None:
@@ -99,6 +103,7 @@ def execute_tool(
         working_dir=working_dir,
         session_dir=session_dir,
         additional_dirs=additional_dirs or [],
+        on_proc=on_proc,
         **arguments,
     )
     if isinstance(result, dict):

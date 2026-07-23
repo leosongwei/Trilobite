@@ -35,7 +35,7 @@
         ></textarea>
       </div>
       <button @click="handleSend">Send</button>
-      <button v-if="!state.isSubagent" @click="stop" :disabled="!state.isStreaming" title="Stop">&#9632;</button>
+      <button @click="stop" :disabled="!state.isStreaming" title="Stop">&#9632;</button>
     </template>
   </div>
 </template>
@@ -44,7 +44,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useStore } from '../store'
 
-const { state, sendMessage, stopAgent, setMode } = useStore()
+const { state, sendMessage, stopAgent, interruptSubagent, setMode } = useStore()
 const message = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 
@@ -93,7 +93,14 @@ async function handleSend() {
 }
 
 async function stop() {
-  await stopAgent()
+  if (!state.currentSession) return
+  // A subagent's stop is an interrupt: hard-stop its current work, then it
+  // runs one summary turn and exits. The main agent's stop is a plain cancel.
+  if (state.isSubagent) {
+    await interruptSubagent(state.currentSession)
+  } else {
+    await stopAgent()
+  }
 }
 
 async function toggleMode() {
