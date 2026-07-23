@@ -4,7 +4,7 @@
       <span ref="contentRef" class="thinking-content">{{ content }}</span>
     </div>
     <div class="thinking-header" @click="toggle">
-      <span class="thinking-toggle">{{ open ? '▴' : '▾' }}</span>
+      <span class="thinking-toggle">{{ open ? '▴' : '▸' }}</span>
       <span class="thinking-label">thinking</span>
     </div>
   </div>
