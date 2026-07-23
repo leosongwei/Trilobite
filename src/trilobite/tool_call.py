@@ -2,12 +2,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.trilobite.tools.read import ReadTool
+from src.trilobite.tools.edit import EditTool
 from src.trilobite.tools.write import WriteTool
 from src.trilobite.tools.bash import BashTool
 from src.trilobite.tools.todo import TodoListTool
 
 ALL_TOOLS = [
     ReadTool(),
+    EditTool(),
     WriteTool(),
     BashTool(),
     TodoListTool(),
@@ -63,7 +65,7 @@ TASK_TOOL_DEF: dict = {
                             "subagent_type": {
                                 "type": "string",
                                 "enum": ["explore", "general"],
-                                "description": "explore = read-only (read/bash); general = can edit code (read/write/bash).",
+                                "description": "explore = read-only (read/bash); general = can edit code (read/edit/write/bash).",
                             },
                             "prompt": {
                                 "type": "string",
@@ -91,7 +93,7 @@ def execute_tool(
     """Execute a tool and return a result dict.
 
     Returns dict with at least "result" (str). May include "diff_prev"
-    and "diff_current" for write operations.
+    and "diff_current" for edit operations.
 
     ``on_proc`` is forwarded to tools that spawn a subprocess (bash) so the
     caller (Agent) can kill the process on interrupt; other tools ignore it.

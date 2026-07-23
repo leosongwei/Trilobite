@@ -2,7 +2,7 @@
 
 ## 概述
 
-Trilobite 的每个 session 有一个工作目录（working directory）。文件工具（`read`、`write`）在该目录范围内操作。工作目录外的访问需要通过额外授权目录（additional directories）机制显式开放。
+Trilobite 的每个 session 有一个工作目录（working directory）。文件工具（`read`、`edit`、`write`）在该目录范围内操作。工作目录外的访问需要通过额外授权目录（additional directories）机制显式开放。
 
 `bash` 工具不强制路径限制（和 kimi-code 一致），通过系统提示词引导模型自觉遵守边界。
 
@@ -40,7 +40,7 @@ Content-Type: application/json
 }
 ```
 
-添加后，`read`、`write` 工具可以自由访问该目录，与主工作目录无区别。
+添加后，`read`、`edit`、`write` 工具可以自由访问该目录，与主工作目录无区别。
 
 ## 路径规范化与边界检查
 
@@ -90,7 +90,7 @@ def is_within_directory(candidate: str, base: str) -> bool:
 
 ### 硬阻止列表
 
-以下文件被**硬阻止**，无论是否在工作目录内，`read` 和 `write` 工具都拒绝访问：
+以下文件被**硬阻止**，无论是否在工作目录内，`read`、`edit` 和 `write` 工具都拒绝访问：
 
 | 类别 | 匹配规则 | 示例 |
 |------|----------|------|
@@ -134,9 +134,13 @@ def is_within_directory(candidate: str, base: str) -> bool:
 | 工作目录外（绝对路径） | 允许（标记 outside_workspace） |
 | 工作目录外 | 权限提示（Grant/Deny） |
 
+### edit 工具
+
+与 read 工具相同的路径检查。对已有文件做精确字符串替换：`old_string` 必须在文件中唯一（或设 `replace_all` 替换全部）。工具内部对纯 CRLF 文件做行尾归一化--在 LF「模型视图」上匹配（与 read 工具展示的 LF 视图一致），写回时还原原始 CRLF，从而避免 LLM 提供的 LF `old_string` 在 CRLF 文件上匹配失败。在 Plan 模式下，所有 `edit` 调用被拒绝（Plan 模式守卫优先于路径检查）。
+
 ### write 工具
 
-与 read 工具相同的路径检查。在 Plan 模式下，额外检查：所有 `write` 调用被拒绝（Plan 模式守卫优先于路径检查）。
+与 read 工具相同的路径检查。整文件创建/覆盖/追加（`mode` 为 `overwrite` 或 `append`），原样写入、不做匹配。在 Plan 模式下，所有 `write` 调用被拒绝（Plan 模式守卫优先于路径检查）。
 
 ### bash 工具
 

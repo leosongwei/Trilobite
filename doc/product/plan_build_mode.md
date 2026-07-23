@@ -4,7 +4,7 @@
 
 Trilobite 有两种工作模式，由前端切换按钮控制：
 
-| 模式 | 说明 | write 工具 |
+| 模式 | 说明 | edit/write 工具 |
 |------|------|-----------|
 | **Build**（默认） | 完整工具执行 | 可用 |
 | **Plan** | 只读分析 + 方案设计 | 禁用 |
@@ -79,13 +79,13 @@ Plan/Build 双模式由 **permission 策略**（`permission.py`）实现，而�
 
 | 模式 | 暴露的工具 | 拦截 |
 |------|-----------|------|
-| Build（`BuildModePermission`） | `read` `write` `bash` `TodoList` | 无 |
-| Plan（`PlanModePermission`） | `read` `bash` `TodoList` `exit_plan_mode` | `write` |
+| Build（`BuildModePermission`） | `read` `edit` `write` `bash` `TodoList` | 无 |
+| Plan（`PlanModePermission`） | `read` `bash` `TodoList` `exit_plan_mode` | `edit` `write` |
 
-Plan 模式下 `write` **根本不出现在工具列表里**（LLM 看不到它）。若模型仍幻觉式地调用 `write`，`intercept` 兜底拦截并返回错误：
+Plan 模式下 `edit`/`write` **根本不出现在工具列表里**（LLM 看不到它们）。若模型仍幻觉式地调用，`intercept` 兜底拦截并返回错误：
 
 ```
-Error: write tool is not available in plan mode. Call exit_plan_mode to request switching to build mode.
+Error: edit tool is not available in plan mode. Call exit_plan_mode to request switching to build mode.
 ```
 
 > 这里刻意区分两类东西：plan/build 是主 agent 的**运行时模式**（在同一个会话里热切换，靠换 permission 实现）；而 explore/general 是未来 subagent 的**声明式角色**（派生时固化，不切换）。它们都是 `AgentPermission` 子类，但生命周期不同，不强行统一成一个"agent 定义 + mode 字段"。
@@ -163,7 +163,7 @@ history.json 中**没有**模式切换通知，只有用户消息和模型回复
   { "role": "tool", "content": "..." },
   { "role": "assistant", "content": "建议添加 JWT 认证..." },
   { "role": "user", "content": "按这个方案做吧" },
-  { "role": "assistant", "tool_calls": [{"function": {"name": "write", ...}}] },
+  { "role": "assistant", "tool_calls": [{"function": {"name": "edit", ...}}] },
   { "role": "tool", "content": "..." }
 ]
 ```

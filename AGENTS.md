@@ -15,10 +15,11 @@ Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/Fa
 * `config.py` — 配置管理。首次运行自动从包内 `config_example/` 复制默认配置；加载 `system_prompt.txt` 和 `compaction_prompt.txt`。
 * `tokens.py` — 简易 token 估算（字符级，区分 ASCII/CJK）。
 * `file_access.py` — 文件路径解析和安全检查（敏感文件过滤）。
-* `tools/` — 四个具体工具：
+* `tools/` — 五个具体工具：
   * `bash.py` — 执行 shell 命令
   * `read.py` — 读取文件（支持行/字符限制）
-  * `write.py` — 写入文件（replace 模式生成上下文 diff）
+  * `edit.py` — 精确字符串替换（行尾归一化、replace_all、上下文 diff）
+  * `write.py` — 整文件创建/覆盖/追加（overwrite/append 模式）
   * `todo.py` — 任务列表管理（JSON 文件持久化在 session 目录）
 
 ## 前端 (`frontend/`)
@@ -37,14 +38,14 @@ Vue 3 + TypeScript，构建后输出到 `src/trilobite/static/`，由 FastAPI �
 ## Plan/Build 双模式
 
 Agent 有两种运行模式：
-* **Plan 模式**（只读）：只能使用 read、bash、TodoList 等非破坏性工具。`write` 被拦截。
+* **Plan 模式**（只读）：只能使用 read、bash、TodoList 等非破坏性工具。`edit`/`write` 被拦截。
 * **Build 模式**（全权限）：所有工具可用。
 
 Agent 调用 `exit_plan_mode` 时前端展示审批横幅，用户批准后切换。按 **Tab** 可在两种模式间切换。
 
 ## 文件访问权限
 
-`read`/`write` 工具访问工作区以外的路径时，前端弹出权限请求横幅（Grant/Deny）。批准后目录加入 `additional_dirs` 并持久化到 `session.json`，重启保留。敏感文件直接拒绝。
+`read`/`edit`/`write` 工具访问工作区以外的路径时，前端弹出权限请求横幅（Grant/Deny）。批准后目录加入 `additional_dirs` 并持久化到 `session.json`，重启保留。敏感文件直接拒绝。
 
 ## 上下文压缩
 

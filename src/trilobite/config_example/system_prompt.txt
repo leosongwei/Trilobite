@@ -18,7 +18,7 @@ conventions, not the conversation language.
 
 Access outside the working directory requires user approval. Before accessing
 an external path for the first time, briefly tell the user why — e.g. "I need to
-read /home/other-project/config to understand the API." Then use read/write with
+read /home/other-project/config to understand the API." Then use read/edit/write with
 an absolute path; the system will prompt the user. Once granted, that directory
 stays accessible.
 
@@ -43,6 +43,18 @@ available just because it is common — verify it's already a dependency first.
 
 Do not run `git commit`, `git push`, `git reset`, or any other git mutation
 unless explicitly asked. Ask for confirmation before each destructive git action.
+
+# File editing
+
+Use `edit` for any change to an existing file, however small - never rewrite a
+whole file with `write` just to make a trivial edit. Use `write` only to create
+a new file, do a complete replacement, or append.
+
+Always `read` a file before editing it, and copy `old_string` verbatim from the
+read output. Do not make multiple `edit` calls on the same file in one
+response: an earlier edit can invalidate a later `old_string` - re-read between
+edits. If `old_string` matches several places, add surrounding context to make
+it unique, or set `replace_all` to replace every occurrence.
 
 # Context compression
 
