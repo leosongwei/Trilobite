@@ -130,13 +130,18 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ### 中断 -> 总结 -> 退出
 
-用户可在子 session 视图点 **Interrupt**，触发 `POST /api/sessions/{child}/interrupt`：
+用户在子 session 视图点 **停止（■）**，触发 `POST /api/sessions/{child}/interrupt`（子 session 的停止按钮走 interrupt 而非 cancel，见前端）：
 
-1. 后端调用 `child_agent.interrupt()`，置中断标志、解除可能挂起的权限等待，并**立即 kill 正在运行的 bash 子进程组**（见下"bash 中断"）。这样长命令（如 `sleep 30`）不会让中断空等命令跑完。
-2. 子 agent 的 run 循环在**下一个安全点**检测到中断标志，**跳出工具循环，不再发起新的工具调用**。
-3. 执行**一个总结 turn**：以 user 消息注入"你被中断了。请简明总结你目前的发现/进展，然后停止。"，做一次无工具的 LLM 调用，输出作为子 agent 的最终 assistant 消息。
-4. 子 agent 发出 `interrupted` 事件并退出 run（随后 sealed，见下）。
-5. 主 agent 的 `task` 工具取这条总结作为该子 agent 的结果（`state="interrupted"`）。
+1. 后端调用 `child_agent.interrupt()`：置中断标志 `_interrupted`、解除可能挂起的权限等待、**立即 kill 正在运行的 bash 子进程组**，并 **cancel 当前 run task**。cancel 立刻把 `CancelledError` 抛到 run 正在 await 的点——无论是 LLM 流的 `async for chunk in stream` 还是 bash 的 `asyncio.to_thread`，都不会空等。
+2. run 的 `except CancelledError` 处理检测到 `_interrupted` 为真，判定这是中断而非主 agent 的取消：调 `task.uncancel()` 清除挂起的取消，丢弃被中断 turn 的部分输出，**补齐 dangling tool_calls**（见下），然后执行**一个总结 turn**：以 user 消息注入"你被中断了。请简明总结你目前的发现/进展，然后停止。"，做一次无工具的 LLM 调用，输出作为子 agent 的最终 assistant 消息。
+3. 子 agent 发出 `interrupted` 事件并退出 run（随后 sealed，见下）。
+4. 主 agent 的 `task` 工具取这条总结作为该子 agent 的结果（`state="interrupted"`）。
+
+> 与主 agent 取消的区别：主 agent 取消（`cancel()`）也 cancel task，但 `_interrupted` 为假，run 的 `except CancelledError` 走硬停分支（发 `cancelled`、不总结、向子 agent 传播取消）。中断只改 `_interrupted` 这一个标志就分流出"总结退出"的语义。
+
+### 补齐 dangling tool_calls
+
+中断可能落在 tool 执行中途：此时 assistant 消息（带 `tool_calls`）已 append 进 history，但部分 tool result 还没落。OpenAI 兼容 API 会拒绝 `tool_calls` 后面没有对应 `tool` result 的消息，总结 turn 的调用会因此报错。`_patch_dangling_tool_calls()` 扫描 history 末尾的 assistant 消息，对任何没有对应 result 的 `tool_call_id` 追加一条 `content="[interrupted]"` 的占位 tool result，让 history 重新自洽。
 
 ### bash 中断
 
@@ -145,9 +150,9 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 `interrupt()` 若发现 `_current_proc` 还活着，调 `kill_process_group`（`os.killpg` 整组 SIGKILL）：
 
 - 只 kill shell 不够：`shell=True` 下真正的命令（如 `sleep`）是 shell 的子进程、继承 stdout 管道，shell 死了子进程还活着持管，`communicate` 会阻塞到子进程结束。杀整组才能让 `communicate` 立即返回。
-- kill 后工作线程的 `execute_tool` 立即返回（exit code -9），run 循环拿到结果，回到 while 顶部检测 `_interrupted` -> 走总结 turn。
+- kill 后工作线程的 `execute_tool` 很快返回（exit code -9）；但中断不等它返回——cancel task 直接让 run 的 `await asyncio.to_thread` 抛 `CancelledError`，立刻进入总结。工作线程在后台收尾（结果丢弃），无害。
 
-非 bash 工具（read/write）很快返回，`interrupt` 只设标志，run 循环在下个安全点检测到即总结。
+非 bash 工具（read/write）很快返回，但中断同样靠 cancel task 立刻生效，不等它们。
 
 ### 结束即 sealed（不可复用）
 
@@ -155,8 +160,18 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ### 取消传播
 
+中断（interrupt）和取消（cancel）都靠 `task.cancel()` 落地，都会在 run 里抛 `CancelledError`。两者**唯一**的区别是 `_interrupted` 标志：只有 `interrupt()` 会把它置真，`cancel()` 不碰它。run 的 `except CancelledError` 据此分流--`_interrupted` 真 -> 总结退出；`_interrupted` 假 -> 硬停（发 `cancelled`、不总结、向自己的子 agent 传播取消）。这就是"主 agent 停掉主会话时，子 agent 不做退出总结"的保证：主 agent 对子 agent 调的是 `cancel()`（`_interrupted` 保持假），子 agent 走硬停分支。
+
 - **子 agent 中断**：只影响该子 agent（产出总结后退出）；其它子 agent 不受影响，`gather` 照常等它们完成。
-- **主 agent 取消**（用户停掉主会话）：取消 `task` 工具的 `await`，向所有运行中的子 agent 发取消信号，子 agent **硬停**（不产出总结），本次 `task` 调用整体作废、不回填结果。
+- **主 agent 取消**（用户停掉主会话）：取消 `task` 工具的 `await`（`asyncio.gather` 被取消时会向其内部所有子 task 传播取消），且 `Agent.cancel()` 显式对每个运行中的子 agent 再发一次 `cancel()`。子 agent `_interrupted` 为假 -> 硬停、**不产出总结**。本次 `task` 调用整体作废、不回填结果（`_run_subagents` 来不及取子 agent 的 `_final_state`，因为 `gather` 抛了 `CancelledError`）。
+
+### 边界情况
+
+- **主 agent 取消优先于子 agent 中断**：若某个子 agent 已被用户 interrupt、正在跑总结 turn，此时用户停掉主会话，取消信号会传到该子 agent，打断其总结 turn（`_summarize_and_exit` 内的 await 抛 `CancelledError`，被 `except CancelledError: raise` 透传），子 agent 硬停、**不完成总结**。主 agent 的取消语义始终更强。
+- **中断丢弃被中断 turn 的部分输出**：`CancelledError` 落在 LLM 流的 `async for chunk` 上时，`content_parts` 可能已有部分文本，但该 assistant 消息还没 append 进 history（stream 没结束）。这部分输出被丢弃，不进 history、不进结果。只有已 append 的内容（如 tool_calls）留下，由 `_patch_dangling_tool_calls` 兜底。
+- **中断落在 tool 执行中途**：assistant 消息（带 `tool_calls`）已 append，但部分 tool result 未落。`_patch_dangling_tool_calls` 给缺 result 的 `tool_call_id` 补 `[interrupted]` 占位，避免总结 turn 的 API 调用因 `tool_calls` 无对应 result 而报错。
+- **中断极早期窗口**：`_run_as_subagent` 在 `set_running(True)` 后、进入 `run()` 前还发了一条 user 事件。若中断的 `cancel()` 恰好落在这个 await 上，`CancelledError` 不在 `run()` 的 try 内（还在 `_run_as_subagent` 里），子 agent 直接硬停、无总结。窗口极小（仅一条事件发送），可接受。
+- **总结 turn 自身失败**：中断后总结 turn 的 LLM 调用若抛异常（API 错误等），被 `except Exception` 兜住，子 agent 以 `state="error"` 退出（`_final_result` 记录失败原因），不向上抛、不拖垮父 agent 的 `gather`。
 
 ### max_steps
 
@@ -244,9 +259,9 @@ sessions/
 
 - **侧边栏树**：父 session 节点下展开挂子 session 节点（带 type/description/状态徽标）。点击切换到该会话视图。子 session 完成后仍留在树里，只读可查。
 - **子 session 视图**：复用 `ChatView`。
-  - 运行中：**显示输入框**（用于 steering）+ **Interrupt 按钮**；订阅子 session SSE。
-  - 已结束（sealed）：**禁用输入框**（提示"该 subagent 已结束"），仅展示历史，可返回父会话。
-  - 顶部"返回父会话"导航。
+  - 运行中：**显示输入框**（用于 steering）+ **■ 停止按钮**（与主 session 同位，点击走 `interrupt`：硬停当前工作后总结退出）；订阅子 session SSE。
+  - 已结束（sealed）：**禁用输入框**（提示"该 subagent 已结束"），仅展示历史，可返回父会话。停止按钮随之隐藏。
+  - 顶部 subagent-bar：显示角色标签、描述、返回父会话导航；sealed 后显示"finished (read-only)"。
 - **权限横幅**：`subagent_permission_request` 事件触发全局横幅（不论当前在哪个会话视图），写明子 agent 身份与请求路径，Approve/Deny。
 - `store.ts`：处理 `subagents` / `subagent_state` / `subagent_permission_request` 事件；维护会话树与各子 session 的 `isStreaming` / `sealed` 状态。
 
@@ -268,12 +283,12 @@ sessions/
    - 工具派发处加 `elif tool_name == "task": tool_result = await self._run_subagents(args)`，作为 `intercept` 之后、`exit_plan_mode` 之后的分支。
    - 新增 `_run_subagents(args)`：校验（含派生权限：plan 仅 explore）、创建子 Agent（注入 prompt、permission、depth、registry、parent_broker、max_steps）、`gather`、组装 `<task_result>`。
    - run 循环加 `max_steps` 计数与超限退出。
-   - 新增 `interrupt()`：置中断标志 + 取消在途工具调用，run 循环检测后做总结 turn，结束置 `_sealed`。
+   - 新增 `interrupt()`：置 `_interrupted` 标志 + kill bash 进程组 + **cancel 当前 run task**（立刻中断 LLM 流/工具）；run 的 `except CancelledError` 检测 `_interrupted` 为真则 `uncancel` + 补齐 dangling tool_calls + 做总结 turn，结束置 `_sealed`。`_interrupted` 为假（主 agent 取消）则硬停不总结。
    - 子 agent 权限请求：复用 `_permission_event`；触发时经 `parent_broker` 由父 agent fan-out `subagent_permission_request` 到父 + 所有兄弟 broker。
    - run 结束（任何原因）置 `_sealed = True`。
    - 主 agent 取消时传播取消给运行中的子 agent（硬停）。
 3. **`server.py`**：创建主 agent 时传 `registry=agents`；`/message` 对 sealed 子 agent 拒绝；新增 `POST /api/sessions/{name}/interrupt`（调 `agent.interrupt()`）；`/stream`、`/history`、`/permission` 对子 session 复用现有逻辑；侧边栏 session 列表返回树结构（带 parent/children）。
-4. **前端**：`store.ts` 会话树 + `subagents`/`subagent_state`/`subagent_permission_request` 事件处理；侧边栏树组件；`ToolEntry`（或新 `SubagentTree` 组件）渲染 `task` 节点；子 session 视图（复用 `ChatView`、运行中显示输入+Interrupt、sealed 禁用输入、返回导航）；全局权限横幅。
+4. **前端**：`store.ts` 会话树 + `subagents`/`subagent_state`/`subagent_permission_request` 事件处理；侧边栏树组件；`ToolEntry`（或新 `SubagentTree` 组件）渲染 `task` 节点；子 session 视图（复用 `ChatView`、运行中显示输入+■ 停止按钮（走 interrupt）、sealed 禁用输入、返回导航）；全局权限横幅。`ChatInput.stop()` 按 `isSubagent` 分流：subagent -> `/interrupt`，主 agent -> `/cancel`。
 5. **提示词**：`config_example/` 增加 `subagent_role_prefix.txt`（TASK_AGENT_ROLE_PREFIX）及 explore/general 角色提示；`system_prompt.txt` 增补 `task` 工具使用指引（强调：能直接 read/bash 搞定的别开 subagent；开 subagent 要给自包含 prompt；子 agent 输出对用户不可见，主 agent 需转述）。
 
 ## 十二、风险与决策记录

@@ -345,15 +345,15 @@ class Agent:
         return self._sealed
 
     def interrupt(self) -> None:
-        """Request a running subagent to stop work and produce a summary.
+        """Hard-stop a running subagent's current work, then summarize.
 
-        Sets the interrupt flag (checked by the run loop at the next safe
-        point) and unblocks a pending permission wait so the loop is not
-        stuck waiting for approval. If a bash command is currently running,
-        kill its process group so the worker thread returns immediately
-        instead of blocking until the command finishes -- otherwise
-        interrupting a long command (e.g. ``sleep 30``) would have no effect
-        until it ends.
+        Immediately cancels the in-progress run -- this interrupts an LLM
+        stream (the ``async for chunk in stream`` await) or a bash call right
+        away, instead of waiting for the run loop to reach the next safe
+        point. The run's ``CancelledError`` handler sees the interrupt flag
+        and, rather than a bare cancel, runs one tool-less summary turn and
+        exits. Also kills a running bash process group and unblocks a pending
+        permission wait so nothing is left stuck.
         """
         self._interrupted = True
         self._permission_approved = False
@@ -361,6 +361,8 @@ class Agent:
         proc = self._current_proc
         if proc is not None and proc.poll() is None:
             kill_process_group(proc)
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
 
     def _register_proc(self, proc) -> None:
         """Record the bash subprocess currently running (or None when idle).
@@ -504,10 +506,6 @@ class Agent:
 
         try:
             while True:
-                # Subagent interrupt: stop further work and produce a summary.
-                if self._interrupted:
-                    await self._summarize_and_exit()
-                    break
                 # Subagent step cap: prevent runaway loops.
                 if self._max_steps is not None and self._step_count >= self._max_steps:
                     self._final_state = "error"
@@ -740,6 +738,27 @@ class Agent:
                     break
 
         except asyncio.CancelledError:
+            if self._interrupted:
+                # A subagent interrupt hard-stops the current turn mid-flight
+                # (LLM stream or bash). Discard the partial output, clear the
+                # pending cancellation, and run one summary turn before exiting
+                # cleanly -- so the parent's task tool gets a summary result
+                # instead of a bare cancellation. (A real cancel from the
+                # parent leaves _interrupted False and falls through to the
+                # hard-stop path below.)
+                if self._task is not None:
+                    self._task.uncancel()
+                self._patch_dangling_tool_calls()
+                try:
+                    await self._summarize_and_exit()
+                except asyncio.CancelledError:
+                    # Parent cancelled us mid-summary: hard-stop, no summary.
+                    raise
+                except Exception as e:
+                    self._final_state = "error"
+                    self._final_result = f"interrupt summary failed: {e}"
+                    await self._send_stream_event({"type": "error", "text": self._final_result})
+                return
             content = "".join(content_parts)
             thinking = "".join(thinking_parts)
             self._final_state = "error"
@@ -972,6 +991,33 @@ class Agent:
         if errors:
             body = "\n".join(errors) + "\n" + body
         return {"result": f"<task_result>\n{body}\n</task_result>"}
+
+    def _patch_dangling_tool_calls(self) -> None:
+        """Fill placeholder tool results for tool_calls lacking a result.
+
+        An interrupt cancels a turn mid-flight. If the cancellation lands
+        after the assistant message (with ``tool_calls``) was appended but
+        before every tool result landed, history is left inconsistent:
+        OpenAI-compatible APIs reject ``tool_calls`` that are not followed by
+        a matching ``tool`` result, which would break the summary turn. Scan
+        the trailing assistant message and append a placeholder result for
+        any unanswered ``tool_call_id``.
+        """
+        raw = self.history.raw
+        if not raw:
+            return
+        last = raw[-1]
+        if last.get("role") != "assistant" or not last.get("tool_calls"):
+            return
+        answered = {m.get("tool_call_id") for m in raw if m.get("role") == "tool"}
+        for tc in last["tool_calls"]:
+            tc_id = tc.get("id")
+            if tc_id and tc_id not in answered:
+                self.history.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": "[interrupted]",
+                })
 
     async def _summarize_and_exit(self) -> None:
         """Produce a final summary turn after an interrupt, then exit.

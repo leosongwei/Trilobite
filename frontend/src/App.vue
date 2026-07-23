@@ -9,7 +9,6 @@
         <span class="subagent-tag" :class="state.subagentType">{{ state.subagentType }}</span>
         <span class="subagent-title">{{ state.subagentDescription || state.currentSession }}</span>
         <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>
-        <button v-if="state.isStreaming && !state.sealed" class="interrupt-btn" @click="doInterrupt">Interrupt</button>
       </div>
       <ChatView />
       <div v-if="state.planExitRequest" class="plan-exit-banner">
@@ -41,7 +40,7 @@ import ChatView from './components/ChatView.vue'
 import ChatInput from './components/ChatInput.vue'
 import TokenBar from './components/TokenBar.vue'
 
-const { state, loadSessions, setMode, approvePlanExit, rejectPlanExit, approvePermission, rejectPermission, approveSubagentPermission, rejectSubagentPermission, selectSession, interruptSubagent } = useStore()
+const { state, loadSessions, setMode, approvePlanExit, rejectPlanExit, approvePermission, rejectPermission, approveSubagentPermission, rejectSubagentPermission, selectSession } = useStore()
 const sidebarOpen = ref(false)
 
 const parentSession = computed(() => {
@@ -51,10 +50,6 @@ const parentSession = computed(() => {
 
 function goParent() {
   if (parentSession.value) selectSession(parentSession.value)
-}
-
-function doInterrupt() {
-  if (state.currentSession) interruptSubagent(state.currentSession)
 }
 
 watch(() => state.currentSession, () => {
