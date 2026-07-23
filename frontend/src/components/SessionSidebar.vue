@@ -29,7 +29,7 @@
         >
           <span class="session-label">
             <span v-if="c.is_running" class="running-dot" title="running"></span>
-            <span class="child-badge" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
+            <span class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
             <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
             {{ c.description || c.name }}
           </span>
@@ -83,7 +83,14 @@ const sessionTree = computed<SessionNode[]>(() => {
   }
   return all
     .filter((s) => !s.parent_session)
-    .map((s) => ({ ...s, children: childrenByParent.get(s.name) ?? [] }))
+    .map((s) => ({
+      ...s,
+      children: (childrenByParent.get(s.name) ?? []).slice().sort((a, b) => {
+        // Newest subagents on top: descending by created_at, with missing
+        // timestamps (legacy sessions) pushed to the bottom.
+        return (b.created_at ?? 0) - (a.created_at ?? 0)
+      }),
+    }))
 })
 
 onMounted(() => {

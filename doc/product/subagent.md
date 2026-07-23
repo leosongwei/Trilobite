@@ -224,12 +224,12 @@ sessions/
     session.json              # 现有字段
     history.json
   <parent_name>__<shortid>/   # 子 session（与父平级）
-    session.json              # parent_session, subagent_type, depth, description, additional_dirs
+    session.json              # parent_session, subagent_type, depth, description, additional_dirs, created_at
     history.json
     agent.log
 ```
 
-子 session 的 `session.json` 记录 `parent_session`（父名）、`subagent_type`、`depth`、`description`、`additional_dirs`，用于前端标题、树归属与权限目录持久化。扁平结构与现有 session 模型兼容。
+子 session 的 `session.json` 记录 `parent_session`（父名）、`subagent_type`、`depth`、`description`、`additional_dirs`、`created_at`（创建时间戳），用于前端标题、树归属、侧栏排序与权限目录持久化。扁平结构与现有 session 模型兼容。主 session 的 `session.json` 同样写入 `created_at`。
 
 ### 运行期注册
 
@@ -257,13 +257,13 @@ sessions/
 
 ### 前端树状展示
 
-- **侧边栏树**：父 session 节点下展开挂子 session 节点（带 type/description/状态徽标）。点击切换到该会话视图。子 session 完成后仍留在树里，只读可查。
+- **侧边栏树**：父 session 节点下展开挂子 session 节点（带 type/description/状态徽标）。点击切换到该会话视图。子 session 完成后仍留在树里，只读可查。子节点按 `created_at` **降序**排列（新 spawn 的排顶部，老的在下），缺少时间戳的遗留 session 排末尾。角色徽标用 `subagent_type` 前两字符（`EX`/`GE`）：explore 保持灰底、字体用浅黄（#d29922，与 plan mode 同色系，呼应其只读语义），general 维持默认浅蓝。
 - **子 session 视图**：复用 `ChatView`。
   - 运行中：**显示输入框**（用于 steering）+ **■ 停止按钮**（与主 session 同位，点击走 `interrupt`：硬停当前工作后总结退出）；订阅子 session SSE。
   - 已结束（sealed）：**禁用输入框**（提示"该 subagent 已结束"），仅展示历史，可返回父会话。停止按钮随之隐藏。
   - 顶部 subagent-bar：显示角色标签、描述、返回父会话导航；sealed 后显示"finished (read-only)"。
 - **权限横幅**：`subagent_permission_request` 事件触发全局横幅（不论当前在哪个会话视图），写明子 agent 身份与请求路径，Approve/Deny。
-- `store.ts`：处理 `subagents` / `subagent_state` / `subagent_permission_request` 事件；维护会话树与各子 session 的 `isStreaming` / `sealed` 状态。
+- `store.ts`：处理 `subagents` / `subagent_state` / `subagent_permission_request` 事件；维护会话树与各子 session 的 `isStreaming` / `sealed` 状态。主会话收到 `done` / `cancelled` / `interrupted` 时，后端对运行中子 agent 的硬停不会发出 `subagent_state`（`_run_subagents` 的发出点在 `gather` 之后，取消时该循环不执行），故前端在此刻主动把仍 `running` 的子会话标记为停止（task 节点 state 置为 `completed`/`interrupted`、侧栏 `is_running` 置假），让侧栏即时反映中断而不必等下一次 session 轮询。
 
 ## 十、可选增强（待你拍板是否纳入 v1）
 
