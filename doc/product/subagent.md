@@ -121,7 +121,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 - 同一次 `task` 调用的多个子 agent 用 `asyncio.gather` 并发运行。
 - `gather` 等待**全部**子 agent 结束（正常完成 / 被中断 / 出错 / 触发 max_steps）后才返回。任意一个的失败或中断**不影响**其它继续跑。
-- `task` 是系统里第一个异步工具。`Agent` 工具派发处对 `task` 走 `await self._run_subagents(args)`；其余工具仍走同步 `execute_tool`。不在 v1 把 `execute_tool` 整体异步化。
+- `task` 是系统里第一个异步工具。`Agent` 工具派发处对 `task` 走 `await self._run_subagents(args)`；其余工具仍走同步 `execute_tool`（但在调用处用 `asyncio.to_thread` 丢到工作线程执行，避免 bash 的 `subprocess.run` 阻塞共享事件循环，详见 streaming.md）。不在 v1 把 `execute_tool` 整体异步化。
 
 ### 用户 steering 子 agent
 

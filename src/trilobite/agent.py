@@ -651,7 +651,14 @@ class Agent:
                         elif tool_name == "task":
                             tool_result = await self._run_subagents(args)
                         else:
-                            tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
+                            # Tools are synchronous (notably bash's subprocess.run
+                            # blocks). Run them in a worker thread so a long bash
+                            # call doesn't freeze the event loop -- otherwise the
+                            # shared loop stalls SSE heartbeats and every other
+                            # agent/subagent on it (issue #5).
+                            tool_result = await asyncio.to_thread(
+                                execute_tool, tool_name, args, self.working_dir,
+                                self.session_dir, self._additional_dirs)
 
                         # Handle permission request from tool
                         if "permission" in tool_result:
@@ -676,7 +683,9 @@ class Agent:
                                 self._additional_dirs.append(Path(perm_path).resolve())
                                 self._persist_additional_dirs()
                                 # Retry the tool with updated additional_dirs
-                                tool_result = execute_tool(tool_name, args, self.working_dir, self.session_dir, self._additional_dirs)
+                                tool_result = await asyncio.to_thread(
+                                    execute_tool, tool_name, args, self.working_dir,
+                                    self.session_dir, self._additional_dirs)
                             # else: keep original error result
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"]}
