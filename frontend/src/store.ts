@@ -99,6 +99,31 @@ function closeTurn() {
   currentToolIdx = -1
 }
 
+// When the main session ends (especially on cancel), the backend hard-stops
+// running subagents. But _run_subagents only emits `subagent_state` after the
+// gather completes; a cancel tears down the gather so that loop never runs and
+// the terminal event is never sent. Mark still-running children stopped here so
+// the sidebar reflects the interruption immediately instead of waiting for the
+// next session poll.
+function markRunningSubagentsStopped(endType: string) {
+  const terminal = endType === 'done' ? 'completed' : 'interrupted'
+  const turn = getCurrentTurn()
+  if (turn) {
+    for (const t of turn.tools) {
+      if (t.subagents) {
+        for (const c of t.subagents) {
+          if (c.state === 'running') c.state = terminal
+        }
+      }
+    }
+  }
+  for (const s of state.sessions) {
+    if (s.parent_session === state.currentSession && s.is_running) {
+      s.is_running = false
+    }
+  }
+}
+
 function handleSSEEvent(event: SSEEvent) {
   switch (event.type) {
     case 'init': {
@@ -272,6 +297,7 @@ function handleSSEEvent(event: SSEEvent) {
       state.isStreaming = false
       state.statusText = null
       if (event.type === 'interrupted' && state.isSubagent) state.sealed = true
+      markRunningSubagentsStopped(event.type)
       closeTurn()
       break
 

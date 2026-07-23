@@ -93,6 +93,7 @@ body {
 .session-item.child { padding-left: 24px; font-size: 12px; color: #a0a0a0; }
 .session-item.child .session-label { gap: 5px; }
 .child-badge { font-size: 9px; font-weight: 600; padding: 1px 3px; border-radius: 2px; background: #3a3d3e; color: #9cdcfe; flex-shrink: 0; text-transform: uppercase; }
+.child-badge.explore { color: #d29922; }
 .sealed-dot { width: 6px; height: 6px; border-radius: 50%; background: #6e7681; flex-shrink: 0; }
 .session-item .session-label { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-item .running-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: trilobite-pulse 1.4s ease-in-out infinite; }
@@ -312,8 +313,8 @@ body {
   font-size: 9px; font-weight: 600; padding: 1px 4px; border-radius: 2px;
   text-transform: uppercase; flex-shrink: 0;
 }
-.subagent-type.explore { background: #1f3a5f; color: #9cdcfe; }
-.subagent-type.general { background: #4a3a1f; color: #d7ba7d; }
+.subagent-type.explore { background: #4a3a1f; color: #d29922; }
+.subagent-type.general { background: #1f3a5f; color: #9cdcfe; }
 .subagent-desc { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cccccc; }
 .subagent-state { font-size: 10px; flex-shrink: 0; }
 .subagent-state.running { color: #3fb950; }

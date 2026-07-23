@@ -50,6 +50,7 @@ export interface Session {
   subagent_type?: string
   description?: string
   sealed?: boolean
+  created_at?: number
 }
 
 export interface SessionInfo {
