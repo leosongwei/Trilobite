@@ -83,7 +83,7 @@ class AgentPermission(ABC):
 class BuildModePermission(AgentPermission):
     """Primary agent, build mode: full tool access, can spawn subagents."""
 
-    tool_names = ("read", "write", "bash", "TodoList")
+    tool_names = ("read", "edit", "write", "bash", "TodoList")
     exposes_task = True
 
     def intercept(self, tool_name: str) -> str | None:
@@ -99,9 +99,9 @@ class PlanModePermission(AgentPermission):
     exposes_task = True
 
     def intercept(self, tool_name: str) -> str | None:
-        if tool_name == "write":
+        if tool_name in ("edit", "write"):
             return (
-                "Error: write tool is not available in plan mode. "
+                f"Error: {tool_name} tool is not available in plan mode. "
                 "Call exit_plan_mode to request switching to build mode."
             )
         return None
@@ -118,8 +118,8 @@ class ExploreSubagentPermission(AgentPermission):
     tool_names = ("read", "bash")
 
     def intercept(self, tool_name: str) -> str | None:
-        if tool_name == "write":
-            return "Error: write tool is not available to the explore subagent."
+        if tool_name in ("edit", "write"):
+            return f"Error: {tool_name} tool is not available to the explore subagent."
         if tool_name == "TodoList":
             return "Error: TodoList is not available to subagents."
         return None
@@ -135,7 +135,7 @@ class GeneralSubagentPermission(AgentPermission):
     list).
     """
 
-    tool_names = ("read", "write", "bash")
+    tool_names = ("read", "edit", "write", "bash")
 
     def intercept(self, tool_name: str) -> str | None:
         if tool_name == "TodoList":

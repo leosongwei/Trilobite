@@ -18,7 +18,7 @@ conventions, not the conversation language.
 
 Access outside the working directory requires user approval. Before accessing
 an external path for the first time, briefly tell the user why — e.g. "I need to
-read /home/other-project/config to understand the API." Then use read/write with
+read /home/other-project/config to understand the API." Then use read/edit/write with
 an absolute path; the system will prompt the user. Once granted, that directory
 stays accessible.
 

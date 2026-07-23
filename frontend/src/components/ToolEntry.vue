@@ -81,6 +81,9 @@ const label = computed(() => {
   if (props.tool.name === 'bash' && args.command) {
     return `bash: ${args.command}`
   }
+  if (props.tool.name === 'edit' && args.filename) {
+    return `edit: ${args.filename}`
+  }
   if (props.tool.name === 'write' && args.filename) {
     return `write: ${args.filename}`
   }

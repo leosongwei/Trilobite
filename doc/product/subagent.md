@@ -113,7 +113,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ### 工具与单层限制
 
-子 agent 的工具集由其 permission 白名单决定（explore: read/bash；general: read/write/bash）。**不含 `task`**（单层限制）、**不含 `TodoList`**（子 agent 不维护用户 todo）、**不含 `exit_plan_mode`**（子 agent 无模式）。因白名单不含 `task`，子 agent 结构上看不到派生工具 -> 单层硬限制。
+子 agent 的工具集由其 permission 白名单决定（explore: read/bash；general: read/edit/write/bash）。**不含 `task`**（单层限制）、**不含 `TodoList`**（子 agent 不维护用户 todo）、**不含 `exit_plan_mode`**（子 agent 无模式）。因白名单不含 `task`，子 agent 结构上看不到派生工具 -> 单层硬限制。
 
 ## 五、并行、steering 与中断
 
@@ -152,7 +152,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 - 只 kill shell 不够：`shell=True` 下真正的命令（如 `sleep`）是 shell 的子进程、继承 stdout 管道，shell 死了子进程还活着持管，`communicate` 会阻塞到子进程结束。杀整组才能让 `communicate` 立即返回。
 - kill 后工作线程的 `execute_tool` 很快返回（exit code -9）；但中断不等它返回——cancel task 直接让 run 的 `await asyncio.to_thread` 抛 `CancelledError`，立刻进入总结。工作线程在后台收尾（结果丢弃），无害。
 
-非 bash 工具（read/write）很快返回，但中断同样靠 cancel task 立刻生效，不等它们。
+非 bash 工具（read/edit/write）很快返回，但中断同样靠 cancel task 立刻生效，不等它们。
 
 ### 结束即 sealed（不可复用）
 

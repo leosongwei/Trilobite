@@ -81,7 +81,7 @@ per-session 事件总线，维护：
 ### 工具结果展示（`ToolEntry.vue`）
 
 * `read` 工具的结果默认折叠（`<details>` 收起），仅显示标签行 `[read: <filename>]`，点击展开查看完整输出，避免长文件内容刷屏。
-* `bash`、`write` 等工具仍默认展开（`write` 走 diff 视图）。
+* `bash`、`write`、`edit` 等工具仍默认展开（`edit` 走 diff 视图，`write` 走文本结果）。
 
 ### 思考展示（`ThinkingBlock.vue`）
 
