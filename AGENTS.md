@@ -91,9 +91,13 @@ trilobite   # entry point，启动 uvicorn (0.0.0.0:2345)
 
 # 风格和注意事项
 
-## 工作流
+## 项目管理
 
+注意：
+* 一般来说我用trilobite开发trilobite，所以你其实就运行在这个trilobite里面，这个进程占据了2345端口，当功能开发完后你可以叫我来重启进程。
 * gh已经配备，可以查看github的issues, PRs。
+
+流程：
 * 进行任何修改前，扫描产品文档`doc/product`
 * 进行修改前，先拉最新的master分支，然后专门的特性分支
 * 修改后，如果流程发生变更，记得更新产品文件：每次修改agent的工作方式后，需要在`doc/product`的相应文件中说明
