@@ -8,24 +8,24 @@
       <button @click="handleCreate">+ New Session</button>
     </div>
     <div class="sessions">
-      <template v-for="s in sessionTree" :key="s.name">
+      <template v-for="s in sessionTree" :key="s.id">
         <div
           class="session-item"
-          :class="{ active: s.name === state.currentSession }"
-          @click="handleSelect(s.name)"
+          :class="{ active: s.id === state.currentSession }"
+          @click="handleSelect(s.id)"
         >
           <span class="session-label">
             <span v-if="s.is_running" class="running-dot" title="running"></span>
             {{ s.name }}
           </span>
-          <span class="delete" @click.stop="handleDelete(s.name)">&times;</span>
+          <span class="delete" @click.stop="handleDelete(s.id)">&times;</span>
         </div>
         <div
           v-for="c in s.children"
-          :key="c.name"
+          :key="c.id"
           class="session-item child"
-          :class="{ active: c.name === state.currentSession }"
-          @click="handleSelect(c.name)"
+          :class="{ active: c.id === state.currentSession }"
+          @click="handleSelect(c.id)"
         >
           <span class="session-label">
             <span v-if="c.is_running" class="running-dot" title="running"></span>
@@ -36,7 +36,34 @@
         </div>
       </template>
     </div>
-    <div v-if="state.currentSession" class="dirs-section">
+    <div v-if="state.currentSession" class="session-info">
+      <div class="info-row">
+        <span class="info-label">Session:</span>
+        <template v-if="editingName">
+          <input
+            v-model="editName"
+            class="info-edit"
+            type="text"
+            @keydown.enter="saveName"
+            @keydown.esc="cancelName"
+          />
+          <button class="icon-btn" title="Save" @click="saveName">&#10003;</button>
+          <button class="icon-btn" title="Cancel" @click="cancelName">&times;</button>
+        </template>
+        <template v-else>
+          <span class="info-value" :title="currentSessionName">{{ currentSessionName }}</span>
+          <button
+            v-if="!state.isSubagent"
+            class="icon-btn"
+            title="Rename session"
+            @click="startEditName"
+          >&#9998;</button>
+        </template>
+      </div>
+      <div class="info-row">
+        <span class="info-label">cwd:</span>
+        <span class="info-value" :title="currentSessionCwd">{{ currentSessionCwd }}</span>
+      </div>
       <details>
         <summary>Allowed directories ({{ state.additionalDirs.length }})</summary>
         <div v-for="d in state.additionalDirs" :key="d" class="dir-item">
@@ -60,11 +87,22 @@ import type { Session } from '../types'
 
 const emit = defineEmits<{ select: [] }>()
 
-const { state, selectSession, createSession, deleteSession, addDir, removeDir } = useStore()
+const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession } = useStore()
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
 const version = ref('')
+const editingName = ref(false)
+const editName = ref('')
+
+const currentSessionObj = computed(() =>
+  state.sessions.find((s) => s.id === state.currentSession),
+)
+const currentSessionName = computed(() => {
+  if (state.isSubagent) return state.subagentDescription || state.currentSession || ''
+  return currentSessionObj.value?.name ?? state.currentSession ?? ''
+})
+const currentSessionCwd = computed(() => currentSessionObj.value?.working_dir ?? '')
 
 interface SessionNode extends Session {
   children: Session[]
@@ -86,7 +124,7 @@ const sessionTree = computed<SessionNode[]>(() => {
     .filter((s) => !s.parent_session)
     .map((s) => ({
       ...s,
-      children: (childrenByParent.get(s.name) ?? []).slice().sort((a, b) => {
+      children: (childrenByParent.get(s.id) ?? []).slice().sort((a, b) => {
         // Newest subagents on top: descending by created_at, with missing
         // timestamps (legacy sessions) pushed to the bottom.
         return (b.created_at ?? 0) - (a.created_at ?? 0)
@@ -99,8 +137,26 @@ onMounted(() => {
   getVersion().then((v) => (version.value = v)).catch(() => {})
 })
 
-async function handleSelect(sessionName: string) {
-  await selectSession(sessionName)
+function startEditName() {
+  editName.value = currentSessionObj.value?.name ?? ''
+  editingName.value = true
+}
+
+async function saveName() {
+  const newName = editName.value.trim()
+  editingName.value = false
+  if (newName && newName !== currentSessionObj.value?.name) {
+    await renameSession(newName)
+  }
+}
+
+function cancelName() {
+  editingName.value = false
+}
+
+async function handleSelect(id: string) {
+  editingName.value = false
+  await selectSession(id)
   emit('select')
 }
 
@@ -128,9 +184,11 @@ async function resetDefaults() {
   }
 }
 
-async function handleDelete(sessionName: string) {
-  if (!confirm(`Delete session "${sessionName}"?`)) return
-  await deleteSession(sessionName)
+async function handleDelete(id: string) {
+  const s = state.sessions.find((x) => x.id === id)
+  const label = s?.name ?? id
+  if (!confirm(`Delete session "${label}"?`)) return
+  await deleteSession(id)
 }
 
 async function handleAddDir() {

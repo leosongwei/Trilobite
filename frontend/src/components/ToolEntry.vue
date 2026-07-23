@@ -10,7 +10,7 @@
           :key="c.session"
           class="subagent-node"
           @click="openChild(c.session)"
-          :title="`Open subagent session: ${c.session}`"
+          :title="`Open subagent session: ${c.description || c.session}`"
         >
           <span class="subagent-type" :class="c.type">{{ c.type }}</span>
           <span class="subagent-desc">{{ c.description }}</span>

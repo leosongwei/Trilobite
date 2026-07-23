@@ -36,8 +36,8 @@ per-session 事件总线，维护：
 
 ### 端点 (`src/trilobite/server.py`)
 
-* `POST /api/sessions/{name}/message`：running 则 steer 返回 `{status:"steered"}`，否则 start 返回 `{status:"started"}`。**不返回流**。
-* `GET /api/sessions/{name}/stream`：SSE 订阅。连接时发 `init`，随后持续推送事件，空闲时发 `: keepalive` 心跳；`done/cancelled/error` 后保持连接以等待下一个 run。
+* `POST /api/sessions/{id}/message`：running 则 steer 返回 `{status:"steered"}`，否则 start 返回 `{status:"started"}`。**不返回流**。
+* `GET /api/sessions/{id}/stream`：SSE 订阅。连接时发 `init`，随后持续推送事件，空闲时发 `: keepalive` 心跳；`done/cancelled/error` 后保持连接以等待下一个 run。
 
 ## SSE 事件协议
 

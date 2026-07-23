@@ -89,7 +89,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 | 字段 | 取值 |
 |---|---|
-| `name` | `f"{parent_name}__{shortid}"`（shortid = uuid4 hex 前 8 位，保证唯一） |
+| `name` | `uuid4().hex`（纯 UUID，作为稳定标识兼目录名；子 session 没有人可读名字，前端用 `description` 展示） |
 | `working_dir` | 与父 agent 相同（同一工作区） |
 | `session_dir` | `sessions/<child_name>/`（扁平结构，与父平级） |
 | `config` | 继承父 agent 的 config（同一模型/API） |
@@ -218,18 +218,20 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ### 目录结构（扁平）
 
+Session 目录名是一个稳定的 UUID 标识（`id`），人可读的名字存在 `session.json` 的 `name` 字段里，可随时改名而不移动目录。所有 `/api/sessions/{id}/...` endpoint 用这个 `id`（即目录名）寻址。
+
 ```
 sessions/
-  <parent_name>/              # 主 session（现有）
-    session.json              # 现有字段
+  <session_id>/               # 主 session（UUID 目录）
+    session.json              # name, working_dir, plan_mode, additional_dirs, created_at, session_id
     history.json
-  <parent_name>__<shortid>/   # 子 session（与父平级）
+  <child_id>/                 # 子 session（UUID 目录，与父平级）
     session.json              # parent_session, subagent_type, depth, description, additional_dirs, created_at
     history.json
     agent.log
 ```
 
-子 session 的 `session.json` 记录 `parent_session`（父名）、`subagent_type`、`depth`、`description`、`additional_dirs`、`created_at`（创建时间戳），用于前端标题、树归属、侧栏排序与权限目录持久化。扁平结构与现有 session 模型兼容。主 session 的 `session.json` 同样写入 `created_at`。
+子 session 的 `session.json` 记录 `parent_session`（父 session 的 `id`/UUID）、`subagent_type`、`depth`、`description`、`additional_dirs`、`created_at`（创建时间戳），用于前端标题、树归属、侧栏排序与权限目录持久化。扁平结构与现有 session 模型兼容。主 session 的 `session.json` 同样写入 `created_at`。`GET /api/sessions` 列表里每项带 `id`（目录名）与 `name`（人可读名）；改名走 `POST /api/sessions/{id}/rename`（只改 `name`，目录不动）。旧 session（目录名即人可读名）向后兼容：其 `id` 等于目录名。
 
 ### 运行期注册
 
@@ -287,7 +289,7 @@ sessions/
    - 子 agent 权限请求：复用 `_permission_event`；触发时经 `parent_broker` 由父 agent fan-out `subagent_permission_request` 到父 + 所有兄弟 broker。
    - run 结束（任何原因）置 `_sealed = True`。
    - 主 agent 取消时传播取消给运行中的子 agent（硬停）。
-3. **`server.py`**：创建主 agent 时传 `registry=agents`；`/message` 对 sealed 子 agent 拒绝；新增 `POST /api/sessions/{name}/interrupt`（调 `agent.interrupt()`）；`/stream`、`/history`、`/permission` 对子 session 复用现有逻辑；侧边栏 session 列表返回树结构（带 parent/children）。
+3. **`server.py`**：创建主 agent 时传 `registry=agents`；`/message` 对 sealed 子 agent 拒绝；新增 `POST /api/sessions/{id}/interrupt`（调 `agent.interrupt()`）；`/stream`、`/history`、`/permission` 对子 session 复用现有逻辑；侧边栏 session 列表返回树结构（带 parent/children）。
 4. **前端**：`store.ts` 会话树 + `subagents`/`subagent_state`/`subagent_permission_request` 事件处理；侧边栏树组件；`ToolEntry`（或新 `SubagentTree` 组件）渲染 `task` 节点；子 session 视图（复用 `ChatView`、运行中显示输入+■ 停止按钮（走 interrupt）、sealed 禁用输入、返回导航）；全局权限横幅。`ChatInput.stop()` 按 `isSubagent` 分流：subagent -> `/interrupt`，主 agent -> `/cancel`。
 5. **提示词**：提示词全部硬编码在 `src/trilobite/prompts.py`（不可配置）：`SYSTEM_PROMPT`（含 `task` 工具使用指引：subagent 屏蔽上下文、省主 agent token，是非 needle 查询的探索/上下文收集的**首选**方式，可在单次调用里并行多个独立子任务；needle 查询——已知文件路径、单个定义、2-3 个已知文件——直接用 read/grep 不开 subagent；开 subagent 要给自包含 prompt；子 agent 输出对用户不可见，主 agent 需转述）、`SUBAGENT_ROLE_PREFIX`（公共前缀）、`SUBAGENT_ROLE_PROMPTS`（explore/general 角色提示）。`tool_call.py` 的 `TASK_TOOL_DEF` 描述采用同一正向框架（强调省 token + 探索首选，排除项收窄为 needle 查询）。
 

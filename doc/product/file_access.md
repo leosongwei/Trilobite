@@ -23,13 +23,13 @@ Trilobite 的每个 session 有一个工作目录（working directory）。文�
 用户可以为 session 添加额外的工作目录，使其与主工作目录享有同等访问权限：
 
 ```http
-POST /api/sessions/{name}/dirs
+POST /api/sessions/{id}/dirs
 Content-Type: application/json
 
 { "path": "/home/user/shared-libs" }
 ```
 
-额外目录持久化在 `session.json` 中：
+`{id}` 是 session 的稳定标识（UUID 目录名），不是 `session.json` 里的人可读 `name`。额外目录持久化在 `session.json` 中：
 
 ```json
 {

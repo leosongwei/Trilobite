@@ -274,7 +274,7 @@ function handleSSEEvent(event: SSEEvent) {
         }
       }
       if (event.state !== 'running') {
-        const s = state.sessions.find((x) => x.name === event.session)
+        const s = state.sessions.find((x) => x.id === event.session)
         if (s) s.is_running = false
       }
       break
@@ -471,8 +471,8 @@ export function useStore() {
     ensureSessionPolling()
   }
 
-  async function selectSession(name: string) {
-    state.currentSession = name
+  async function selectSession(id: string) {
+    state.currentSession = id
     closeTurn()
     state.chatItems = []
     state.statusText = null
@@ -482,12 +482,12 @@ export function useStore() {
     state.subagentType = null
     state.subagentDescription = ''
     await loadSessions()
-    connectStream(name)
+    connectStream(id)
   }
 
   async function createSession(name: string, workingDir: string) {
-    const actualName = await api.createSession(name, workingDir)
-    state.currentSession = actualName
+    const actualId = await api.createSession(name, workingDir)
+    state.currentSession = actualId
     closeTurn()
     state.chatItems = []
     state.tokenCount = 0
@@ -496,12 +496,12 @@ export function useStore() {
     state.additionalDirs = []
     state.isStreaming = false
     await loadSessions()
-    connectStream(actualName)
+    connectStream(actualId)
   }
 
-  async function deleteSession(name: string) {
-    await api.deleteSession(name)
-    if (state.currentSession === name) {
+  async function deleteSession(id: string) {
+    await api.deleteSession(id)
+    if (state.currentSession === id) {
       disconnectStream()
       state.currentSession = null
       state.chatItems = []
@@ -551,6 +551,13 @@ export function useStore() {
   async function removeDir(path: string) {
     if (!state.currentSession) return
     state.additionalDirs = await api.removeDir(state.currentSession, path)
+  }
+
+  async function renameSession(name: string) {
+    if (!state.currentSession) return
+    await api.renameSession(state.currentSession, name)
+    const s = state.sessions.find((x) => x.id === state.currentSession)
+    if (s) s.name = name
   }
 
   async function approvePlanExit() {
@@ -633,6 +640,7 @@ export function useStore() {
     setMode,
     addDir,
     removeDir,
+    renameSession,
     approvePlanExit,
     rejectPlanExit,
     approvePermission,

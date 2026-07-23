@@ -22,6 +22,9 @@ class SessionCreate(BaseModel):
     name: str
     working_dir: str
 
+class RenameRequest(BaseModel):
+    name: str
+
 class MessageRequest(BaseModel):
     message: str
 
@@ -70,6 +73,7 @@ async def list_sessions():
             if sd.is_dir() and (sd / "session.json").exists():
                 try:
                     info = json.loads((sd / "session.json").read_text())
+                    info["id"] = sd.name
                     agent = agents.get(sd.name)
                     info["is_running"] = agent.is_running() if agent else False
                     info["history_length"] = len(agent.history) if agent else 0
@@ -81,29 +85,19 @@ async def list_sessions():
     return result
 
 
-def _resolve_session_name(name: str) -> str:
-    """If a session with `name` already exists, append (2), (3), etc. until unique."""
-    sessions_dir = get_sessions_dir()
-    candidate = name
-    if (sessions_dir / candidate).exists():
-        n = 2
-        while (sessions_dir / f"{name}({n})").exists():
-            n += 1
-        candidate = f"{name}({n})"
-    return candidate
-
-
 @app.post("/api/sessions")
 async def create_session(req: SessionCreate):
-    name = _resolve_session_name(req.name)
-    session_dir = get_sessions_dir() / name
+    # The directory name is a stable UUID identifier; the human-readable name
+    # lives in session.json and can be renamed freely without moving files.
+    session_id = uuid.uuid4().hex
+    session_dir = get_sessions_dir() / session_id
 
     session_dir.mkdir(parents=True, exist_ok=True)
-    info = {"name": name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": time.time()}
+    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": time.time()}
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 
     agent = Agent(
-        name=name,
+        name=session_id,
         working_dir=req.working_dir,
         session_dir=session_dir,
         config=config,
@@ -111,8 +105,19 @@ async def create_session(req: SessionCreate):
     )
     info["session_id"] = agent.session_id
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
-    agents[name] = agent
-    return {"status": "ok", "name": name}
+    agents[session_id] = agent
+    return {"status": "ok", "id": session_id, "name": req.name}
+
+
+@app.post("/api/sessions/{name}/rename")
+async def rename_session(name: str, req: RenameRequest):
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    info = json.loads((session_dir / "session.json").read_text())
+    info["name"] = req.name
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+    return {"status": "ok", "name": req.name}
 
 
 @app.delete("/api/sessions/{name}")
