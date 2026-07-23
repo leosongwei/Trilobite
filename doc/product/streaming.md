@@ -85,7 +85,7 @@ per-session 事件总线，维护：
 * 只渲染靠近底部的 `INITIAL_VISIBLE`（10）条消息；`visibleItems = chatItems.slice(windowStart)`，`windowStart = length - effectiveRender`。
 * 用户滚到顶部（`scrollTop <= TOP_THRESHOLD`）时向上扩窗 `LOAD_MORE`（10）条，扩窗前后用 `scrollHeight` 差值恢复 `scrollTop`，保持视觉位置不跳。顶部有"滚动到顶部加载更早的消息…"提示。
 * 若可见内容比视口还短却仍有更早消息（极短消息场景），`fillViewport` 自动扩窗直到填满视口，避免出现无法滚动加载的空白死区；仅在非流式时运行。
-* 流式输出持续向底部追加，窗口始终包含末尾，所以最新内容永远可见；`streamTick`/`chatItems.length` 的 watcher 继续把视图钉在底部，行为与窗口化前一致。
+* 流式输出持续向底部追加，窗口始终包含末尾。滚动钉底只在**新泡泡出现**时触发：顶层 item（turn / user / compact / error）追加由 `chatItems.length` watcher 处理，turn 内部的 thinking / 正文 / 工具调用首次出现由 `bubbleCount` watcher 处理；而泡泡内部的流式内容增长（`streamTick`）**不再**强制钉底，方便用户往上翻看历史。
 * 切 session 时 `renderCount` 重置回 `INITIAL_VISIBLE`；窗口扩大引入新 DOM 节点后同样触发 MathJax typeset。
 
 ### 工具结果展示（`ToolEntry.vue`）
@@ -95,5 +95,8 @@ per-session 事件总线，维护：
 
 ### 思考展示（`ThinkingBlock.vue`）
 
-* 默认只显示约 3 行高度，`overflow: hidden` 不可手动滚动；流式输出时通过 `transform` 把内容尾部对齐到窗口底部，始终显示最新的几行（类似 `tail -f`）。
-* 切换按钮 `▸/▾` 置于块底部、紧跟最新内容，保证流式滚动时始终可见可点；点击展开显示全部内容，默认不展开。
+### 思考展示（`ThinkingBlock.vue`）
+
+* 默认折叠只显示约 3 行高度，`overflow: hidden` 不可手动滚动；点击展开显示全部内容，默认不展开。切换按钮 `▸/▴` 置于块底部、紧跟最新内容，保证流式滚动时始终可见可点。
+* **"活的" thinking 泡泡**（`ChatView` 的 `liveIdx`：最后一个 chatItem 是 turn、`thinking` 非空、`text` 与 `tools` 均空）保留全文，流式输出时通过 `transform` 把内容尾部对齐到窗口底部，始终显示最新的几行（类似 `tail -f`）。
+* 一旦某个 thinking 泡泡下方出现任何内容（同 turn 的正文/工具调用，或下一个 turn、用户消息），它就从 live 变成"老"泡泡：自动折叠、清掉 transform，折叠时**只把最后 3 行（超长单行按字符兜底截取）写进 DOM**（`displayContent` 截取尾部预览），不渲染整段思考；展开后才渲染全文。这样长对话里已完成的 thinking 不再各自携带全文 DOM，避免越堆越卡；切 tab 由历史重建时也只有最底部那个（若仍在思考）带全文。

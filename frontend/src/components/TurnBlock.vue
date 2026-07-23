@@ -3,6 +3,7 @@
     <ThinkingBlock
       v-if="turn.thinking"
       :content="turn.thinking"
+      :live="live"
     />
     <div
       v-if="turn.text"
@@ -24,7 +25,7 @@ import ThinkingBlock from './ThinkingBlock.vue'
 import ToolEntry from './ToolEntry.vue'
 import { renderMarkdown } from '../utils/markdown'
 
-const props = defineProps<{ turn: TurnItem; streaming?: boolean }>()
+const props = defineProps<{ turn: TurnItem; streaming?: boolean; live?: boolean }>()
 
 const renderedText = computed(() => renderMarkdown(props.turn.text))
 </script>

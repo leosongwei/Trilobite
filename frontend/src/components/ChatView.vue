@@ -11,6 +11,7 @@
           v-else-if="item.kind === 'turn'"
           :turn="item"
           :streaming="state.isStreaming && idx === visibleItems.length - 1"
+          :live="idx === liveIdx"
         />
         <div v-else-if="item.kind === 'error'" class="message error">{{ item.content }}</div>
         <div v-else-if="item.kind === 'compact'" class="compact-divider" />
@@ -47,6 +48,19 @@ const effectiveRender = computed(() => Math.min(renderCount.value, state.chatIte
 const windowStart = computed(() => state.chatItems.length - effectiveRender.value)
 const visibleItems = computed(() => state.chatItems.slice(windowStart.value))
 const hasMoreAbove = computed(() => effectiveRender.value < state.chatItems.length)
+// "活的" thinking 泡泡：当前位于对话最底部、且其下方还没有任何正文/工具/
+// 后续内容的那个 thinking。一旦下方出现任何内容（同 turn 的 text/tool，或
+// 下一个 turn、用户消息），它就变成老泡泡，只渲染最后 3 行预览，避免长对话
+// 越来越多全文 thinking 堆在 DOM 里造成卡顿。
+const liveIdx = computed(() => {
+  const items = visibleItems.value
+  if (items.length === 0) return -1
+  const last = items[items.length - 1]
+  if (last.kind === 'turn' && last.thinking && !last.text && last.tools.length === 0) {
+    return items.length - 1
+  }
+  return -1
+})
 
 function resetWindow() {
   renderCount.value = INITIAL_VISIBLE
@@ -126,8 +140,25 @@ watch(() => state.chatItems, () => scheduleTypeset(), { deep: false })
 watch(() => state.streamTick, () => scheduleTypeset())
 watch(effectiveRender, () => scheduleTypeset())
 
-// init 整体替换 chatItems 后对齐到底部并补齐视口；新消息追加时钉在底部。
+// init 整体替换 chatItems 后对齐到底部并补齐视口；顶层 item（turn / user /
+// compact / error）追加时也滚到底。泡泡内部流式更新（streamTick）不再强制
+// 钉底，方便用户往上翻看历史。
 watch(() => state.chatItems, () => nextTick(() => { scrollToBottom(); void fillViewport() }), { deep: false })
 watch(() => state.chatItems.length, () => nextTick(scrollToBottom))
-watch(() => state.streamTick, () => nextTick(scrollToBottom))
+
+// turn 内部的"新泡泡"首次出现（thinking 从空变非空、正文从空变非空、新增
+// 工具调用）时滚到底部；而这些泡泡之后的流式内容增长不改变计数，不滚动，
+// 不打扰用户来回翻看。
+const bubbleCount = computed(() => {
+  let n = 0
+  for (const it of state.chatItems) {
+    if (it.kind === 'turn') {
+      if (it.thinking) n++
+      if (it.text) n++
+      n += it.tools.length
+    }
+  }
+  return n
+})
+watch(bubbleCount, () => nextTick(scrollToBottom))
 </script>
