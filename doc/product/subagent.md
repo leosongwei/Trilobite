@@ -132,11 +132,22 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 用户可在子 session 视图点 **Interrupt**，触发 `POST /api/sessions/{child}/interrupt`：
 
-1. 后端调用 `child_agent.interrupt()`，置中断标志并取消子 agent 当前在途的工具调用。
+1. 后端调用 `child_agent.interrupt()`，置中断标志、解除可能挂起的权限等待，并**立即 kill 正在运行的 bash 子进程组**（见下"bash 中断"）。这样长命令（如 `sleep 30`）不会让中断空等命令跑完。
 2. 子 agent 的 run 循环在**下一个安全点**检测到中断标志，**跳出工具循环，不再发起新的工具调用**。
 3. 执行**一个总结 turn**：以 user 消息注入"你被中断了。请简明总结你目前的发现/进展，然后停止。"，做一次无工具的 LLM 调用，输出作为子 agent 的最终 assistant 消息。
 4. 子 agent 发出 `interrupted` 事件并退出 run（随后 sealed，见下）。
 5. 主 agent 的 `task` 工具取这条总结作为该子 agent 的结果（`state="interrupted"`）。
+
+### bash 中断
+
+工具在 `asyncio.to_thread` 的工作线程里执行（见 [streaming.md](./streaming.md)），bash 用 `subprocess.Popen` + `communicate`（非 `subprocess.run`），且 `start_new_session=True` 把命令放进独立进程组。Popen 句柄通过 `on_proc` 回调注册到 agent 的 `_current_proc`。
+
+`interrupt()` 若发现 `_current_proc` 还活着，调 `kill_process_group`（`os.killpg` 整组 SIGKILL）：
+
+- 只 kill shell 不够：`shell=True` 下真正的命令（如 `sleep`）是 shell 的子进程、继承 stdout 管道，shell 死了子进程还活着持管，`communicate` 会阻塞到子进程结束。杀整组才能让 `communicate` 立即返回。
+- kill 后工作线程的 `execute_tool` 立即返回（exit code -9），run 循环拿到结果，回到 while 顶部检测 `_interrupted` -> 走总结 turn。
+
+非 bash 工具（read/write）很快返回，`interrupt` 只设标志，run 循环在下个安全点检测到即总结。
 
 ### 结束即 sealed（不可复用）
 

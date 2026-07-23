@@ -16,6 +16,7 @@ from src.trilobite.compaction import should_compact, build_compact_prompt
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS, load_system_prompt, load_subagent_role_prefix, load_subagent_role_prompt
 from src.trilobite.history import History
 from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
+from src.trilobite.tools.bash import kill_process_group
 from src.trilobite.tool_call import execute_tool
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -263,6 +264,10 @@ class Agent:
         self._interrupted: bool = False
         self._step_count: int = 0
         self._children: list[Agent] = []
+        # The Popen of the bash command currently running in a worker thread
+        # (None when idle). Set/cleared via _register_proc so interrupt() can
+        # kill it instead of blocking until the command finishes on its own.
+        self._current_proc = None
         self._initial_prompt: str = ""
         self._final_state: str = "completed"
         self._final_result: str = ""
@@ -344,11 +349,27 @@ class Agent:
 
         Sets the interrupt flag (checked by the run loop at the next safe
         point) and unblocks a pending permission wait so the loop is not
-        stuck waiting for approval.
+        stuck waiting for approval. If a bash command is currently running,
+        kill its process group so the worker thread returns immediately
+        instead of blocking until the command finishes -- otherwise
+        interrupting a long command (e.g. ``sleep 30``) would have no effect
+        until it ends.
         """
         self._interrupted = True
         self._permission_approved = False
         self._permission_event.set()
+        proc = self._current_proc
+        if proc is not None and proc.poll() is None:
+            kill_process_group(proc)
+
+    def _register_proc(self, proc) -> None:
+        """Record the bash subprocess currently running (or None when idle).
+
+        Called from the worker thread that runs execute_tool; interrupt()
+        reads this from the event loop thread. Reference assignment is atomic
+        under the GIL, and Popen.kill()/poll() are safe to call cross-thread.
+        """
+        self._current_proc = proc
 
     def set_additional_dirs(self, dirs: list[str]):
         self._additional_dirs = [Path(d).resolve() for d in dirs]
@@ -658,7 +679,8 @@ class Agent:
                             # agent/subagent on it (issue #5).
                             tool_result = await asyncio.to_thread(
                                 execute_tool, tool_name, args, self.working_dir,
-                                self.session_dir, self._additional_dirs)
+                                self.session_dir, self._additional_dirs,
+                                self._register_proc)
 
                         # Handle permission request from tool
                         if "permission" in tool_result:
@@ -685,7 +707,8 @@ class Agent:
                                 # Retry the tool with updated additional_dirs
                                 tool_result = await asyncio.to_thread(
                                     execute_tool, tool_name, args, self.working_dir,
-                                    self.session_dir, self._additional_dirs)
+                                    self.session_dir, self._additional_dirs,
+                                    self._register_proc)
                             # else: keep original error result
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"]}
