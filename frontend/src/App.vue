@@ -11,23 +11,25 @@
         <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>
       </div>
       <ChatView />
-      <div v-if="state.planExitRequest" class="plan-exit-banner">
-        <span>Agent requests to switch to Build mode</span>
-        <button class="approve" @click="approvePlanExit">Approve</button>
-        <button class="reject" @click="rejectPlanExit">Reject</button>
-      </div>
-      <div v-if="state.permissionRequest" class="plan-exit-banner">
-        <span>Agent needs access to: {{ state.permissionRequest.path }}</span>
-        <button class="approve" @click="approvePermission">Grant</button>
-        <button class="reject" @click="rejectPermission">Deny</button>
-      </div>
-      <div v-if="state.subagentPermissionRequest" class="plan-exit-banner">
-        <span>Subagent [{{ state.subagentPermissionRequest.childType }}: {{ state.subagentPermissionRequest.childDescription }}] needs access to: {{ state.subagentPermissionRequest.path }}</span>
-        <button class="approve" @click="approveSubagentPermission">Grant</button>
-        <button class="reject" @click="rejectSubagentPermission">Deny</button>
-      </div>
-      <ChatInput />
-      <TokenBar />
+      <template v-if="state.currentSession">
+        <div v-if="state.planExitRequest" class="plan-exit-banner">
+          <span>Agent requests to switch to Build mode</span>
+          <button class="approve" @click="approvePlanExit">Approve</button>
+          <button class="reject" @click="rejectPlanExit">Reject</button>
+        </div>
+        <div v-if="state.permissionRequest" class="plan-exit-banner">
+          <span>Agent needs access to: {{ state.permissionRequest.path }}</span>
+          <button class="approve" @click="approvePermission">Grant</button>
+          <button class="reject" @click="rejectPermission">Deny</button>
+        </div>
+        <div v-if="state.subagentPermissionRequest" class="plan-exit-banner">
+          <span>Subagent [{{ state.subagentPermissionRequest.childType }}: {{ state.subagentPermissionRequest.childDescription }}] needs access to: {{ state.subagentPermissionRequest.path }}</span>
+          <button class="approve" @click="approveSubagentPermission">Grant</button>
+          <button class="reject" @click="rejectSubagentPermission">Deny</button>
+        </div>
+        <ChatInput />
+        <TokenBar />
+      </template>
     </main>
   </div>
 </template>
