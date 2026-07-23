@@ -83,7 +83,7 @@ Token 超过 `compaction_trigger_ratio` 阈值时触发压缩。提示词采用 
 ## 安装与运行
 
 ```bash
-uv tool install dist/trilobite_code-0.1.0-py3-none-any.whl
+uv tool install dist/trilobite_code-1.0.0-py3-none-any.whl
 trilobite   # entry point，启动 uvicorn (0.0.0.0:2345)
 ```
 
