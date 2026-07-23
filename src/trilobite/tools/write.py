@@ -10,18 +10,9 @@ WriteMode = Literal["overwrite", "append"]
 class WriteTool(Tool):
     name = "write"
     description = (
-        "Create, append to, or entirely replace a file. Missing parent "
-        "directories are created automatically.\n"
-        "Rules:\n"
-        "- NOT allowed for incremental changes to an existing file, including "
-        "trivial or one-line edits - use edit instead. Use write only when the "
-        "file does not exist, you intend a complete replacement, or the new "
-        "contents have little continuity with the old.\n"
-        "- Read the file before overwriting an existing one.\n"
-        "- mode overwrite (default) replaces the whole file; append adds "
-        "content at EOF without adding a newline.\n"
-        "- content is written literally, including the line endings you supply; "
-        "do not include any line-number prefixes."
+        "Create, append to, or entirely replace a file. mode overwrite "
+        "(default) replaces the whole file; append adds content at EOF. "
+        "Missing parent directories are created automatically."
     )
     parameters = {
         "type": "object",
