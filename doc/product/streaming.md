@@ -85,7 +85,7 @@ per-session 事件总线，维护：
 * 只渲染靠近底部的 `INITIAL_VISIBLE`（10）条消息；`visibleItems = chatItems.slice(windowStart)`，`windowStart = length - effectiveRender`。
 * 用户滚到顶部（`scrollTop <= TOP_THRESHOLD`）时向上扩窗 `LOAD_MORE`（10）条，扩窗前后用 `scrollHeight` 差值恢复 `scrollTop`，保持视觉位置不跳。顶部有"滚动到顶部加载更早的消息…"提示。
 * 若可见内容比视口还短却仍有更早消息（极短消息场景），`fillViewport` 自动扩窗直到填满视口，避免出现无法滚动加载的空白死区；仅在非流式时运行。
-* 流式输出持续向底部追加，窗口始终包含末尾，所以最新内容永远可见；`streamTick`/`chatItems.length` 的 watcher 继续把视图钉在底部，行为与窗口化前一致。
+* 流式输出持续向底部追加，窗口始终包含末尾。滚动钉底只在**新泡泡出现**时触发：顶层 item（turn / user / compact / error）追加由 `chatItems.length` watcher 处理，turn 内部的 thinking / 正文 / 工具调用首次出现由 `bubbleCount` watcher 处理；而泡泡内部的流式内容增长（`streamTick`）**不再**强制钉底，方便用户往上翻看历史。
 * 切 session 时 `renderCount` 重置回 `INITIAL_VISIBLE`；窗口扩大引入新 DOM 节点后同样触发 MathJax typeset。
 
 ### 工具结果展示（`ToolEntry.vue`）

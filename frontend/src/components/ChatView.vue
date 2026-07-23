@@ -140,8 +140,25 @@ watch(() => state.chatItems, () => scheduleTypeset(), { deep: false })
 watch(() => state.streamTick, () => scheduleTypeset())
 watch(effectiveRender, () => scheduleTypeset())
 
-// init 整体替换 chatItems 后对齐到底部并补齐视口；新消息追加时钉在底部。
+// init 整体替换 chatItems 后对齐到底部并补齐视口；顶层 item（turn / user /
+// compact / error）追加时也滚到底。泡泡内部流式更新（streamTick）不再强制
+// 钉底，方便用户往上翻看历史。
 watch(() => state.chatItems, () => nextTick(() => { scrollToBottom(); void fillViewport() }), { deep: false })
 watch(() => state.chatItems.length, () => nextTick(scrollToBottom))
-watch(() => state.streamTick, () => nextTick(scrollToBottom))
+
+// turn 内部的"新泡泡"首次出现（thinking 从空变非空、正文从空变非空、新增
+// 工具调用）时滚到底部；而这些泡泡之后的流式内容增长不改变计数，不滚动，
+// 不打扰用户来回翻看。
+const bubbleCount = computed(() => {
+  let n = 0
+  for (const it of state.chatItems) {
+    if (it.kind === 'turn') {
+      if (it.thinking) n++
+      if (it.text) n++
+      n += it.tools.length
+    }
+  }
+  return n
+})
+watch(bubbleCount, () => nextTick(scrollToBottom))
 </script>
