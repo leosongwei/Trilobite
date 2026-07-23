@@ -886,8 +886,7 @@ class Agent:
 
     def _create_child(self, subagent_type: str, description: str, prompt: str) -> Agent:
         """Build a child Agent for one subtask (does not start it)."""
-        shortid = uuid.uuid4().hex[:8]
-        child_name = f"{self.name}__{shortid}"
+        child_name = uuid.uuid4().hex
         child_dir = self.session_dir.parent / child_name
         child_dir.mkdir(parents=True, exist_ok=True)
         info = {

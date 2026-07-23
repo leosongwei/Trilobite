@@ -15,7 +15,7 @@ Trilobite 有两种工作模式，由前端切换按钮控制：
 
 前端有一个 Plan/Build 切换按钮。点击后：
 
-1. 前端调用 `POST /api/sessions/{name}/mode` 设置模式
+1. 前端调用 `POST /api/sessions/{id}/mode` 设置模式
 2. Agent 更新 `_plan_mode` 标记
 3. 模式持久化到 `session.json`（重启后恢复）
 
@@ -104,7 +104,7 @@ Error: edit tool is not available in plan mode. Call exit_plan_mode to request s
 2. Agent 发送 `plan_exit_request` SSE 事件
 3. Agent 暂停，等待用户决策（`asyncio.Event`）
 4. 前端显示审批横幅："Agent requests to switch to Build mode" + Approve/Reject 按钮
-5. 用户点击后，前端调用 `POST /api/sessions/{name}/plan_exit`
+5. 用户点击后，前端调用 `POST /api/sessions/{id}/plan_exit`
 6. Agent 收到决策，继续执行
 
 | 用户操作 | 结果 |
@@ -186,7 +186,7 @@ history.json 中**没有**模式切换通知，只有用户消息和模型回复
 ### 设置模式
 
 ```http
-POST /api/sessions/{name}/mode
+POST /api/sessions/{id}/mode
 Content-Type: application/json
 
 { "mode": "plan" | "build" }
@@ -195,7 +195,7 @@ Content-Type: application/json
 ### Plan 退出审批
 
 ```http
-POST /api/sessions/{name}/plan_exit
+POST /api/sessions/{id}/plan_exit
 Content-Type: application/json
 
 { "approved": true | false }
@@ -211,7 +211,7 @@ Content-Type: application/json
 
 ### Session Info
 
-`GET /api/sessions/{name}/info` 包含字段：
+`GET /api/sessions/{id}/info` 包含字段：
 
 ```json
 { "plan_mode": false }

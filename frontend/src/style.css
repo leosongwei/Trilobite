@@ -107,12 +107,52 @@ body {
 .session-item .delete { color: #c72e2e; cursor: pointer; padding: 0 4px; opacity: 0; }
 .session-item:hover .delete { opacity: 1; }
 
-/* Additional dirs */
-.dirs-section {
+/* Current session: name / cwd / allowed dirs */
+.session-info {
   padding: 8px 16px;
   border-top: 1px solid #3c3c3c;
 }
-.dirs-section summary {
+.session-info .info-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.session-info .info-label {
+  color: #858585;
+  flex-shrink: 0;
+}
+.session-info .info-value {
+  color: #cccccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.session-info .info-edit {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  background: #3c3c3c;
+  border: 1px solid #5a5a5a;
+  color: #cccccc;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.session-info .info-edit:focus { outline: none; border-color: #007acc; }
+.icon-btn {
+  background: none;
+  border: none;
+  color: #858585;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+.icon-btn:hover { color: #cccccc; }
+.session-info summary {
   cursor: pointer;
   font-size: 11px;
   color: #858585;
@@ -120,9 +160,9 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.dirs-section summary:hover { color: #cccccc; }
-.dirs-section .dir-item,
-.dirs-section .dir-add { margin-top: 4px; }
+.session-info summary:hover { color: #cccccc; }
+.session-info .dir-item,
+.session-info .dir-add { margin-top: 4px; }
 .dir-item {
   display: flex;
   justify-content: space-between;

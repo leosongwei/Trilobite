@@ -44,7 +44,7 @@ const { state, loadSessions, setMode, approvePlanExit, rejectPlanExit, approvePe
 const sidebarOpen = ref(false)
 
 const parentSession = computed(() => {
-  const cur = state.sessions.find((s) => s.name === state.currentSession)
+  const cur = state.sessions.find((s) => s.id === state.currentSession)
   return cur?.parent_session ?? null
 })
 

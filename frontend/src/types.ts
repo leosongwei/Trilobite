@@ -41,6 +41,7 @@ export interface HistoryMessage {
 }
 
 export interface Session {
+  id: string
   name: string
   working_dir: string
   is_running: boolean
