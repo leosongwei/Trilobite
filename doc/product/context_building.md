@@ -6,9 +6,15 @@
 
 ## system 消息的组成
 
-system 消息的内容是两段拼接：
+system 消息的内容是三段拼接：
 
 ```
+<env>
+  Working directory: {working_dir}
+  Is directory a git repo: yes/no
+  Platform: linux
+</env>
+
 {system_prompt}
 
 <AGENTS.md>
@@ -18,8 +24,11 @@ system 消息的内容是两段拼接：
 
 | 部分 | 来源 | 说明 |
 |------|------|------|
+| `env_block` | `Agent._build_env_block()`（`src/trilobite/agent.py`） | 动态环境块：工作目录绝对路径、是否 git 仓库、平台。放在最前面，让模型知道自己身处何处，从而优先用相对路径工作，而不是猜测绝对路径飘到工作目录外 |
 | `system_prompt` | 代码常量 `SYSTEM_PROMPT`（`src/trilobite/prompts.py`） | agent 的基础指令 |
 | `working_context` | `<working_dir>/AGENTS.md` | 如果工作目录下存在 `AGENTS.md`，将其内容用 `<AGENTS.md>` 标签包裹后追加；不存在则为空 |
+
+`env_block` 在 `Agent.__init__` 时拼到 `system_prompt` 前面（`self.system_prompt = env_block + "\n\n" + system_prompt`），因此主 agent 和 subagent 都会带上它。compaction 重建 system 消息时也会重新生成。
 
 ## 生命周期
 
@@ -68,7 +77,7 @@ compaction 会**重新构建** system 消息（使用当前配置），因为 co
 [
   {
     "role": "system",
-    "content": "你是一个编码助手。\n\n<AGENTS.md>\n# 项目规范\n使用 Python 3.12\n</AGENTS.md>"
+    "content": "<env>\n  Working directory: /home/user/project\n  Is directory a git repo: yes\n  Platform: linux\n</env>\n\n你是一个编码助手。\n\n<AGENTS.md>\n# 项目规范\n使用 Python 3.12\n</AGENTS.md>"
   },
   {
     "role": "user",
@@ -83,7 +92,7 @@ compaction 会**重新构建** system 消息（使用当前配置），因为 co
 [
   {
     "role": "system",
-    "content": "你是一个编码助手。\n\n<AGENTS.md>\n# 项目规范\n使用 Python 3.12\n</AGENTS.md>"
+    "content": "<env>\n  Working directory: /home/user/project\n  Is directory a git repo: yes\n  Platform: linux\n</env>\n\n你是一个编码助手。\n\n<AGENTS.md>\n# 项目规范\n使用 Python 3.12\n</AGENTS.md>"
   },
   {
     "role": "user",

@@ -24,11 +24,13 @@ conventions, not the conversation language.
 
 # Permissions
 
-Access outside the working directory requires user approval. Before accessing
-an external path for the first time, briefly tell the user why — e.g. "I need to
-read /home/other-project/config to understand the API." Then use read/edit/write with
-an absolute path; the system will prompt the user. Once granted, that directory
-stays accessible.
+Your working directory is shown in the environment block at the top of this
+prompt. Work there by default using relative paths - that needs no approval.
+Access outside the working directory requires user approval: if a task
+genuinely needs an external path, briefly say why, then pass an absolute path
+to read/edit/write and the user will be asked to approve. Once granted, that
+directory stays accessible for the session. Do not reach outside the working
+directory unless the task actually requires it.
 
 If a permission request is denied, adjust your approach — do not retry the same
 call unchanged, and do not route around the denial via bash or other tools.
