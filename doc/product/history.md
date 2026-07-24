@@ -84,6 +84,8 @@ history 中包含四种角色的消息：
 
 `tool_call_id` 对应前一个 assistant 消息中 `tool_calls[].id`。
 
+> edit 工具的结果消息还会附带一个 `diff` 字段（结构化行级 diff：`[{type, old, new, text}]`，带真实文件行号），仅供前端回放渲染、不发给 LLM。早期会话持久化的是 `diff_prev`/`diff_current` 文本片段，前端回放时作为降级 fallback。
+
 ## 保存时机
 
 以下操作后都会自动序列化 history 到 `history.json`（`append`/`extend`/`insert`/`replace_all` 均自动保存）：

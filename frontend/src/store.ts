@@ -222,9 +222,8 @@ function handleSSEEvent(event: SSEEvent) {
       if (running) {
         running.status = 'done'
         running.result = event.result
-        if (event.diff_prev) {
-          running.diffPrev = event.diff_prev
-          running.diffCurrent = event.diff_current
+        if (event.diff) {
+          running.diff = event.diff
         }
       }
       break
@@ -380,7 +379,9 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
           if (toolIdx < turn.tools.length) {
             const tw = turn.tools[toolIdx]
             tw.result = history[i].content || ''
-            if ((history[i] as any).diff_prev) {
+            if ((history[i] as any).diff) {
+              tw.diff = (history[i] as any).diff
+            } else if ((history[i] as any).diff_prev) {
               tw.diffPrev = (history[i] as any).diff_prev
               tw.diffCurrent = (history[i] as any).diff_current
             }

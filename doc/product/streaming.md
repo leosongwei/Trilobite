@@ -51,7 +51,7 @@ per-session 事件总线，维护：
 | `text` | `text` | 正文增量 |
 | `tool_stream` | `tool_name, args, complete` | 工具参数流式 |
 | `tool_start` | `tool, args` | 工具开始执行 |
-| `tool_result` | `tool, result, diff_prev?, diff_current?` | 工具结果 |
+| `tool_result` | `tool, result, diff?` | 工具结果（`diff` 为 edit 的结构化行级 diff：`[{type, old, new, text}]`，带真实文件行号） |
 | `usage` | `token_count, max_context_tokens` | token 用量 |
 | `status` | `text` | 状态横幅（如 compaction） |
 | `plan_exit_request` | — | 请求退出 plan 模式 |

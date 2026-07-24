@@ -28,15 +28,8 @@
       <div class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
-      <Diff
-        v-if="tool.diffPrev"
-        class="tool-diff"
-        :mode="'unified'"
-        :theme="'dark'"
-        :language="'plaintext'"
-        :prev="tool.diffPrev"
-        :current="tool.diffCurrent!"
-      />
+      <DiffView v-if="tool.diff" :rows="tool.diff" />
+      <pre v-else-if="tool.diffPrev" class="tool-result">{{ tool.diffCurrent ?? tool.diffPrev }}</pre>
       <pre v-else class="tool-result">{{ displayContent }}</pre>
     </template>
   </div>
@@ -46,6 +39,7 @@
 import { computed } from 'vue'
 import type { ToolDisplay } from '../types'
 import { useStore } from '../store'
+import DiffView from './DiffView.vue'
 
 const props = defineProps<{ tool: ToolDisplay }>()
 const { selectSession } = useStore()

@@ -703,9 +703,8 @@ class Agent:
                             # else: keep original error result
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"]}
-                        if "diff_prev" in tool_result:
-                            result_event["diff_prev"] = tool_result["diff_prev"]
-                            result_event["diff_current"] = tool_result["diff_current"]
+                        if "diff" in tool_result:
+                            result_event["diff"] = tool_result["diff"]
                         await self._send_stream_event(result_event)
 
                         history_msg: dict[str, Any] = {
@@ -713,9 +712,8 @@ class Agent:
                             "tool_call_id": tc["id"],
                             "content": tool_result["result"],
                         }
-                        if "diff_prev" in tool_result:
-                            history_msg["diff_prev"] = tool_result["diff_prev"]
-                            history_msg["diff_current"] = tool_result["diff_current"]
+                        if "diff" in tool_result:
+                            history_msg["diff"] = tool_result["diff"]
                         self.history.append(history_msg)
 
                     # Check for steering between tool calls
@@ -964,8 +962,20 @@ class Agent:
             ],
         })
 
+        async def _run_and_announce(c: Agent) -> None:
+            """Run a child subagent, then emit its terminal state immediately.
+
+            Emitting per-child (rather than after ``gather`` returns) lets the
+            task bubble update each subagent row as it finishes, instead of all
+            at once when the last one completes.
+            """
+            await c._run_as_subagent()
+            await self._send_stream_event(
+                {"type": "subagent_state", "session": c.name, "state": c._final_state}
+            )
+
         self._children = children
-        tasks = [asyncio.create_task(c._run_as_subagent()) for c in children]
+        tasks = [asyncio.create_task(_run_and_announce(c)) for c in children]
         await asyncio.gather(*tasks, return_exceptions=True)
         self._children = []
 
@@ -978,7 +988,6 @@ class Agent:
                 f'description="{c._description}" state="{state}">\n'
                 f"<result>{text}</result>\n</subagent>"
             )
-            await self._send_stream_event({"type": "subagent_state", "session": c.name, "state": state})
 
         body = "\n".join(parts)
         if errors:

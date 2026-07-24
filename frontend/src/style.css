@@ -375,10 +375,6 @@ body {
 .subagent-state.completed { color: #858585; }
 .subagent-state.interrupted { color: #d29922; }
 .subagent-state.error { color: #c72e2e; }
-.tool-diff,
-.tool-diff * {
-  font-size: 13px !important;
-}
 .tool-collapsible > summary {
   cursor: pointer;
 }
