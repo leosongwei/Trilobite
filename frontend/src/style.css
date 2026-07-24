@@ -379,6 +379,7 @@ body {
   margin: 2px 0 4px;
   border-collapse: collapse;
   width: 100%;
+  table-layout: fixed;
   font-size: 12px;
   font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   background: #1e1e1e;
@@ -393,28 +394,25 @@ body {
   white-space: nowrap;
   user-select: none;
   vertical-align: top;
-  min-width: 28px;
-}
-.tool-diff .diff-sign {
-  color: #6e7681;
-  padding: 0 4px 0 2px;
-  user-select: none;
-  vertical-align: top;
+  width: 44px;
+  overflow: hidden;
 }
 .tool-diff .diff-text {
   white-space: pre-wrap;
   word-break: break-word;
-  padding-right: 10px;
+  padding: 0 8px;
   color: #d4d4d4;
+  vertical-align: top;
 }
-.tool-diff .diff-added { background: rgba(63, 185, 80, 0.12); }
-.tool-diff .diff-added .diff-sign,
-.tool-diff .diff-added .diff-text { color: #4ec98a; }
-.tool-diff .diff-removed { background: rgba(248, 81, 73, 0.12); }
-.tool-diff .diff-removed .diff-sign,
-.tool-diff .diff-removed .diff-text { color: #f08888; }
-.tool-diff .diff-added .diff-ln,
-.tool-diff .diff-removed .diff-ln { color: #8b949e; }
+/* Divider between the old (left) and new (right) panes. */
+.tool-diff-split .diff-ln.new { border-left: 1px solid #33363b; }
+.tool-diff .removed { background: rgba(248, 81, 73, 0.14); }
+.tool-diff .diff-text.removed { color: #f08888; }
+.tool-diff .added { background: rgba(63, 185, 80, 0.14); }
+.tool-diff .diff-text.added { color: #4ec98a; }
+.tool-diff .empty { background: rgba(110, 118, 129, 0.07); }
+.tool-diff .diff-ln.removed,
+.tool-diff .diff-ln.added { color: #8b949e; }
 .tool-collapsible > summary {
   cursor: pointer;
 }
