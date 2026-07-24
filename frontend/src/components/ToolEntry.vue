@@ -28,16 +28,7 @@
       <div class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
-      <table v-if="tool.diff" class="tool-diff tool-diff-split">
-        <tbody>
-          <tr v-for="(pair, idx) in splitRows" :key="idx" class="diff-row">
-            <td class="diff-ln" :class="pair.left.type">{{ pair.left.lineNo ?? '' }}</td>
-            <td class="diff-text" :class="pair.left.type">{{ pair.left.text }}</td>
-            <td class="diff-ln" :class="pair.right.type">{{ pair.right.lineNo ?? '' }}</td>
-            <td class="diff-text" :class="pair.right.type">{{ pair.right.text }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <DiffView v-if="tool.diff" :rows="tool.diff" />
       <pre v-else-if="tool.diffPrev" class="tool-result">{{ tool.diffCurrent ?? tool.diffPrev }}</pre>
       <pre v-else class="tool-result">{{ displayContent }}</pre>
     </template>
@@ -46,8 +37,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { DiffRow, ToolDisplay } from '../types'
+import type { ToolDisplay } from '../types'
 import { useStore } from '../store'
+import DiffView from './DiffView.vue'
 
 const props = defineProps<{ tool: ToolDisplay }>()
 const { selectSession } = useStore()
@@ -100,60 +92,5 @@ const displayContent = computed(() => {
     return props.tool.args || '...'
   }
   return props.tool.args || 'running...'
-})
-
-interface DiffSide {
-  lineNo: number | null
-  text: string
-  type: DiffRow['type'] | 'empty'
-}
-interface DiffPair {
-  left: DiffSide
-  right: DiffSide
-}
-
-/**
- * Turn the unified diff rows into side-by-side pairs: left = original file
- * (context + removed lines), right = result file (context + added lines).
- * Consecutive removed/added runs are aligned row-by-row; the shorter side is
- * padded with empty cells so removed and added lines face each other.
- */
-const splitRows = computed<DiffPair[]>(() => {
-  const rows = props.tool.diff ?? []
-  const pairs: DiffPair[] = []
-  let removed: DiffRow[] = []
-  let added: DiffRow[] = []
-  const flush = () => {
-    const n = Math.max(removed.length, added.length)
-    for (let i = 0; i < n; i++) {
-      const l = removed[i]
-      const r = added[i]
-      pairs.push({
-        left: l
-          ? { lineNo: l.old, text: l.text, type: 'removed' }
-          : { lineNo: null, text: '', type: 'empty' },
-        right: r
-          ? { lineNo: r.new, text: r.text, type: 'added' }
-          : { lineNo: null, text: '', type: 'empty' },
-      })
-    }
-    removed = []
-    added = []
-  }
-  for (const row of rows) {
-    if (row.type === 'equal') {
-      flush()
-      pairs.push({
-        left: { lineNo: row.old, text: row.text, type: 'equal' },
-        right: { lineNo: row.new, text: row.text, type: 'equal' },
-      })
-    } else if (row.type === 'removed') {
-      removed.push(row)
-    } else {
-      added.push(row)
-    }
-  }
-  flush()
-  return pairs
 })
 </script>

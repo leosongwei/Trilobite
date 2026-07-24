@@ -375,44 +375,6 @@ body {
 .subagent-state.completed { color: #858585; }
 .subagent-state.interrupted { color: #d29922; }
 .subagent-state.error { color: #c72e2e; }
-.tool-diff {
-  margin: 2px 0 4px;
-  border-collapse: collapse;
-  width: 100%;
-  table-layout: fixed;
-  font-size: 12px;
-  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  background: #1e1e1e;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.tool-diff .diff-row { display: table-row; }
-.tool-diff .diff-ln {
-  color: #6e7681;
-  text-align: right;
-  padding: 0 6px;
-  white-space: nowrap;
-  user-select: none;
-  vertical-align: top;
-  width: 44px;
-  overflow: hidden;
-}
-.tool-diff .diff-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-  padding: 0 8px;
-  color: #d4d4d4;
-  vertical-align: top;
-}
-/* Divider between the old (left) and new (right) panes. */
-.tool-diff-split .diff-ln.new { border-left: 1px solid #33363b; }
-.tool-diff .removed { background: rgba(248, 81, 73, 0.14); }
-.tool-diff .diff-text.removed { color: #f08888; }
-.tool-diff .added { background: rgba(63, 185, 80, 0.14); }
-.tool-diff .diff-text.added { color: #4ec98a; }
-.tool-diff .empty { background: rgba(110, 118, 129, 0.07); }
-.tool-diff .diff-ln.removed,
-.tool-diff .diff-ln.added { color: #8b949e; }
 .tool-collapsible > summary {
   cursor: pointer;
 }
