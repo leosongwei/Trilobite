@@ -1,3 +1,4 @@
+import difflib
 from pathlib import Path
 from typing import Any, Literal
 
@@ -99,11 +100,10 @@ class EditTool(Tool):
         # (read_text/write_text default to universal-newline translation).
         filepath.write_bytes(_materialize(new_content, style).encode("utf-8"))
 
-        diff_prev, diff_current = _build_context_diff(content, new_content, old_view)
+        diff_rows = _build_diff_rows(content, new_content, old_view)
         return {
             "result": f"File updated: {filename}",
-            "diff_prev": diff_prev,
-            "diff_current": diff_current,
+            "diff": diff_rows,
         }
 
 
@@ -146,18 +146,21 @@ def _materialize(text: str, style: LineEndingStyle) -> str:
     return text
 
 
-def _build_context_diff(old_content: str, new_content: str, old_str: str) -> tuple[str, str]:
-    """Extract the changed region with surrounding context lines.
+def _build_diff_rows(old_content: str, new_content: str, old_str: str) -> list[dict[str, Any]]:
+    """Build a line-level unified diff of the changed region with real line numbers.
 
-    Since new_content == old_content.replace(old_str, new_str, ...), the prefix
-    before the change is identical.  We find a context window in old_content
-    and shift the end position by the size difference to get the same window
-    in new_content.
+    A context window of ``_CONTEXT_LINES`` complete lines is taken around the
+    replacement. Because ``new_content`` is ``old_content`` with the change
+    applied in place, the text before the change is identical, so the window
+    starts at the same absolute line number in both files. ``difflib`` then
+    classifies each window line as equal/added/removed and we stamp it with its
+    real (1-based) file line number -- ``old`` for lines in the original file,
+    ``new`` for lines in the result.
     """
     old_len = len(old_content)
     pos = old_content.index(old_str)
     old_end = pos + len(old_str)
-    size_delta = len(new_content) - len(old_content)
+    size_delta = len(new_content) - old_len
 
     # Find ctx_start: go back _CONTEXT_LINES newlines from pos
     ctx_start = pos
@@ -183,9 +186,38 @@ def _build_context_diff(old_content: str, new_content: str, old_str: str) -> tup
         nl = old_content.find("\n", ctx_end)
         ctx_end = nl + 1 if nl != -1 else old_len
 
-    diff_prev = old_content[ctx_start:ctx_end]
-    # Same window in new_content, adjusted for size difference
-    new_ctx_end = min(ctx_end + size_delta, len(new_content))
-    diff_current = new_content[ctx_start:new_ctx_end]
+    # Absolute (1-based) line number of the window's first line. The lines
+    # before the change are identical in old and new, so this offsets both.
+    line_start = old_content.count("\n", 0, ctx_start) + 1
 
-    return diff_prev, diff_current
+    old_lines = old_content[ctx_start:ctx_end].splitlines()
+    # The new window shares ctx_start; its end shifts by the size delta.
+    new_ctx_end = min(ctx_end + size_delta, len(new_content))
+    new_lines = new_content[ctx_start:new_ctx_end].splitlines()
+
+    rows: list[dict[str, Any]] = []
+    old_no = line_start
+    new_no = line_start
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for k in range(i1, i2):
+                rows.append({"type": "equal", "old": old_no, "new": new_no, "text": old_lines[k]})
+                old_no += 1
+                new_no += 1
+        elif tag == "replace":
+            for k in range(i1, i2):
+                rows.append({"type": "removed", "old": old_no, "new": None, "text": old_lines[k]})
+                old_no += 1
+            for k in range(j1, j2):
+                rows.append({"type": "added", "old": None, "new": new_no, "text": new_lines[k]})
+                new_no += 1
+        elif tag == "delete":
+            for k in range(i1, i2):
+                rows.append({"type": "removed", "old": old_no, "new": None, "text": old_lines[k]})
+                old_no += 1
+        elif tag == "insert":
+            for k in range(j1, j2):
+                rows.append({"type": "added", "old": None, "new": new_no, "text": new_lines[k]})
+                new_no += 1
+    return rows

@@ -251,7 +251,7 @@ sessions/
 |---|---|---|
 | `tool_start` | `task` 开始 | `{tool:"task", args:{tasks:[...]}}` |
 | `subagents` | 子 agent 全部 spawn 后 | `{parent, children:[{session, type, description, state:"running"}]}` |
-| `subagent_state` | 某子 agent 结束时（增量更新树状态） | `{session, state}` |
+| `subagent_state` | 某子 agent 结束时即发（逐个增量，不等其它兄弟） | `{session, state}` |
 | `subagent_permission_request` | 子 agent 请求权限时（fan-out，见第六节） | `{child_session, child_type, child_description, path, tool, message}` |
 | `tool_result` | `gather` 完成 | `{tool:"task", result:"<task_result>...</task_result>"}` |
 
@@ -265,7 +265,7 @@ sessions/
   - 已结束（sealed）：**禁用输入框**（提示"该 subagent 已结束"），仅展示历史，可返回父会话。停止按钮随之隐藏。
   - 顶部 subagent-bar：显示角色标签、描述、返回父会话导航；sealed 后显示"finished (read-only)"。
 - **权限横幅**：`subagent_permission_request` 事件触发全局横幅（不论当前在哪个会话视图），写明子 agent 身份与请求路径，Approve/Deny。
-- `store.ts`：处理 `subagents` / `subagent_state` / `subagent_permission_request` 事件；维护会话树与各子 session 的 `isStreaming` / `sealed` 状态。主会话收到 `done` / `cancelled` / `interrupted` 时，后端对运行中子 agent 的硬停不会发出 `subagent_state`（`_run_subagents` 的发出点在 `gather` 之后，取消时该循环不执行），故前端在此刻主动把仍 `running` 的子会话标记为停止（task 节点 state 置为 `completed`/`interrupted`、侧栏 `is_running` 置假），让侧栏即时反映中断而不必等下一次 session 轮询。
+- `store.ts`：处理 `subagents` / `subagent_state` / `subagent_permission_request` 事件；维护会话树与各子 session 的 `isStreaming` / `sealed` 状态。`subagent_state` 在 `_run_subagents` 里由每个子 agent 的运行 wrapper 在其 `run()` 返回后**立即**发出（而非等 `gather` 全部结束再批量发），故 task 泡泡里每个子 agent 行随其完成逐个翻为终态。主会话收到 `done` / `cancelled` / `interrupted` 时，后端对运行中子 agent 的硬停不会发出 `subagent_state`（取消时 wrapper 的 `await c._run_as_subagent()` 抛 `CancelledError`，其后的发出语句不执行），故前端在此刻主动把仍 `running` 的子会话标记为停止（task 节点 state 置为 `completed`/`interrupted`、侧栏 `is_running` 置假），让侧栏即时反映中断而不必等下一次 session 轮询。
 
 ## 十、可选增强（待你拍板是否纳入 v1）
 

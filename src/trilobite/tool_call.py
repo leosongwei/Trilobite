@@ -96,8 +96,8 @@ def execute_tool(
 ) -> dict[str, Any]:
     """Execute a tool and return a result dict.
 
-    Returns dict with at least "result" (str). May include "diff_prev"
-    and "diff_current" for edit operations.
+    Returns dict with at least "result" (str). May include "diff" (a list of
+    {type, old, new, text} rows with real line numbers) for edit operations.
 
     ``on_proc`` is forwarded to tools that spawn a subprocess (bash) so the
     caller (Agent) can kill the process on interrupt; other tools ignore it.

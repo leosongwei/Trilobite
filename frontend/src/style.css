@@ -375,10 +375,46 @@ body {
 .subagent-state.completed { color: #858585; }
 .subagent-state.interrupted { color: #d29922; }
 .subagent-state.error { color: #c72e2e; }
-.tool-diff,
-.tool-diff * {
-  font-size: 13px !important;
+.tool-diff {
+  margin: 2px 0 4px;
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  background: #1e1e1e;
+  border-radius: 3px;
+  overflow: hidden;
 }
+.tool-diff .diff-row { display: table-row; }
+.tool-diff .diff-ln {
+  color: #6e7681;
+  text-align: right;
+  padding: 0 6px;
+  white-space: nowrap;
+  user-select: none;
+  vertical-align: top;
+  min-width: 28px;
+}
+.tool-diff .diff-sign {
+  color: #6e7681;
+  padding: 0 4px 0 2px;
+  user-select: none;
+  vertical-align: top;
+}
+.tool-diff .diff-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding-right: 10px;
+  color: #d4d4d4;
+}
+.tool-diff .diff-added { background: rgba(63, 185, 80, 0.12); }
+.tool-diff .diff-added .diff-sign,
+.tool-diff .diff-added .diff-text { color: #4ec98a; }
+.tool-diff .diff-removed { background: rgba(248, 81, 73, 0.12); }
+.tool-diff .diff-removed .diff-sign,
+.tool-diff .diff-removed .diff-text { color: #f08888; }
+.tool-diff .diff-added .diff-ln,
+.tool-diff .diff-removed .diff-ln { color: #8b949e; }
 .tool-collapsible > summary {
   cursor: pointer;
 }

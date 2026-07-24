@@ -28,15 +28,22 @@
       <div class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
-      <Diff
-        v-if="tool.diffPrev"
-        class="tool-diff"
-        :mode="'unified'"
-        :theme="'dark'"
-        :language="'plaintext'"
-        :prev="tool.diffPrev"
-        :current="tool.diffCurrent!"
-      />
+      <table v-if="tool.diff" class="tool-diff">
+        <tbody>
+          <tr
+            v-for="(row, idx) in tool.diff"
+            :key="idx"
+            class="diff-row"
+            :class="`diff-${row.type}`"
+          >
+            <td class="diff-ln old">{{ row.old ?? '' }}</td>
+            <td class="diff-ln new">{{ row.new ?? '' }}</td>
+            <td class="diff-sign">{{ row.type === 'added' ? '+' : row.type === 'removed' ? '−' : '' }}</td>
+            <td class="diff-text">{{ row.text }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <pre v-else-if="tool.diffPrev" class="tool-result">{{ tool.diffCurrent ?? tool.diffPrev }}</pre>
       <pre v-else class="tool-result">{{ displayContent }}</pre>
     </template>
   </div>

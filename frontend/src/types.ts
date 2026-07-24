@@ -8,7 +8,7 @@ export type SSEEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_stream'; tool_name: string; args: string; complete: boolean }
   | { type: 'tool_start'; tool: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; tool: string; result: string; diff_prev?: string; diff_current?: string }
+  | { type: 'tool_result'; tool: string; result: string; diff?: DiffRow[]; diff_prev?: string; diff_current?: string }
   | { type: 'usage'; token_count: number; max_context_tokens: number }
   | { type: 'status'; text: string }
   | { type: 'plan_exit_request' }
@@ -73,12 +73,23 @@ export interface SubagentChild {
   state: string
 }
 
+export interface DiffRow {
+  type: 'equal' | 'added' | 'removed'
+  /** 1-based line number in the original file (null for added lines). */
+  old: number | null
+  /** 1-based line number in the resulting file (null for removed lines). */
+  new: number | null
+  text: string
+}
+
 export interface ToolDisplay {
   name: string
   status: ToolStatus
   args: string
   startArgs?: Record<string, unknown>
   result?: string
+  diff?: DiffRow[]
+  /** @deprecated legacy string fragments from older sessions; used as fallback. */
   diffPrev?: string
   diffCurrent?: string
   subagents?: SubagentChild[]
