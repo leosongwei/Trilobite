@@ -6,6 +6,8 @@ Trilobite 的每个 session 有一个工作目录（working directory）。文�
 
 `bash` 工具不强制路径限制（和 kimi-code 一致），通过系统提示词引导模型自觉遵守边界。
 
+为了让模型知道边界在哪、从而优先用相对路径工作而不是猜测绝对路径飘到工作目录外，Agent 会在 system 消息最前面注入一个动态的 `<env>` 块，给出工作目录的绝对路径、是否 git 仓库、平台等信息（详见 [context_building.md](./context_building.md)）。系统提示词的 Permissions 段也指示模型默认在工作目录内用相对路径工作，仅在任务确实需要时才用绝对路径访问外部并走授权流程。
+
 ## 工作目录边界
 
 ### 边界定义

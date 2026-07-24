@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import platform
+import subprocess
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -227,6 +229,11 @@ class Agent:
             self.system_prompt = subagent_system_prompt("explore")
         elif subagent_type == "general":
             self.system_prompt = subagent_system_prompt("general")
+        # Prepend a dynamic environment block (working dir, git, platform)
+        # so the model knows where it is and prefers relative paths over
+        # guessed absolute paths that drift outside the workspace.
+        self._is_git_repo = self._detect_git_repo()
+        self.system_prompt = self._build_env_block() + "\n\n" + self.system_prompt
         self.working_context = self._load_working_context()
         self.history = History(session_dir / "history.json")
         self._broker = StreamBroker(len(self.history.raw))
@@ -302,6 +309,35 @@ class Agent:
             except Exception:
                 return ""
         return ""
+
+    def _detect_git_repo(self) -> bool:
+        """True when the working directory is inside a git work tree."""
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(self.working_dir), "rev-parse", "--is-inside-work-tree"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            return result.returncode == 0 and result.stdout.strip() == "true"
+        except Exception:
+            return False
+
+    def _build_env_block(self) -> str:
+        """Build the dynamic environment block prepended to the system prompt.
+
+        Mirrors opencode's ``<env>`` block: gives the model its concrete
+        working directory and surroundings so it works with relative paths
+        instead of guessing absolute paths that land outside the workspace.
+        """
+        lines = [
+            "<env>",
+            f"  Working directory: {self.working_dir}",
+            f"  Is directory a git repo: {'yes' if self._is_git_repo else 'no'}",
+            f"  Platform: {platform.system().lower()}",
+            "</env>",
+        ]
+        return "\n".join(lines)
 
     def _ensure_system_message(self):
         """Ensure history starts with a system message.
