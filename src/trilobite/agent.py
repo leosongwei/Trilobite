@@ -268,6 +268,10 @@ class Agent:
         # (None when idle). Set/cleared via _register_proc so interrupt() can
         # kill it instead of blocking until the command finishes on its own.
         self._current_proc = None
+        # The event loop of the run coroutine, captured so worker-thread
+        # callbacks (bash on_output) can schedule stream events back onto it
+        # via asyncio.run_coroutine_threadsafe.
+        self._loop = None
         self._initial_prompt: str = ""
         self._final_state: str = "completed"
         self._final_result: str = ""
@@ -402,6 +406,27 @@ class Agent:
         """
         self._current_proc = proc
 
+    def _make_output_callback(self, tool_call_id: str):
+        """Build a line-by-line output callback for a bash tool call.
+
+        Runs in the worker thread that executes bash; each output line is
+        forwarded to the event loop as a ``tool_output`` stream event keyed by
+        ``tool_call_id`` so the frontend can append it to the matching tool.
+        """
+        def _on_output(text: str, stream: str) -> None:
+            if self._loop is None:
+                return
+            event = {
+                "type": "tool_output",
+                "tool_call_id": tool_call_id,
+                "stream": stream,
+                "text": text,
+            }
+            asyncio.run_coroutine_threadsafe(
+                self._send_stream_event(event), self._loop
+            )
+        return _on_output
+
     def set_additional_dirs(self, dirs: list[str]):
         self._additional_dirs = [Path(d).resolve() for d in dirs]
 
@@ -518,6 +543,7 @@ class Agent:
 
     async def run(self):
         self._task = asyncio.current_task()
+        self._loop = asyncio.get_running_loop()
 
         content_parts: list[str] = []
         thinking_parts: list[str] = []
@@ -677,7 +703,7 @@ class Agent:
                             pass
 
                         tool_name = tc["function"]["name"]
-                        await self._send_stream_event({"type": "tool_start", "tool": tool_name, "args": args})
+                        await self._send_stream_event({"type": "tool_start", "tool": tool_name, "args": args, "tool_call_id": tc["id"]})
 
                         tool_result: dict[str, Any]
                         blocked = self._permission.intercept(tool_name)
@@ -704,10 +730,11 @@ class Agent:
                             # call doesn't freeze the event loop -- otherwise the
                             # shared loop stalls SSE heartbeats and every other
                             # agent/subagent on it (issue #5).
+                            on_output = self._make_output_callback(tc["id"])
                             tool_result = await asyncio.to_thread(
                                 execute_tool, tool_name, args, self.working_dir,
                                 self.session_dir, self._additional_dirs,
-                                self._register_proc)
+                                self._register_proc, on_output)
 
                         # Handle permission request from tool
                         if "permission" in tool_result:
@@ -732,13 +759,14 @@ class Agent:
                                 self._additional_dirs.append(Path(perm_path).resolve())
                                 self._persist_additional_dirs()
                                 # Retry the tool with updated additional_dirs
+                                on_output = self._make_output_callback(tc["id"])
                                 tool_result = await asyncio.to_thread(
                                     execute_tool, tool_name, args, self.working_dir,
                                     self.session_dir, self._additional_dirs,
-                                    self._register_proc)
+                                    self._register_proc, on_output)
                             # else: keep original error result
 
-                        result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"]}
+                        result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"], "tool_call_id": tc["id"]}
                         if "diff" in tool_result:
                             result_event["diff"] = tool_result["diff"]
                         await self._send_stream_event(result_event)

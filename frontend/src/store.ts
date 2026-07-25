@@ -207,8 +207,22 @@ function handleSSEEvent(event: SSEEvent) {
       if (streaming) {
         streaming.status = 'running'
         streaming.startArgs = event.args
+        streaming.toolCallId = event.tool_call_id
       } else {
-        turn.tools.push({ name: event.tool, status: 'running', args: '', startArgs: event.args })
+        turn.tools.push({ name: event.tool, status: 'running', args: '', startArgs: event.args, toolCallId: event.tool_call_id })
+      }
+      break
+    }
+
+    case 'tool_output': {
+      // Live stdout/stderr line from a running bash command. Match by
+      // tool_call_id (set on tool_start) and append to liveOutput.
+      const turn = getCurrentTurn()
+      if (!turn) break
+      const tool = turn.tools.find((t) => t.toolCallId === event.tool_call_id)
+        ?? turn.tools.find((t) => t.name === 'bash' && t.status === 'running')
+      if (tool) {
+        tool.liveOutput = (tool.liveOutput ?? '') + event.text + '\n'
       }
       break
     }
@@ -222,6 +236,9 @@ function handleSSEEvent(event: SSEEvent) {
       if (running) {
         running.status = 'done'
         running.result = event.result
+        // Replace the live streamed output with the truncated final result
+        // so the window matches what is persisted in history.
+        running.liveOutput = undefined
         if (event.diff) {
           running.diff = event.diff
         }

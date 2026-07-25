@@ -7,8 +7,9 @@ export type SSEEvent =
   | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }
   | { type: 'tool_stream'; tool_name: string; args: string; complete: boolean }
-  | { type: 'tool_start'; tool: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; tool: string; result: string; diff?: DiffRow[]; diff_prev?: string; diff_current?: string }
+  | { type: 'tool_start'; tool: string; args: Record<string, unknown>; tool_call_id?: string }
+  | { type: 'tool_output'; tool_call_id: string; stream: 'stdout' | 'stderr'; text: string }
+  | { type: 'tool_result'; tool: string; result: string; tool_call_id?: string; diff?: DiffRow[]; diff_prev?: string; diff_current?: string }
   | { type: 'usage'; token_count: number; max_context_tokens: number }
   | { type: 'status'; text: string }
   | { type: 'plan_exit_request' }
@@ -87,7 +88,9 @@ export interface ToolDisplay {
   status: ToolStatus
   args: string
   startArgs?: Record<string, unknown>
+  toolCallId?: string
   result?: string
+  liveOutput?: string
   diff?: DiffRow[]
   /** @deprecated legacy string fragments from older sessions; used as fallback. */
   diffPrev?: string

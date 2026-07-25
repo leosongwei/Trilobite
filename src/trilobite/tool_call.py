@@ -97,6 +97,7 @@ def execute_tool(
     session_dir: Path,
     additional_dirs: list[Path] | None = None,
     on_proc: Callable[[Any], None] | None = None,
+    on_output: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     """Execute a tool and return a result dict.
 
@@ -105,6 +106,8 @@ def execute_tool(
 
     ``on_proc`` is forwarded to tools that spawn a subprocess (bash) so the
     caller (Agent) can kill the process on interrupt; other tools ignore it.
+    ``on_output`` is forwarded to bash so each stdout/stderr line can be
+    streamed to the frontend in real time; other tools ignore it.
     """
     tool = _TOOL_MAP.get(tool_name)
     if tool is None:
@@ -114,6 +117,7 @@ def execute_tool(
         session_dir=session_dir,
         additional_dirs=additional_dirs or [],
         on_proc=on_proc,
+        on_output=on_output,
         **arguments,
     )
     if isinstance(result, dict):
