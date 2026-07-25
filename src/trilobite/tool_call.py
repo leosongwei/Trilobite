@@ -5,10 +5,14 @@ from src.trilobite.tools.read import ReadTool
 from src.trilobite.tools.edit import EditTool
 from src.trilobite.tools.write import WriteTool
 from src.trilobite.tools.bash import BashTool
+from src.trilobite.tools.glob import GlobTool
+from src.trilobite.tools.grep import GrepTool
 from src.trilobite.tools.todo import TodoListTool
 
 ALL_TOOLS = [
     ReadTool(),
+    GlobTool(),
+    GrepTool(),
     EditTool(),
     WriteTool(),
     BashTool(),

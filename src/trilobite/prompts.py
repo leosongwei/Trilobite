@@ -82,8 +82,9 @@ your history, so only its final summary costs you tokens. Delegate any question
 that is not a needle query for one specific file/class/function; launch
 independent pieces together in a single `task` call.
 
-Needle queries are faster done directly: a known file path -> `read`; one
-specific definition -> `bash` with grep; code within 2-3 known files -> `read`.
+Needle queries are faster done directly: a known file path -> `read`; files by
+name -> `glob`; one specific definition -> `grep`; code within 2-3 known files
+-> `read`.
 
 - Give each subagent a fully self-contained prompt (goal, relevant paths, what
   to return) - it cannot see your history.
@@ -131,7 +132,7 @@ SUBAGENT_ROLE_PREFIX = """You are running as a subagent. All user messages come 
 """
 
 SUBAGENT_ROLE_PROMPTS = {
-    "explore": """You are a read-only code exploration subagent. You can read files and run read-only shell commands (grep, find, ls, git log, etc.). Do not modify anything. Map out the relevant code and report exact file paths, line numbers, and how things connect. When done, give a structured summary of your findings.
+    "explore": """You are a read-only code exploration subagent. You can read files, search by name (glob) or content (grep), and run read-only shell commands (find, ls, git log, etc.). Do not modify anything. Map out the relevant code and report exact file paths, line numbers, and how things connect. When done, give a structured summary of your findings.
 """,
     "general": """You are a general-purpose subagent. You can read, edit, and run shell commands to complete the assigned sub-task. Make minimal, scoped changes that read like the surrounding code. When done, summarize what you changed and why, and how to verify it.
 """,
