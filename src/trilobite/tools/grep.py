@@ -8,6 +8,24 @@ from src.trilobite.file_discovery import discover_files, relpath
 from src.trilobite.tools.tool import Tool
 
 
+def _glob_matches(filepath: Path, working_dir: Path, pattern: str) -> bool:
+    """Whether ``filepath`` should be kept by a ``glob`` filter.
+
+    Accepts both basename patterns (``*.py``) and path patterns
+    (``src/trilobite/tools/*.py``). A path pattern also matches as a suffix at
+    any depth, so ``tools/*.py`` hits ``src/trilobite/tools/grep.py`` without
+    forcing the caller to write ``**/tools/*.py``.
+    """
+    if fnmatch.fnmatch(filepath.name, pattern):
+        return True
+    rel = relpath(filepath, working_dir)
+    if fnmatch.fnmatch(rel, pattern):
+        return True
+    if "/" in pattern and fnmatch.fnmatch(rel, "**/" + pattern):
+        return True
+    return False
+
+
 class GrepTool(Tool):
     name = "grep"
     description = (
@@ -32,8 +50,8 @@ class GrepTool(Tool):
             "glob": {
                 "type": "string",
                 "description": (
-                    "File-name glob filter, e.g. '*.py'. Only files whose name "
-                    "matches are searched."
+                    "File glob filter, e.g. '*.py' or 'tools/*.py'. Matches by "
+                    "basename or path; a path pattern matches at any depth."
                 ),
             },
             "output_mode": {
@@ -99,7 +117,7 @@ class GrepTool(Tool):
         else:
             files = [f for f in discover_files(root) if f.is_file()]
             if glob:
-                files = [f for f in files if fnmatch.fnmatch(f.name, glob)]
+                files = [f for f in files if _glob_matches(f, working_dir, glob)]
 
         results: list[str] = []
         total_matches = 0
