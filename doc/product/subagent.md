@@ -145,11 +145,11 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ### bash 中断
 
-工具在 `asyncio.to_thread` 的工作线程里执行（见 [streaming.md](./streaming.md)），bash 用 `subprocess.Popen` + `communicate`（非 `subprocess.run`），且 `start_new_session=True` 把命令放进独立进程组。Popen 句柄通过 `on_proc` 回调注册到 agent 的 `_current_proc`。
+工具在 `asyncio.to_thread` 的工作线程里执行（见 [streaming.md](./streaming.md)），bash 用 `subprocess.Popen` 启动命令后用两个读取线程逐行 drain stdout/stderr（非 `subprocess.run` / `communicate`），且 `start_new_session=True` 把命令放进独立进程组。Popen 句柄通过 `on_proc` 回调注册到 agent 的 `_current_proc`。
 
 `interrupt()` 若发现 `_current_proc` 还活着，调 `kill_process_group`（`os.killpg` 整组 SIGKILL）：
 
-- 只 kill shell 不够：`shell=True` 下真正的命令（如 `sleep`）是 shell 的子进程、继承 stdout 管道，shell 死了子进程还活着持管，`communicate` 会阻塞到子进程结束。杀整组才能让 `communicate` 立即返回。
+- 只 kill shell 不够：`shell=True` 下真正的命令（如 `sleep`）是 shell 的子进程、继承 stdout 管道，shell 死了子进程还活着持管，读取线程的 `readline` 会阻塞到子进程结束。杀整组才能让管道 EOF、读取线程退出、`proc.wait()` 立即返回。
 - kill 后工作线程的 `execute_tool` 很快返回（exit code -9）；但中断不等它返回——cancel task 直接让 run 的 `await asyncio.to_thread` 抛 `CancelledError`，立刻进入总结。工作线程在后台收尾（结果丢弃），无害。
 
 非 bash 工具（read/edit/write）很快返回，但中断同样靠 cancel task 立刻生效，不等它们。

@@ -58,6 +58,19 @@ class StreamBroker:
                 self._is_running = False
             else:
                 self._turn_buffer.append(event)
+                # When a tool finishes, drop its streamed output lines from
+                # the replay buffer: the final (truncated) result is now in
+                # the tool_result event, and keeping thousands of
+                # tool_output lines would make reconnect replay painfully
+                # slow.
+                if t == "tool_result":
+                    tcid = event.get("tool_call_id")
+                    if tcid is not None:
+                        self._turn_buffer = [
+                            e for e in self._turn_buffer
+                            if not (e.get("type") == "tool_output"
+                                    and e.get("tool_call_id") == tcid)
+                        ]
 
             for q in list(self._subscribers):
                 q.put_nowait(event)

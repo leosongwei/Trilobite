@@ -100,6 +100,10 @@ const displayContent = computed(() => {
   if (props.tool.status === 'streaming') {
     return props.tool.args || '...'
   }
+  // running: show live streamed output (bash) if available
+  if (props.tool.liveOutput) {
+    return props.tool.liveOutput
+  }
   return props.tool.args || 'running...'
 })
 </script>

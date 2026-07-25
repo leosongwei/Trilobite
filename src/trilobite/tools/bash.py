@@ -1,6 +1,7 @@
 import os
 import signal
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -109,15 +110,20 @@ class BashTool(Tool):
         max_output_lines: int = 100,
         max_output_chars: int = 10000,
         on_proc: Callable[[subprocess.Popen | None], None] | None = None,
+        on_output: Callable[[str, str], None] | None = None,
         **kwargs: Any,
     ) -> str:
-        # Use Popen + communicate (instead of subprocess.run) so the agent can
-        # kill the running process on interrupt. start_new_session=True puts the
-        # command in its own process group so kill_process_group() can take down
-        # the shell's child (e.g. the real ``sleep``) too -- otherwise killing
-        # only the shell leaves the child holding the pipes and communicate
-        # blocks. The Popen handle is reported through ``on_proc`` so
-        # Agent.interrupt() can terminate a long command immediately.
+        # Use Popen with per-line streaming (instead of subprocess.run /
+        # communicate) so the agent can both kill the running process on
+        # interrupt *and* stream output to the frontend in real time.
+        # start_new_session=True puts the command in its own process group so
+        # kill_process_group() can take down the shell's child (e.g. the real
+        # ``sleep``) too. The Popen handle is reported through ``on_proc`` so
+        # Agent.interrupt() can terminate a long command immediately. Two reader
+        # threads drain stdout/stderr line by line, invoking ``on_output`` for
+        # each line so the frontend sees live output; lines are also collected
+        # so the final returned string still carries the [stderr]/[exit code]
+        # markers the model expects.
         proc: subprocess.Popen | None = None
         try:
             proc = subprocess.Popen(
@@ -131,15 +137,47 @@ class BashTool(Tool):
             )
             if on_proc:
                 on_proc(proc)
+
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
+
+            def _drain(stream, store: list[str], src: str) -> None:
+                for line in iter(stream.readline, ""):
+                    line = line.rstrip("\n")
+                    store.append(line)
+                    if on_output:
+                        try:
+                            on_output(line, src)
+                        except Exception:
+                            pass
+                stream.close()
+
+            t_out = threading.Thread(
+                target=_drain, args=(proc.stdout, stdout_lines, "stdout"), daemon=True)
+            t_err = threading.Thread(
+                target=_drain, args=(proc.stderr, stderr_lines, "stderr"), daemon=True)
+            t_out.start()
+            t_err.start()
+
             try:
-                stdout, stderr = proc.communicate(timeout=timeout)
+                proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 kill_process_group(proc)
-                proc.communicate()
+                proc.wait()
+                t_out.join(timeout=1)
+                t_err.join(timeout=1)
                 return f"Error: Command timed out ({timeout}s)"
-            output = stdout or ""
+
+            t_out.join()
+            t_err.join()
+
+            stdout = "\n".join(stdout_lines)
+            stderr = "\n".join(stderr_lines)
+            output = stdout
             if stderr:
-                output += "\n[stderr]\n" + stderr
+                if output:
+                    output += "\n"
+                output += "[stderr]\n" + stderr
             if proc.returncode != 0:
                 output += f"\n[exit code: {proc.returncode}]"
             output = output or "(no output)"
