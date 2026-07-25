@@ -30,19 +30,40 @@
       </div>
       <DiffView v-if="tool.diff" :rows="tool.diff" />
       <pre v-else-if="tool.diffPrev" class="tool-result">{{ tool.diffCurrent ?? tool.diffPrev }}</pre>
-      <pre v-else class="tool-result">{{ displayContent }}</pre>
+      <pre ref="outputPre" v-else class="tool-result">{{ displayContent }}</pre>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { ToolDisplay } from '../types'
 import { useStore } from '../store'
 import DiffView from './DiffView.vue'
 
 const props = defineProps<{ tool: ToolDisplay }>()
 const { selectSession } = useStore()
+
+const outputPre = ref<HTMLPreElement | null>(null)
+
+// Auto-scroll the bash output box to the bottom as new lines stream in.
+// Only when the user is already near the bottom -- otherwise respect their
+// scroll position (e.g. reading earlier output).
+watch(
+  () => props.tool.liveOutput,
+  () => {
+    const el = outputPre.value
+    if (props.tool.status !== 'running' || !el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    if (nearBottom) {
+      nextTick(() => {
+        if (outputPre.value) {
+          outputPre.value.scrollTop = outputPre.value.scrollHeight
+        }
+      })
+    }
+  },
+)
 
 const isRead = computed(() => props.tool.name === 'read')
 const isTask = computed(() => props.tool.name === 'task')
