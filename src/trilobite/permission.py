@@ -83,7 +83,7 @@ class AgentPermission(ABC):
 class BuildModePermission(AgentPermission):
     """Primary agent, build mode: full tool access, can spawn subagents."""
 
-    tool_names = ("read", "edit", "write", "bash", "TodoList")
+    tool_names = ("read", "glob", "grep", "edit", "write", "bash", "TodoList")
     exposes_task = True
 
     def intercept(self, tool_name: str) -> str | None:
@@ -94,7 +94,7 @@ class PlanModePermission(AgentPermission):
     """Primary agent, plan mode: read-only, may request an exit to build,
     may spawn read-only (explore) subagents."""
 
-    tool_names = ("read", "bash", "TodoList")
+    tool_names = ("read", "glob", "grep", "bash", "TodoList")
     exposes_exit_plan_mode = True
     exposes_task = True
 
@@ -115,7 +115,7 @@ class ExploreSubagentPermission(AgentPermission):
     subagents (``task`` is absent), which enforces the single-layer limit.
     """
 
-    tool_names = ("read", "bash")
+    tool_names = ("read", "glob", "grep", "bash")
 
     def intercept(self, tool_name: str) -> str | None:
         if tool_name in ("edit", "write"):
@@ -135,7 +135,7 @@ class GeneralSubagentPermission(AgentPermission):
     list).
     """
 
-    tool_names = ("read", "edit", "write", "bash")
+    tool_names = ("read", "glob", "grep", "edit", "write", "bash")
 
     def intercept(self, tool_name: str) -> str | None:
         if tool_name == "TodoList":

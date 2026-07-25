@@ -26,9 +26,48 @@ def kill_process_group(proc: subprocess.Popen) -> None:
         pass
 
 
+def truncate_output(
+    text: str, max_lines: int = 100, max_chars: int = 10000
+) -> str:
+    """Truncate command output to a tail window.
+
+    Bash output is tail-heavy -- errors and final results land at the end --
+    so we keep the *last* ``max_lines`` lines and then the *last*
+    ``max_chars`` characters. Either limit is disabled by passing ``-1``. A
+    note is prepended when truncation happens so the model knows output was
+    cut and can raise the limit or page through it.
+    """
+    truncated = False
+    if max_lines != -1:
+        lines = text.splitlines(keepends=True)
+        if len(lines) > max_lines:
+            text = "".join(lines[-max_lines:])
+            truncated = True
+    if max_chars != -1 and len(text) > max_chars:
+        text = text[-max_chars:]
+        truncated = True
+    if truncated:
+        limits = []
+        if max_lines != -1:
+            limits.append(f"last {max_lines} lines")
+        if max_chars != -1:
+            limits.append(f"last {max_chars} chars")
+        note = (
+            "... [output truncated, showing "
+            + " / ".join(limits)
+            + "; pass max_output_lines=-1 and max_output_chars=-1 to disable]\n"
+        )
+        text = note + text
+    return text
+
+
 class BashTool(Tool):
     name = "bash"
-    description = "Execute a bash command in the working directory."
+    description = (
+        "Execute a bash command in the working directory. Output is truncated "
+        "to the last 100 lines / 10000 chars by default; pass "
+        "max_output_lines=-1 and max_output_chars=-1 to disable truncation."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -40,6 +79,22 @@ class BashTool(Tool):
                 "type": "integer",
                 "description": "Timeout in seconds (default 10).",
             },
+            "max_output_lines": {
+                "type": "integer",
+                "default": 100,
+                "description": (
+                    "Keep only the last N lines of output. -1 disables the "
+                    "line limit (return all lines)."
+                ),
+            },
+            "max_output_chars": {
+                "type": "integer",
+                "default": 10000,
+                "description": (
+                    "Keep only the last N characters of output. -1 disables "
+                    "the character limit (return full output)."
+                ),
+            },
         },
         "required": ["command"],
     }
@@ -48,8 +103,11 @@ class BashTool(Tool):
         self,
         working_dir: Path,
         session_dir: Path,
+        additional_dirs: list[Path] | None = None,
         command: str = "",
         timeout: int = 10,
+        max_output_lines: int = 100,
+        max_output_chars: int = 10000,
         on_proc: Callable[[subprocess.Popen | None], None] | None = None,
         **kwargs: Any,
     ) -> str:
@@ -84,7 +142,8 @@ class BashTool(Tool):
                 output += "\n[stderr]\n" + stderr
             if proc.returncode != 0:
                 output += f"\n[exit code: {proc.returncode}]"
-            return output or "(no output)"
+            output = output or "(no output)"
+            return truncate_output(output, max_output_lines, max_output_chars)
         except Exception as e:
             return f"Error: {e}"
         finally:

@@ -16,11 +16,14 @@ Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/Fa
 * `prompts.py` — 所有提示词（系统提示词、压缩摘要提示词、subagent 角色提示）的代码常量。提示词不可配置，全部硬编码在此。
 * `tokens.py` — 简易 token 估算（字符级，区分 ASCII/CJK）。
 * `file_access.py` — 文件路径解析和安全检查（敏感文件过滤）。
-* `tools/` — 五个具体工具：
-  * `bash.py` — 执行 shell 命令
+* `file_discovery.py` - 文件发现（glob/grep 共用）：git 仓库用 `git ls-files` 尊重 .gitignore，否则 `os.walk` 跳过噪音目录；不依赖 ripgrep。
+* `tools/` — 七个具体工具：
   * `read.py` — 读取文件（支持行/字符限制）
+  * `glob.py` — 按文件名模式查找（尊重 .gitignore，按 mtime 排序）
+  * `grep.py` — 正则搜索文件内容（content/files_with_matches/count 模式、上下文行）
   * `edit.py` — 精确字符串替换（行尾归一化、replace_all、上下文 diff）
   * `write.py` — 整文件创建/覆盖/追加（overwrite/append 模式）
+  * `bash.py` — 执行 shell 命令（输出默认截断为尾部 100 行/10k 字符，可配置）
   * `todo.py` — 任务列表管理（JSON 文件持久化在 session 目录）
 
 ## 前端 (`frontend/`)

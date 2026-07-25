@@ -79,8 +79,8 @@ Plan/Build 双模式由 **permission 策略**（`permission.py`）实现，而�
 
 | 模式 | 暴露的工具 | 拦截 |
 |------|-----------|------|
-| Build（`BuildModePermission`） | `read` `edit` `write` `bash` `TodoList` | 无 |
-| Plan（`PlanModePermission`） | `read` `bash` `TodoList` `exit_plan_mode` | `edit` `write` |
+| Build（`BuildModePermission`） | `read` `glob` `grep` `edit` `write` `bash` `TodoList` | 无 |
+| Plan（`PlanModePermission`） | `read` `glob` `grep` `bash` `TodoList` `exit_plan_mode` | `edit` `write` |
 
 Plan 模式下 `edit`/`write` **根本不出现在工具列表里**（LLM 看不到它们）。若模型仍幻觉式地调用，`intercept` 兜底拦截并返回错误：
 

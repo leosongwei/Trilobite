@@ -2,7 +2,7 @@
 
 ## 概述
 
-Trilobite 的每个 session 有一个工作目录（working directory）。文件工具（`read`、`edit`、`write`）在该目录范围内操作。工作目录外的访问需要通过额外授权目录（additional directories）机制显式开放。
+Trilobite 的每个 session 有一个工作目录（working directory）。文件工具（`read`、`glob`、`grep`、`edit`、`write`）在该目录范围内操作。工作目录外的访问需要通过额外授权目录（additional directories）机制显式开放。
 
 `bash` 工具不强制路径限制（和 kimi-code 一致），通过系统提示词引导模型自觉遵守边界。
 
@@ -144,9 +144,19 @@ def is_within_directory(candidate: str, base: str) -> bool:
 
 与 read 工具相同的路径检查。整文件创建/覆盖/追加（`mode` 为 `overwrite` 或 `append`），原样写入、不做匹配。在 Plan 模式下，所有 `write` 调用被拒绝（Plan 模式守卫优先于路径检查）。
 
+### glob 工具
+
+按文件名 glob 模式查找文件（如 `**/*.py`），返回匹配路径（相对工作目录），按修改时间倒序排列。路径检查与 read 一致：`path` 参数（搜索根目录）经 `resolve_file_path` 解析，工作目录外需授权。在 git 仓库中通过 `git ls-files` 尊重 `.gitignore`（见 `file_discovery.py`），非 git 目录则遍历并跳过常见噪音目录（`.git`、`node_modules`、`__pycache__` 等）。只读工具，Plan 模式可用。
+
+### grep 工具
+
+按正则搜索文件内容，返回 `path:line: content` 格式的匹配行。支持 `output_mode`（`content` / `files_with_matches` / `count`）、`glob` 文件名过滤、`context` 上下文行、`case_insensitive`、`max_results`。路径检查与 read 一致；文件发现与 glob 工具共用 `file_discovery.discover_files`，同样尊重 `.gitignore`。自动跳过二进制文件（含 NUL 字节）。只读工具，Plan 模式可用。
+
 ### bash 工具
 
 **不强制路径限制。** bash 工具的 `cwd` 默认为 session 工作目录，但命令本身可以访问任何路径。
+
+**输出截断。** 命令输出默认截断为**尾部** 100 行 / 10000 字符（双限制--bash 输出尾部通常含错误信息和最终结果）。模型可通过 `max_output_lines` / `max_output_chars` 调整，传 `-1` 关闭对应限制（两者都为 `-1` 时返回完整输出）。截断发生时在输出开头插入提示行，引导模型按需放宽限制或分页查看。
 
 系统提示词引导模型：
 > "除非用户明确指示，不要访问工作目录以外的文件。"

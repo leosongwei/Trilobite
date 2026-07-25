@@ -81,6 +81,15 @@ const label = computed(() => {
   if (props.tool.name === 'write' && args.filename) {
     return `write: ${args.filename}`
   }
+  if (props.tool.name === 'glob' && args.pattern) {
+    return args.path ? `glob: ${args.pattern} in ${args.path}` : `glob: ${args.pattern}`
+  }
+  if (props.tool.name === 'grep' && args.pattern) {
+    let s = `grep: ${args.pattern}`
+    if (args.glob) s += ` (${args.glob})`
+    if (args.path) s += ` in ${args.path}`
+    return s
+  }
   return props.tool.name
 })
 
