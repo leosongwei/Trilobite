@@ -191,6 +191,7 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 
 - 追加增量时直接写，更新标记（依增量是否以 `\n` 结尾）。
 - 遇到块式事件（`tool_start` / `tool_result` / `subagents` / `done` 等）时，若不在行首，先补一个 `\n`，保证块式内容独占行。
+- **思维链与正文分行**：渲染器记录上一段流式类型；`text` 到来时若上一段是 `thinking` 且不在行首，先补 `\n`，使正文另起一行（思维链已自带行尾换行则不重复补）。
 
 ### 工具调用格式（`tool_start`）
 
@@ -214,6 +215,7 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 |---|---|
 | `edit` | **inline diff**（`diff` 字段），跳过 `result` 摘要文本 |
 | `bash` | 跳过正文（`tool_output` 已实时流式输出过）；若 `result` 含 `[exit code: N]` 且 N≠0，补一行红色 exit code |
+| `task` | 跳过（subagent 启动/退出已由 `subagents` / `subagent_state` 事件展示，聚合 `<task_result>` 结论不打印） |
 | `read` / `grep` / `glob` / `write` / `TodoList` | 原样输出 `result` 文本，白色 |
 | 其他 | 原样输出 `result` 文本 |
 

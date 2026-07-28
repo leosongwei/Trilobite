@@ -111,6 +111,9 @@ class Renderer:
     def __init__(self) -> None:
         self.at_line_start = True
         self._subagent_desc: dict[str, str] = {}
+        # Last streaming section ("thinking" / "text" / None) so we can insert a
+        # blank separator when the model switches from reasoning to its reply.
+        self._last_stream: str | None = None
 
     def write(self, text: str) -> None:
         sys.stdout.write(text)
@@ -130,8 +133,14 @@ class Renderer:
         t = ev.get("type")
         if t == "thinking":
             self.write(_green(ev.get("text", "")))
+            self._last_stream = "thinking"
         elif t == "text":
+            # Separate the reasoning from the reply: if thinking just streamed
+            # without a trailing newline, start the reply on its own line.
+            if self._last_stream == "thinking":
+                self.ensure_newline()
             self.write(ev.get("text", ""))
+            self._last_stream = "text"
         elif t == "tool_output":
             # bash streams complete lines (newline already stripped upstream).
             self.write(ev.get("text", "") + "\n")
@@ -175,6 +184,11 @@ class Renderer:
             m = _EXIT_CODE_RE.search(ev.get("result", ""))
             if m and int(m.group(1)) != 0:
                 self.block(_red(f"✗ exit code: {m.group(1)}\n"))
+            return
+        if tool == "task":
+            # Subagent start/exit are already shown via subagents /
+            # subagent_state events; the aggregated <task_result> conclusion is
+            # suppressed.
             return
         text = ev.get("result", "")
         self.block(text + ("" if text.endswith("\n") else "\n"))
