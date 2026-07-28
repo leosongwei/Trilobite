@@ -11,8 +11,8 @@
 定义在 `src/trilobite/messages.py`：
 
 ```
-SystemMessage(content)                      # 初始 system prompt
-CompactMarker(content)                      # 压缩边界：重建的 system prompt，重启 API 上下文
+SystemMessage(content)                      # system 消息（初始 prompt 或压缩后重建的 prompt）
+CompactMarker()                             # 压缩边界：纯标记，不带内容；其后跟一条重建的 SystemMessage
 UserMessage(content, compact_summary=False) # 用户输入（compact_summary 标记压缩摘要）
 AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一轮
   ├─ ToolCall(id, name, arguments)          # arguments 流式追加
@@ -23,7 +23,7 @@ AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一
 
 | 方法 | 用途 |
 |------|------|
-| `to_api_dicts()` | 展开成 OpenAI 兼容 dict 列表发给 LLM。`AssistantMessage` 展开为 `[assistant, tool, tool, ...]`。**diff 不发给 API**。 |
+| `to_api_dicts()` | 展开成 OpenAI 兼容 dict 列表发给 LLM。`AssistantMessage` 展开为 `[assistant, tool, tool, ...]`，`CompactMarker` 展开为空（纯裁剪标记）。**diff 不发给 API**。 |
 | `to_storage_dict()` | v2 JSON 形状，持久化到 history.json |
 | `to_frontend_dicts()` | 扁平的 v1 兼容 dict 列表，用于 `init` SSE 快照（前端协议不变） |
 
@@ -42,7 +42,8 @@ AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一
     { "type": "assistant", "thinking": "...", "content": "让我先读...",
       "tool_calls": [{ "id": "call_1", "name": "read", "arguments": "{\"filename\":\"main.py\"}" }],
       "tool_results": [{ "tool_call_id": "call_1", "content": "1: ...", "diff": null }] },
-    { "type": "compact_marker", "content": "..." },
+    { "type": "compact_marker" },
+    { "type": "system", "content": "重建的 system prompt" },
     { "type": "user", "content": "<compact>...</compact>", "compact_summary": true }
   ]
 }
@@ -60,24 +61,23 @@ AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一
 |------|------|
 | `append(msg, persist=True)` | 追加一条消息。`persist=False` 用于 drain 开始时入列的空 `AssistantMessage`（见下文） |
 | `extend(msgs)` / `insert(i, msg)` | 批量追加 / 指定位置插入 |
-| `pop()` | 弹出末尾消息（compact 保留 steer 时用） |
+| `pop()` | 弹出末尾消息（中断丢弃空 asst 时用） |
 | `truncate(index)` | 丢弃从 `index` 开始的所有消息（revert 用） |
 | `save()` | 显式全量写盘（mutate 消息对象后调用） |
-| `get_api_messages()` | 返回 API 投影：从最后一个 `CompactMarker` 开始，连续 user 合并 |
+| `get_api_messages()` | 返回 API 投影：从最后一个 `CompactMarker` 之后开始，连续 user 用 `combine_new_messages` 合并 |
 | `to_flat_dicts()` | 展开成扁平 v1 兼容 dict 列表（前端 `init` 快照用） |
 | `raw` | 原始对象列表（compaction、revert 等遍历用） |
 
 ### 存储与投影的分离
 
-消息在 history.json 中以对象化结构存储，保留原始边界。发送给 API 时，`get_api_messages()` 从最后一个 `CompactMarker` 开始投影（之前的全部从 API 上下文丢弃，但仍保留在持久化历史里供前端查看），并把连续的 user 消息合并为一条（文本用 `\n\n` 连接），避免连续同角色消息导致 API 异常：
+消息在 history.json 中以对象化结构存储，保留原始边界。发送给 API 时，`get_api_messages()` 从最后一个 `CompactMarker` **之后**开始投影（marker 自身不带内容、不投影；紧跟其后的 `SystemMessage` 成为新 system 消息），marker 之前的消息从 API 上下文丢弃但仍保留在持久化历史里供前端查看。连续的 user 消息由 `combine_new_messages` 合并成一条：单条原样透传，多条用 `<multi_message/>` 分隔，让模型知道这是多条独立用户输入（如多条 steering，或 steering + 压缩指令）：
 
 ```
-history.json 存储:                    API 收到:
-UserMessage("用 Python")        ┐
-UserMessage("另外加上日志")      ┘ ->  {role:user, content:"用 Python\n\n另外加上日志"}
+history:  UserMessage("用 Python"), UserMessage("另外加上日志")
+API 收到:  {role: user, content: "<multi_message/>\n用 Python\n<multi_message/>\n另外加上日志"}
 ```
 
-`CompactMarker` 自身投影成一条干净的 `system` 消息（标志被丢弃），成为 API 上下文的新起点。`CompactMarker` 之前的消息（包括压缩指令、摘要 turn）从 API 视图消失，但留在前端历史里。
+系统提示词里说明了 `<multi_message/>` 标记的含义。`CompactMarker` 不投影成 system（它无内容），重建的 `SystemMessage` 才是 API 上下文的新 system 起点。
 
 ## 流式与控制流
 
@@ -124,9 +124,16 @@ API 收到: ... assistant, tool, tool, {user: "用 Python\n\n另外加上日志"
 
 ## 压缩（compaction）
 
-压缩时一个关键边界：未读的 steer 消息会落在最后一个 assistant turn 之后、压缩指令之前，如果直接插 compact marker 会被裁剪掉（marker 之前的消息从 API 视图丢弃）。`_compact_turn` 因此先 pop 末尾的未读 `UserMessage`，压缩正常进行（append 压缩指令、摘要 turn、`CompactMarker`、`compact_summary`），再把 pop 出的 steer 重新 append 到 marker 之后。这样 steer 跨越压缩仍可见。
+压缩完全统一进主循环，没有专门的 compact 方法。流程：
 
-压缩后设 `_force_run`，让主循环在重建的上下文上强制跑一轮。详见 [compact.md](./compact.md)。
+1. **触发**：一轮（含工具执行）结束后读 token 用量，若超过阈值，标记 `_need_compact=True` 并把压缩指令（`build_compact_prompt`）作为一条普通 `UserMessage` append 进 history。它和任何未读的 steering 消息一样，是 user 消息——不区分「正常 prompt」和「steering prompt」。
+2. **压缩 turn**：下一轮续跑判断发现有新 user 消息（压缩指令），照常跑一轮；但因为 `_need_compact=True`，`tools=None`（关闭工具），模型只能产出文本 handoff note。这轮的 `get_api_messages` 会把 steering + 压缩指令用 `combine_new_messages` 合并成一条 user，模型一次性读到全部并写进 note。
+3. **重建**：压缩 turn（纯文本）结束后，`_finalize_compaction` 落盘一个无内容的 `CompactMarker`、一条重建的 `SystemMessage`、以及把 note 包成 `<compact>...</compact>` 的 `compact_summary` user 消息。`get_api_messages` 从 marker 之后开始，所以压缩前的全部（steering、压缩指令、note turn）从 API 上下文丢弃，但留在持久化历史里。重置 token 计数，设 `_force_run`。
+4. **继续**：`_force_run` 让主循环在重建的上下文上再跑一轮，模型基于 note 继续。
+
+steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写进 note，原文随 marker 裁剪——这正是压缩对所有上下文做的事。`COMPACTION_PROMPT` 已相应改写，告诉模型下一轮只会看到 note（不再有「最近的 user 消息会保留」的预期），需把未处理的用户请求写进 note。
+
+手动 `/compact`（`compact_now`）走同一条路：设 `_need_compact` + append 压缩指令 + 启动 run，剩余由主循环处理。详见 [compact.md](./compact.md)。
 
 ## 保存时机
 

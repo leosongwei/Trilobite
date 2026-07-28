@@ -253,9 +253,13 @@ class Agent:
         # model has not seen yet, or (b) a user message (start/steer) arrived
         # since the model last read history. ``_force_run`` is set after
         # compaction so the model gets one turn on the rebuilt context.
+        # ``_need_compact`` requests the next turn run with tools disabled so
+        # the model produces a handoff summary; the turn after that rebuilds
+        # the context.
         self._pending_tool_results: bool = False
         self._user_read_cursor: int = 0
         self._force_run: bool = False
+        self._need_compact: bool = False
         if subagent_type == "explore":
             self._permission: AgentPermission = ExploreSubagentPermission()
         elif subagent_type == "general":
@@ -500,75 +504,25 @@ class Agent:
                 return True
         return False
 
-    async def _compact_turn(self) -> None:
-        """Run one compaction turn.
+    def _finalize_compaction(self, summary: str) -> None:
+        """Rebuild the context after a compaction turn.
 
-        Appends the compact instruction as a user message, streams the model's
-        handoff summary (visible like a normal turn), then inserts a compact
-        marker (rebuilt system prompt) followed by the summary wrapped in
-        ``<compact>`` tags as a user message.
-
-        Unread steering user messages sit at the tail (after the last assistant
-        turn). They must survive compaction, so they are popped before the
-        marker and re-appended after it -- otherwise the marker would drop them
-        from the API context. Resulting history tail::
-
-            ..., {user: compact prompt}, {assistant: summary},
-            {compact_marker: rebuilt prompt}, {user: <compact>summary</compact>},
-            {user: unread steers...}, ...new conversation...
-
-        ``get_api_messages()`` starts from the marker, so pre-compaction
-        messages are dropped from the API context while remaining in the
-        persisted (frontend) history.
+        Drops a contentless :class:`CompactMarker` (the API-context boundary),
+        a fresh :class:`SystemMessage` with the rebuilt prompt, and the summary
+        wrapped in ``<compact>`` tags as a ``compact_summary`` user message.
+        ``get_api_messages()`` starts just past the marker, so pre-compaction
+        messages are dropped from the API context while remaining in persisted
+        history.
         """
-        # Pop unread steering user messages from the tail so they land after
-        # the marker (a compact_summary is never at the tail here, but the
-        # guard keeps it safe).
-        steer_tail: list[UserMessage] = []
-        while self.history.raw and isinstance(self.history.raw[-1], UserMessage) \
-                and not self.history.raw[-1].compact_summary:
-            steer_tail.insert(0, self.history.raw.pop())
-
-        prompt = build_compact_prompt(self)
-        user_seq = self._count_user_messages()
-        self.history.append(UserMessage(prompt))
-        await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
-
-        messages = self.history.get_api_messages()
-        await self._send_stream_event({"type": "turn"})
-        stream = await self.chat_completion(messages=messages, stream=True, tools=None)
-
-        asst = AssistantMessage()
-        self.history.append(asst, persist=False)
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta is None:
-                continue
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                asst.thinking += delta.reasoning_content
-                await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
-            if delta.content:
-                asst.content += delta.content
-                await self._send_stream_event({"type": "text", "text": delta.content})
-        if not asst.content:
-            asst.content = "[compaction produced no output]"
-        self.history.save()
-
         rebuilt_system = self.system_prompt + self.working_context
-        self.history.append(CompactMarker(rebuilt_system))
-        self.history.append(UserMessage(f"<compact>\n{asst.content}</compact>", compact_summary=True))
-        for m in steer_tail:
-            self.history.append(m)
-        await self._send_stream_event({"type": "compact"})
-
+        self.history.append(CompactMarker())
+        self.history.append(SystemMessage(rebuilt_system))
+        self.history.append(UserMessage(f"<compact>\n{summary}</compact>", compact_summary=True))
+        self._need_compact = False
+        self._force_run = True
         self._token_count = 0
         self._token_covered = len(self.history.raw)
         self._persist_token_count()
-        # The compact prompt has been read by this turn; mark it consumed.
-        self._user_read_cursor = self._count_user_messages()
-        self._pending_tool_results = False
-        # Force one turn on the rebuilt context so the model can continue.
-        self._force_run = True
 
     async def run(self):
         self._task = asyncio.current_task()
@@ -615,26 +569,25 @@ class Agent:
                     self._final_result = f"max_steps ({self._max_steps}) exceeded"
                     await self._send_stream_event({"type": "error", "text": self._final_result})
                     break
-                if should_compact(self):
-                    await self._compact_turn()
-                    await self._broker.commit(len(self.history.raw))
-                    continue
                 messages = self.history.get_api_messages()
                 # Record how many user messages the model is reading this turn
                 # (at get_api_messages time, before the stream drains). A steer
                 # arriving mid-drain lands after this cursor and drives the
                 # next continuation check.
                 self._user_read_cursor = self._count_user_messages()
-                if mode_notification:
+                if mode_notification and not self._need_compact:
                     messages.insert(1, {"role": "user", "content": mode_notification})
                     mode_notification = None
 
                 await self._send_stream_event({"type": "turn"})
 
+                # A pending compaction runs with tools disabled so the model
+                # produces a handoff summary instead of calling tools.
+                tools = None if self._need_compact else self._permission.filter_definitions()
                 stream = await self.chat_completion(
                     messages=messages,
                     stream=True,
-                    tools=self._permission.filter_definitions(),
+                    tools=tools,
                 )
 
                 # Begin the turn: append an empty assistant message and mutate
@@ -833,11 +786,29 @@ class Agent:
                         ))
                         self.history.save()
                 else:
-                    # Plain-text final turn. Persist it; the loop then checks
-                    # for steering before actually ending -- ``done`` is emitted
-                    # only when the continuation check finds nothing new.
                     self.history.save()
                     current_asst_persisted = True
+
+                # ── compaction handling after the turn ──
+                if self._need_compact:
+                    # This was the compaction turn (tools disabled): the
+                    # assistant output is the handoff summary. Rebuild the
+                    # context (marker + fresh system + compact_summary).
+                    self._finalize_compaction(asst.content)
+                    await self._broker.commit(len(self.history.raw))
+                    await self._send_stream_event({"type": "compact"})
+                elif should_compact(self):
+                    # Token threshold exceeded: request a compaction turn next.
+                    # The compact prompt is just another user message -- it
+                    # combines with any pending steering via combine_new_messages
+                    # and the next turn runs with tools disabled.
+                    self._need_compact = True
+                    prompt = build_compact_prompt(self)
+                    user_seq = self._count_user_messages()
+                    self.history.append(UserMessage(prompt))
+                    await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
+                elif not asst.tool_calls:
+                    # Plain-text final turn, nothing pending: the run completes.
                     self._final_state = "completed"
                     self._final_result = asst.content
 
@@ -1247,12 +1218,12 @@ class Agent:
     async def compact_now(self) -> None:
         """Manually trigger context compaction (the ``/compact`` command).
 
-        Compacts regardless of the token threshold. The compact turn is
-        streamed like normal output. If there is no real conversation to
-        compact (e.g. right after a previous compact), a status notice is sent
-        instead. After compaction, if an unread steering message is pending in
-        history, a normal run is kicked off to consume it; otherwise the run
-        ends.
+        Compacts regardless of the token threshold. The compact prompt is
+        appended as a normal user message and the run loop handles the rest:
+        the next turn runs with tools disabled (handoff summary), then the
+        context is rebuilt and the model continues on the fresh context. If
+        there is no real conversation to compact (e.g. right after a previous
+        compact), a status notice is sent instead.
         """
         self._broker.set_running(True)
 
@@ -1268,20 +1239,9 @@ class Agent:
             self._task = None
             return
 
-        await self._compact_turn()
-        await self._broker.commit(len(self.history.raw))
-        await self._send_stream_event({
-            "type": "usage",
-            "token_count": self._token_count,
-            "max_context_tokens": self.max_context_tokens,
-        })
-        # _compact_turn set _force_run, but a manual compact should only
-        # continue the run if there is an unread steering message to consume;
-        # otherwise end (the model continues on the next user message).
-        if self._count_user_messages() > self._user_read_cursor:
-            self._task = asyncio.create_task(self.run())
-        else:
-            self._force_run = False
-            await self._send_stream_event({"type": "done"})
-            self._broker.set_running(False)
-            self._task = None
+        self._need_compact = True
+        prompt = build_compact_prompt(self)
+        user_seq = self._count_user_messages()
+        self.history.append(UserMessage(prompt))
+        await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
+        self._task = asyncio.create_task(self.run())

@@ -8,6 +8,7 @@ from src.trilobite.messages import (
     CompactMarker,
     Message,
     UserMessage,
+    combine_new_messages,
     from_v1,
     message_from_storage,
 )
@@ -92,34 +93,41 @@ class History:
         self.save()
 
     def get_api_messages(self) -> list[dict]:
-        """Return messages for the API, starting from the last compact marker.
+        """Return messages for the API, starting just past the last compact marker.
 
-        A :class:`CompactMarker` acts as a fresh start: every message before
-        the last marker is dropped from the API context. The marker's own
-        content becomes the new system message. This separates the *frontend*
-        history (which keeps everything, persisted in the JSON file) from the
-        *API* history (which only sees post-compaction messages).
+        A :class:`CompactMarker` acts as a fresh start: every message up to and
+        including the last marker is dropped from the API context (a fresh
+        :class:`SystemMessage` right after the marker becomes the new system
+        prompt). This separates the *frontend* history (which keeps everything,
+        persisted in the JSON file) from the *API* history (which only sees
+        post-compaction messages).
 
-        Consecutive user messages are merged into one (text joined by
-        ``\\n\\n``) to avoid API issues with repeated same-role messages.
+        Consecutive user messages are combined with :func:`combine_new_messages`
+        (``<multi_message/>`` separators) so the API never sees repeated
+        same-role messages and the model can tell distinct user inputs apart.
         """
         start = 0
         for i, msg in enumerate(self._messages):
             if isinstance(msg, CompactMarker):
-                start = i
+                start = i + 1  # start just past the marker
 
         result: list[dict] = []
-        for msg in self._messages[start:]:
-            for d in msg.to_api_dicts():
-                if d.get("role") == "user" and result and result[-1].get("role") == "user":
-                    prev_content = result[-1].get("content", "") or ""
-                    cur_content = d.get("content", "") or ""
-                    if prev_content and cur_content:
-                        result[-1] = {"role": "user", "content": f"{prev_content}\n\n{cur_content}"}
-                    else:
-                        result[-1] = {"role": "user", "content": prev_content or cur_content}
-                else:
+        msgs = self._messages[start:]
+        i = 0
+        while i < len(msgs):
+            msg = msgs[i]
+            if isinstance(msg, UserMessage):
+                # Collect a run of consecutive user messages and combine them.
+                group: list[UserMessage] = [msg]
+                i += 1
+                while i < len(msgs) and isinstance(msgs[i], UserMessage):
+                    group.append(msgs[i])
+                    i += 1
+                result.append(combine_new_messages(group))
+            else:
+                for d in msg.to_api_dicts():
                     result.append(d)
+                i += 1
         return result
 
     def to_flat_dicts(self) -> list[dict]:

@@ -51,24 +51,22 @@ class SystemMessage(Message):
 
 
 class CompactMarker(Message):
-    """A compaction boundary: a rebuilt system prompt that restarts the API context.
+    """A compaction boundary: a pure marker that restarts the API context.
 
-    Everything before the last ``CompactMarker`` is dropped from
-    ``get_api_messages()`` but kept in persisted history (for the frontend).
-    Itself projects as a plain ``system`` message to the API.
+    Carries no content itself -- a fresh :class:`SystemMessage` with the
+    rebuilt prompt follows it. Everything before the last ``CompactMarker`` is
+    dropped from ``get_api_messages()`` (which starts just past it) but kept in
+    persisted history (the frontend renders it as a divider).
     """
 
-    def __init__(self, content: str):
-        self.content = content
-
     def to_api_dicts(self) -> list[dict]:
-        return [{"role": "system", "content": self.content}]
+        return []
 
     def to_storage_dict(self) -> dict:
-        return {"type": "compact_marker", "content": self.content}
+        return {"type": "compact_marker"}
 
     def to_frontend_dicts(self) -> list[dict]:
-        return [{"role": "system", "content": self.content, "compact_marker": True}]
+        return [{"role": "system", "compact_marker": True}]
 
 
 class UserMessage(Message):
@@ -219,7 +217,10 @@ def from_v1(flat: list[dict]) -> list[Message]:
         if role == "system":
             pending = None
             if d.get("compact_marker"):
-                messages.append(CompactMarker(d.get("content", "")))
+                # v1 stored the rebuilt prompt inside the marker; split it into
+                # a contentless CompactMarker followed by a SystemMessage.
+                messages.append(CompactMarker())
+                messages.append(SystemMessage(d.get("content", "")))
             else:
                 messages.append(SystemMessage(d.get("content", "")))
         elif role == "user":
@@ -255,7 +256,7 @@ def message_from_storage(d: dict) -> Message:
     if t == "system":
         return SystemMessage(d.get("content", ""))
     if t == "compact_marker":
-        return CompactMarker(d.get("content", ""))
+        return CompactMarker()
     if t == "user":
         return UserMessage(d.get("content", ""), compact_summary=bool(d.get("compact_summary")))
     if t == "assistant":
@@ -277,3 +278,18 @@ def message_from_storage(d: dict) -> Message:
         )
     # Unknown type: best-effort fallback so a malformed entry never breaks load.
     return SystemMessage(str(d))
+
+
+def combine_new_messages(messages: list[UserMessage]) -> dict:
+    """Combine consecutive user messages into one API user dict.
+
+    A single message is passed through unchanged. Multiple messages are joined
+    with a ``<multi_message/>`` separator before each one, so the model can
+    tell these are several distinct user inputs (e.g. steering messages, or a
+    steering message followed by a compact prompt) rather than one typed
+    message. The system prompt explains the marker.
+    """
+    if len(messages) == 1:
+        return {"role": "user", "content": messages[0].content}
+    parts = [f"<multi_message/>\n{m.content}" for m in messages]
+    return {"role": "user", "content": "\n".join(parts)}
