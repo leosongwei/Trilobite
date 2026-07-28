@@ -139,7 +139,12 @@ async def _chat_completion_stream(
                     for c in data.get("choices", []):
                         d = c.get("delta", {})
                         tc_list = []
-                        for t in d.get("tool_calls", []):
+                        # Some providers (e.g. GLM via opencode zen) emit
+                        # ``"tool_calls": null`` on every delta chunk. Unlike a
+                        # missing key, ``dict.get(..., [])`` returns ``None``
+                        # here (key present, value null) and iterating it
+                        # raises TypeError. ``... or []`` covers both cases.
+                        for t in (d.get("tool_calls") or []):
                             tc_list.append(_ToolCall(
                                 id=t.get("id", ""),
                                 function=_Function(
