@@ -1076,6 +1076,14 @@ class Agent:
     def detach_subscriber(self, q: asyncio.Queue) -> None:
         self._broker.detach(q)
 
+    async def aclose(self) -> None:
+        """Release async resources (the httpx client).
+
+        Web mode keeps agents alive for the process lifetime, so this is only
+        needed by the CLI, which owns a single short-lived agent.
+        """
+        await self._http.aclose()
+
     def cancel(self):
         self._kill_current_proc()
         if self._task and not self._task.done():
