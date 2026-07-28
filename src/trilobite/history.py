@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from src.trilobite.messages import (
+    AssistantMessage,
     CompactMarker,
     Message,
     UserMessage,
@@ -111,8 +112,17 @@ class History:
             if isinstance(msg, CompactMarker):
                 start = i + 1  # start just past the marker
 
+        # Drop assistant turns that have no content and no tool_calls (e.g. a
+        # turn cancelled mid-stream, which leaves only thinking): their empty
+        # content string is rejected by some APIs (e.g. Volcengine) and they
+        # carry no model-visible output. The thinking is still kept in
+        # persisted history for the frontend, and dropping them here lets the
+        # surrounding user messages combine normally.
+        msgs = [
+            m for m in self._messages[start:]
+            if not (isinstance(m, AssistantMessage) and not m.content and not m.tool_calls)
+        ]
         result: list[dict] = []
-        msgs = self._messages[start:]
         i = 0
         while i < len(msgs):
             msg = msgs[i]

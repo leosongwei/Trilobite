@@ -13,7 +13,7 @@
 ```
 SystemMessage(content)                      # system 消息（初始 prompt 或压缩后重建的 prompt）
 CompactMarker()                             # 压缩边界：纯标记，不带内容；其后跟一条重建的 SystemMessage
-UserMessage(content, compact_summary=False) # 用户输入（compact_summary 标记压缩摘要）
+UserMessage(content, compact_summary=False, is_compact_prompt=False) # 用户输入（compact_summary 标记压缩摘要；is_compact_prompt 标记压缩指令，供 _finalize_compaction 定位以 re-append 压缩期间到达的 steering）
 AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一轮
   ├─ ToolCall(id, name, arguments)          # arguments 流式追加
   └─ ToolResult(tool_call_id, content, diff) # diff 仅 edit 工具，仅供前端
@@ -78,6 +78,8 @@ API 收到:  {role: user, content: "<multi_message/>\n用 Python\n<multi_message
 ```
 
 系统提示词里说明了 `<multi_message/>` 标记的含义。`CompactMarker` 不投影成 system（它无内容），重建的 `SystemMessage` 才是 API 上下文的新 system 起点。
+
+**跳过空 content 的 cancelled turn**：`get_api_messages()` 还会丢弃 `content` 为空且没有 `tool_calls` 的 `AssistantMessage`。hard-cancel 时若 LLM stream 还在早期（只产出了 thinking、没有 content），`run()` 的 CancelledError 处理会 salvage 这条只有 thinking 的 partial assistant（保留给前端展示思考过程）。但 `AssistantMessage.to_api_dicts()` 对纯文本 turn 会无条件塞 `content`（哪怕是空串），空 content 的 assistant 消息会被部分 API（如 Volcengine/DeepSeek）以 400 拒绝。因此在投影时直接丢弃这种空 turn--它的 thinking 仍留在 history 供前端显示，丢弃后周围的 user 消息照常由 `combine_new_messages` 合并，序列保持合法。
 
 ## 流式与控制流
 
@@ -151,8 +153,8 @@ steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写�
 
 用户可以编辑之前发送的某条消息并从该处重新推理（`POST /api/sessions/{id}/revert`，参数 `user_seq` + `message`）。`Agent.revert` 按该消息是否已被模型读取分两种处理：
 
-* **已被模型读取**（`user_seq < _user_read_cursor`）：若正在运行先 `stop()`，用 `history.truncate(target)` 丢弃该 user 消息及其后所有内容，`broker.commit(target)` 重置回放基准，再 `start(message)` 重新推理。端点返回 `rerun`，前端重连 SSE。
-* **尚未被读取**（steer 还在 history 里、模型未读到，`user_seq >= _user_read_cursor`）：直接改 history 中该 `UserMessage.content`，**不中断运行**，广播 `user_edit` 事件让前端就地更新。端点返回 `queued`，前端无需重连。
+* **rerun**（`user_seq < _user_read_cursor`，或 agent 当前不在运行）：若正在运行先 `stop()`，用 `history.truncate(target)` 丢弃该 user 消息及其后所有内容，把 `_user_read_cursor` 对齐到截断后的历史（否则截断后 cursor 仍指向旧的大值，`start()` 追加的新消息会被判为「已读」、run 空转直接结束），`broker.commit(target)` 重置回放基准，再 `start(message)` 重新推理。端点返回 `rerun`，前端重连 SSE。
+* **queued**（steer 尚未被读取且 agent 正在运行，`user_seq >= _user_read_cursor`）：直接改 history 中该 `UserMessage.content`，**不中断运行**，广播 `user_edit` 事件让前端就地更新。端点返回 `queued`，前端无需重连。若 agent 已不在运行，即使消息未读也走 rerun（否则没有 run 来消费这条就地改动）。
 
 `user_seq` 计数排除 `compact_summary`（与 `_count_user_messages` 一致），定位 target 时同样排除，避免了旧设计中两处计数基准不一致的 bug。
 

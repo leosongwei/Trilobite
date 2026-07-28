@@ -70,9 +70,14 @@ class CompactMarker(Message):
 
 
 class UserMessage(Message):
-    def __init__(self, content: str, compact_summary: bool = False):
+    def __init__(self, content: str, compact_summary: bool = False, is_compact_prompt: bool = False):
         self.content = content
         self.compact_summary = compact_summary
+        # Marks the user message that requests a handoff summary. It still
+        # counts as a user turn (so the run loop continues into the compact
+        # turn) but lets _finalize_compaction locate it and collect the real
+        # steering messages that arrived after it.
+        self.is_compact_prompt = is_compact_prompt
 
     def to_api_dicts(self) -> list[dict]:
         return [{"role": "user", "content": self.content}]
@@ -81,12 +86,16 @@ class UserMessage(Message):
         d: dict = {"type": "user", "content": self.content}
         if self.compact_summary:
             d["compact_summary"] = True
+        if self.is_compact_prompt:
+            d["is_compact_prompt"] = True
         return d
 
     def to_frontend_dicts(self) -> list[dict]:
         d: dict = {"role": "user", "content": self.content}
         if self.compact_summary:
             d["compact_summary"] = True
+        if self.is_compact_prompt:
+            d["is_compact_prompt"] = True
         return [d]
 
 
@@ -258,7 +267,11 @@ def message_from_storage(d: dict) -> Message:
     if t == "compact_marker":
         return CompactMarker()
     if t == "user":
-        return UserMessage(d.get("content", ""), compact_summary=bool(d.get("compact_summary")))
+        return UserMessage(
+            d.get("content", ""),
+            compact_summary=bool(d.get("compact_summary")),
+            is_compact_prompt=bool(d.get("is_compact_prompt")),
+        )
     if t == "assistant":
         return AssistantMessage(
             thinking=d.get("thinking", "") or "",

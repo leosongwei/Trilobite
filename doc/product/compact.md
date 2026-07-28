@@ -35,23 +35,26 @@ estimated = token_count（上次 API 返回的真实 token 数，仅反映 marke
 
 压缩完全统一进主循环，没有专门的 compact 方法：
 
-1. **触发**：一轮结束后 token 超阈值 -> `_need_compact=True` + append 压缩指令（`COMPACTION_PROMPT` + todo list）作为普通 `UserMessage`。它和未读的 steering 消息一样是 user 消息，由 `combine_new_messages` 合并。
+1. **触发**：一轮结束后 token 超阈值 -> `_need_compact=True` + append 压缩指令（`COMPACTION_PROMPT` + todo list）作为带 `is_compact_prompt` 标记的 `UserMessage`。它和未读的 steering 消息一样是 user 消息，由 `combine_new_messages` 合并。`is_compact_prompt` 不改变它的 API 投影（仍是一条普通 user 消息），只供 `_finalize_compaction` 定位，以收集压缩期间到达的 steering。
 2. **压缩 turn**：下一轮续跑判断发现有新 user 消息（压缩指令），照常跑一轮；但 `_need_compact=True` 时 `tools=None`（关闭工具），模型只能产出文本 handoff note。模型在这一轮的 `get_api_messages` 里一次性读到 steering + 压缩指令（合并成一条 user），把未处理的用户请求写进 note。
 3. **重建**：压缩 turn（纯文本）结束后，`_finalize_compaction` 落盘：
    - 无内容的 `CompactMarker`
    - 重建的 `SystemMessage`（`SYSTEM_PROMPT` + AGENTS.md）
    - 把 note 包成 `<compact>...</compact>` 的 `compact_summary` user 消息
+   - **re-append 压缩期间到达的 steering**：`_collect_pending_steers` 找最后一条 `is_compact_prompt` 消息，收集它之后所有真实 user 消息（note 之前或之后到达的都算，排除 compact_summary 与压缩指令本身），按原顺序追加到 compact_summary 之后。
 
    ```
-   ..., {user: steering...}, {user: 压缩指令}, {assistant: note},
-   {CompactMarker}, {system: 重建提示词}, {user: <compact>note</compact>, compact_summary},
+   ..., {user: steering...}, {user: 压缩指令(is_compact_prompt)}, {user: 新steer}, {assistant: note},
+   {CompactMarker}, {system: 重建提示词}, {user: <compact>note</compact>, compact_summary}, {user: 新steer},
    ...新对话...
    ```
 
-   `get_api_messages` 从 marker 之后开始，所以压缩前的全部（steering、压缩指令、note turn）从 API 上下文丢弃，但留在持久化历史里。重置 token 计数为 0，设 `_force_run`。
-4. **继续**：`_force_run` 让主循环在重建的上下文上再跑一轮，模型基于 note 继续。
+   `get_api_messages` 从 marker 之后开始，所以压缩前的全部（steering 原文、压缩指令、note）从 API 上下文丢弃，但留在持久化历史里。re-append 的 steering 落在 marker 之后，会被 `combine_new_messages` 与 compact_summary 合并成一条 user 消息发给 LLM，模型在新上下文上继续响应它。重置 token 计数为 0，设 `_force_run`。
+4. **继续**：`_force_run` 让主循环在重建的上下文上再跑一轮，模型基于 note + re-append 的 steering 继续。
 
-steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写进 note，原文随 marker 裁剪。`COMPACTION_PROMPT` 已改写，告诉模型下一轮只会看到 note（不再有「最近的 user 消息会保留」的预期）。
+### 压缩期间到达的 steering
+
+steering 在压缩 turn 被模型读到（和压缩指令合并成一条 user）并写进 note；但它的原文落在 marker 之前，会随 marker 裁剪出 API 上下文。若不处理，压缩后那轮模型只看到 compact_summary（含 steering 的交代）而看不到 steering 本身，无法真正响应它。因此 `_finalize_compaction` 把压缩期间到达的 steering re-append 到 marker 之后：模型在新上下文上既能从 compact_summary 读到上下文交代，又能直接看到 steering 并响应。无论 steering 是在 note 之前到达（被合并进 note 的输入）还是 note drain 期间到达（note 没看到它），都会被 re-append，不会丢失。
 
 ## 手动触发：/compact 命令
 
@@ -73,9 +76,11 @@ steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写�
 
 marker 之后如果直接跟 assistant 消息会让模型困惑（没有对应的 user 输入）。因此 compact summary 以 `role: user` 存储，但前端通过 `compact_summary` 标记渲染为 assistant 风格的 turn。`<compact>` 标签帮助模型区分这是上下文摘要而非真实用户输入。
 
-### user_seq 与 compact summary
+### user_seq 与 compact 消息
 
 compact summary 虽然是 `role: user`，但不是真实的用户消息，不参与 `user_seq` 编号（`_count_user_messages` 排除它），保证 revert/edit 功能的序号正确。
+
+压缩指令（`is_compact_prompt`）目前仍计入 `user_seq` 并显示为普通 user 消息：它是驱动 compact turn 续跑的「新消息」，也向用户表明压缩正在进行。re-append 的 steering 是真实用户消息，正常参与编号。
 
 ## 重新构建系统提示词
 
