@@ -66,6 +66,11 @@ def _white(text: str) -> str:
     return _ansi("37", text)
 
 
+def _gray(text: str) -> str:
+    # Dark gray for thinking; \033[2m (faint) is ignored/too bright on some terminals.
+    return _ansi("38;2;110;118;129", text)
+
+
 # --- event classification ----------------------------------------------------
 
 _TERMINAL = {"done", "cancelled", "error", "interrupted"}
@@ -144,7 +149,7 @@ class Renderer:
     def render(self, ev: dict) -> None:
         t = ev.get("type")
         if t == "thinking":
-            self.write(_dim(ev.get("text", "")))
+            self.write(_gray(ev.get("text", "")))
             self._last_stream = "thinking"
         elif t == "text":
             # Separate the reasoning from the reply: if thinking just streamed
