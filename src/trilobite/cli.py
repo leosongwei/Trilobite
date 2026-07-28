@@ -56,6 +56,11 @@ def _yellow_dim(text: str) -> str:
     return _ansi("2;33", text)
 
 
+def _orange(text: str) -> str:
+    # Matches the web ToolEntry .tool-action color (#ce9178).
+    return _ansi("38;2;206;145;120", text)
+
+
 # --- event classification ----------------------------------------------------
 
 _TERMINAL = {"done", "cancelled", "error", "interrupted"}
@@ -66,36 +71,27 @@ _EXIT_CODE_RE = re.compile(r"\[exit code: (-?\d+)\]")
 # --- tool call / diff formatting --------------------------------------------
 
 def _tool_call_str(tool: str, args: dict) -> str:
-    """A one-line, human-readable summary of a tool call's most relevant args."""
-    if tool == "bash":
-        return f"bash$ {args.get('command', '')}"
-    if tool == "read":
-        s = f"read {args.get('filename', '')}"
-        extras = []
-        if "start_line" in args:
-            extras.append(f"start={args['start_line']}")
-        if "limit_lines" in args:
-            extras.append(f"lines={args['limit_lines']}")
-        if "limit_chars" in args:
-            extras.append(f"chars={args['limit_chars']}")
-        if extras:
-            s += f" ({', '.join(extras)})"
+    """One-line tool label, matching the web ToolEntry ``label`` format."""
+    if tool == "bash" and args.get("command"):
+        return f"bash: {args['command']}"
+    if tool == "read" and args.get("filename"):
+        return f"read: {args['filename']}"
+    if tool == "edit" and args.get("filename"):
+        return f"edit: {args['filename']}"
+    if tool == "write" and args.get("filename"):
+        return f"write: {args['filename']}"
+    if tool == "glob" and args.get("pattern"):
+        return f"glob: {args['pattern']}" + (f" in {args['path']}" if args.get("path") else "")
+    if tool == "grep" and args.get("pattern"):
+        s = f"grep: {args['pattern']}"
+        if args.get("glob"):
+            s += f" ({args['glob']})"
+        if args.get("path"):
+            s += f" in {args['path']}"
         return s
-    if tool == "edit":
-        return f"edit {args.get('filename', '')}"
-    if tool == "write":
-        return f"write {args.get('filename', '')} [{args.get('mode', 'overwrite')}]"
-    if tool == "glob":
-        return f"glob {args.get('pattern', '')}"
-    if tool == "grep":
-        return f"grep {args.get('pattern', '')}"
-    if tool == "TodoList":
-        return "TodoList"
     if tool == "task":
         tasks = args.get("tasks") or []
-        return f"task ({len(tasks)} subagents)"
-    if tool == "exit_plan_mode":
-        return "exit_plan_mode"
+        return f"task: {len(tasks)} subagent" + ("" if len(tasks) == 1 else "s")
     return tool
 
 
@@ -156,7 +152,7 @@ class Renderer:
             # bash streams complete lines (newline already stripped upstream).
             self.write(ev.get("text", "") + "\n")
         elif t == "tool_start":
-            self.block(_dim("❯ ") + _tool_call_str(ev.get("tool", "?"), ev.get("args") or {}) + "\n")
+            self.block(_orange(f"[{_tool_call_str(ev.get('tool', '?'), ev.get('args') or {})}]") + "\n")
         elif t == "tool_result":
             self._render_tool_result(ev)
         elif t == "usage":

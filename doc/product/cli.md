@@ -164,7 +164,7 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 | 人类输入 | **蓝色** | IDLE 提示符 `❯ ` 与输入文本 |
 | 思维链（thinking） | **绿色** | reasoning 增量 |
 | LLM 正文（text） | **白色** | 模型回复正文增量 |
-| 工具调用 | **白色** | `tool_start` 一行 |
+| 工具调用 | **橘色** | `tool_start` 一行（`[<tool>: <args>]`，与 web 同色 `#ce9178`） |
 | 工具输出 | **白色** | bash 实时输出 / 工具结果 |
 | diff 新增行 | **绿色** `+` | inline diff |
 | diff 删除行 | **红色** `-` | inline diff |
@@ -186,7 +186,7 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 | `thinking` | 流式原样追加，绿色 |
 | `text` | 流式原样追加，白色 |
 | `tool_stream` | 跳过（工具调用在 `tool_start` 时一次性显示完整参数，不逐字符流式） |
-| `tool_start` | 一行：`❯ <tool call>`（`❯` 前缀 dim，调用串白色）。见下「工具调用格式」 |
+| `tool_start` | 一行橘色 `[<tool>: <args>]`。见下「工具调用格式」 |
 | `tool_output` | 逐行流式追加（bash stdout/stderr），白色，每行末补 `\n` |
 | `tool_result` | 见下「工具结果渲染」 |
 | `usage` | 一行 dim：`Tokens: <N> / <max> (<pct>%)`（与 web 端 TokenBar 同格式，千分位逗号 + 百分比） |
@@ -212,19 +212,19 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 
 ### 工具调用格式（`tool_start`）
 
-`❯ ` + 简明调用串，按工具类型提取最相关参数：
+橘色（`#ce9178`，与 web 端 `ToolEntry` 标签同色）的 `[<tool>: <args>]`，格式与 web 端 `label` 一致：
 
 | 工具 | 格式 |
 |---|---|
-| `bash` | `bash$ <command>` |
-| `read` | `read <filename>`（有 `start_line`/`limit_*` 时附括号说明） |
-| `edit` | `edit <filename>` |
-| `write` | `write <filename> [mode]` |
-| `glob` | `glob <pattern>` |
-| `grep` | `grep <pattern>` |
-| `TodoList` | `TodoList` |
-| `task` | `task (<n> subagents)` |
-| `exit_plan_mode` | `exit_plan_mode` |
+| `bash` | `[bash: <command>]` |
+| `read` | `[read: <filename>]` |
+| `edit` | `[edit: <filename>]` |
+| `write` | `[write: <filename>]` |
+| `glob` | `[glob: <pattern>]`（有 `path` 时附 ` in <path>`） |
+| `grep` | `[grep: <pattern>]`（有 `glob`/`path` 时附 ` (<glob>)` / ` in <path>`） |
+| `TodoList` | `[TodoList]` |
+| `task` | `[task: <n> subagent(s)]` |
+| `exit_plan_mode` | `[exit_plan_mode]` |
 
 ### 工具结果渲染（`tool_result`）
 
