@@ -89,6 +89,15 @@ per-session 事件总线，维护：
 * 流式输出持续向底部追加，窗口始终包含末尾。滚动钉底只在**新泡泡出现**时触发：顶层 item（turn / user / compact / error）追加由 `chatItems.length` watcher 处理，turn 内部的 thinking / 正文 / 工具调用首次出现由 `bubbleCount` watcher 处理；而泡泡内部的流式内容增长（`streamTick`）**不再**强制钉底，方便用户往上翻看历史。
 * 切 session 时 `renderCount` 重置回 `INITIAL_VISIBLE`；窗口扩大引入新 DOM 节点后同样触发 MathJax typeset。
 
+### Markdown 与公式渲染（`TurnBlock.vue` / `mathjax.ts`）
+
+只有 assistant 正文走 `renderMarkdown` → `v-html` → MathJax 的完整链路：
+
+* `renderMarkdown`（`markdown.ts`）先把 `$$…$$`/`$…$` 提取成占位符保护起来，`marked` 转完 HTML 再还原成 MathJax 风格的 `\[…\]`/`\(…\)`，避免被 marked 破坏。
+* MathJax（`mathjax.ts` 的 `typesetMath`）在已渲染的 DOM 上把分隔符渲染成 CHTML 公式。**作用域只限 `.markdown-body` 元素**（即 assistant 正文），由 `ChatView` 在每次 typeset 前用 `querySelectorAll('.markdown-body')` 收集目标传入，而**不是**整个 `chat` 容器。
+* 之所以收窄作用域：工具调用小标题（`[bash: echo $HOME]`、`[grep: foo$]`）、思考块、用户消息、diff 文本都是纯文本插值（`{{ }}`，不走 markdown），其中的 `$` 若被 MathJax 扫到会被误判为内联公式分隔符而错乱渲染。收窄到正文后这些区域不再被数学化。
+* 流式输出时 `v-html` 会随每个 delta 重设 `innerHTML` 覆盖掉刚渲染的 `<mjx-container>`，而 MathJax 内部仍保留旧节点状态导致后续 typeset 静默失败（公式"闪一下就消失"），因此流式期间（`isStreaming`）跳过 typeset，等流结束再统一渲染。
+
 ### 工具结果展示（`ToolEntry.vue`）
 
 * `read` 工具的结果默认折叠（`<details>` 收起），仅显示标签行 `[read: <filename>]`，点击展开查看完整输出，避免长文件内容刷屏。
