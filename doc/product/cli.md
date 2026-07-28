@@ -162,7 +162,7 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 | 信息源 | 颜色 | 说明 |
 |---|---|---|
 | 人类输入 | **蓝色** | IDLE 提示符 `❯ ` 与输入文本 |
-| 思维链（thinking） | **绿色** | reasoning 增量 |
+| 思维链（thinking） | **灰色**（dim） | reasoning 增量 |
 | LLM 正文（text） | **白色** | 模型回复正文增量 |
 | 工具调用 | **橘色** | `tool_start` 一行（`[<tool>: <args>]`，与 web 同色 `#ce9178`） |
 | 工具输出 | **白色** | bash 实时输出 / 工具结果 |
@@ -183,7 +183,7 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 | `init` | 跳过（新 session 历史为空） |
 | `user` | 跳过（人类输入已由输入侧显示，避免重复） |
 | `turn` | 跳过 |
-| `thinking` | 流式原样追加，绿色 |
+| `thinking` | 流式原样追加，灰色（dim） |
 | `text` | 流式原样追加，白色 |
 | `tool_stream` | 跳过（工具调用在 `tool_start` 时一次性显示完整参数，不逐字符流式） |
 | `tool_start` | 一行橘色 `[<tool>: <args>]`。见下「工具调用格式」 |

@@ -144,7 +144,7 @@ class Renderer:
     def render(self, ev: dict) -> None:
         t = ev.get("type")
         if t == "thinking":
-            self.write(_green(ev.get("text", "")))
+            self.write(_dim(ev.get("text", "")))
             self._last_stream = "thinking"
         elif t == "text":
             # Separate the reasoning from the reply: if thinking just streamed
