@@ -19,6 +19,11 @@ import time
 import uuid
 from pathlib import Path
 
+try:
+    import readline  # noqa: F401  enables line editing (arrows/backspace/history) for input()
+except ImportError:  # non-readline platforms (e.g. Windows)
+    pass
+
 from src.trilobite.agent import Agent
 from src.trilobite.config import get_sessions_dir, init_config
 
@@ -69,6 +74,15 @@ def _white(text: str) -> str:
 def _gray(text: str) -> str:
     # Dark gray for thinking; \033[2m (faint) is ignored/too bright on some terminals.
     return _ansi("38;2;110;118;129", text)
+
+
+def _rl_wrap(text: str) -> str:
+    """Wrap ANSI escapes with readline's \\001..\\002 markers so readline
+    excludes them from cursor-width math. Without this, colored prompts throw
+    off the cursor position and break line editing."""
+    if not _COLOR:
+        return text
+    return re.sub(r"(\033\[[0-9;]*m)", lambda m: f"\001{m.group(1)}\002", text)
 
 
 # --- event classification ----------------------------------------------------
@@ -231,13 +245,26 @@ def _resolve(ev: dict, agent: Agent, approved: bool) -> None:
         agent.resolve_permission(approved)
 
 
-async def _handle_interactive(agent: Agent, ev: dict, stdin_q: asyncio.Queue, renderer: Renderer) -> bool:
+async def _handle_interactive(agent: Agent, ev: dict, renderer: Renderer) -> str:
     """Prompt for a y/n answer to a permission / plan-exit request.
 
-    Returns True if stdin hit EOF (caller should cancel + exit). The agent is
-    blocked on its resolution event during this call, so no other output
-    streams compete for the terminal; we are the sole stdin_q consumer.
+    The agent is blocked on its resolution event during this call, so no other
+    output streams compete for the terminal. Returns "exit" if stdin hit EOF
+    (caller cancels + exits the CLI), "continue" otherwise.
+
+    RUNNING keeps ``loop.add_signal_handler(SIGINT, agent.cancel)`` active, but
+    that handler swallows Ctrl+C during a blocking ``input()``: readline defers
+    to the installed Python signal handler, which only schedules a loop callback
+    that cannot run while input() has the loop parked. So we drop the loop
+    handler for the prompt (restoring Python's default SIGINT -> KeyboardInterrupt),
+    then re-install it afterwards.
     """
+    loop = asyncio.get_running_loop()
+    try:
+        loop.remove_signal_handler(signal.SIGINT)
+    except (NotImplementedError, RuntimeError):
+        pass
+
     renderer.ensure_newline()
     t = ev.get("type")
     if t == "plan_exit_request":
@@ -253,125 +280,72 @@ async def _handle_interactive(agent: Agent, ev: dict, stdin_q: asyncio.Queue, re
                 f"   path: {ev.get('path', '')}   tool: {ev.get('tool', '')}\n"
             )
         )
-    sys.stdout.write(_yellow("允许? [y/N] "))
-    sys.stdout.flush()
-    renderer.at_line_start = False
 
-    line = await stdin_q.get()
-    if line is None:  # EOF (Ctrl+D)
+    result = "continue"
+    try:
+        line = input(_rl_wrap(_yellow("允许? [y/N] ")))
+    except EOFError:  # Ctrl+D: deny, then exit
         sys.stdout.write("\n")
         sys.stdout.flush()
         renderer.at_line_start = True
         _resolve(ev, agent, False)
-        return True
-
-    approved = line.strip().lower() in ("y", "yes")
-    # The Enter that submitted the answer already moved the cursor to a new line.
-    renderer.at_line_start = True
-    _resolve(ev, agent, approved)
-    return False
+        result = "exit"
+    except KeyboardInterrupt:  # Ctrl+C: cancel the run, drop back to IDLE
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        renderer.at_line_start = True
+        agent.cancel()  # the permission wait breaks via CancelledError
+    else:
+        approved = line.strip().lower() in ("y", "yes")
+        # Enter already moved the cursor to a new line.
+        renderer.at_line_start = True
+        _resolve(ev, agent, approved)
+    finally:
+        try:
+            loop.add_signal_handler(signal.SIGINT, agent.cancel)
+        except (NotImplementedError, RuntimeError):
+            pass
+    return result
 
 
 # --- REPL states -------------------------------------------------------------
 
-async def _idle_read(stdin_q: asyncio.Queue, sigint: asyncio.Event) -> str | None:
-    """Wait for either a stdin line or a Ctrl+C during IDLE.
-
-    Returns the line, or None if Ctrl+C / EOF signals an exit.
-    """
-    stdin_fut = asyncio.ensure_future(stdin_q.get())
-    sig_fut = asyncio.ensure_future(sigint.wait())
-    await asyncio.wait({stdin_fut, sig_fut}, return_when=asyncio.FIRST_COMPLETED)
-    # Whichever didn't fire is still pending (no item consumed); drop it.
-    if not stdin_fut.done():
-        stdin_fut.cancel()
-    if not sig_fut.done():
-        sig_fut.cancel()
-    else:
-        sigint.clear()
-        return None
-    return stdin_fut.result()
-
-
-async def _running(
-    agent: Agent,
-    queue: asyncio.Queue,
-    stdin_q: asyncio.Queue,
-    sigint: asyncio.Event,
-    renderer: Renderer,
-) -> bool:
+async def _running(agent: Agent, queue: asyncio.Queue, renderer: Renderer) -> bool:
     """Consume broker events until the run ends.
 
-    Multiplexes broker events, stdin lines and Ctrl+C. Returns True if the user
-    asked to exit (``/exit`` / EOF); the caller then stops the REPL.
+    SIGINT cancels the run via a loop signal handler and surfaces as a
+    ``cancelled`` terminal event. There is no steering and no stdin read while
+    running -- to interrupt, press Ctrl+C. Returns True if the user asked to
+    exit (EOF on an interactive prompt).
     """
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGINT, agent.cancel)
+    except (NotImplementedError, RuntimeError):
+        pass
+
     should_exit = False
-    while True:
-        broker_fut = asyncio.ensure_future(queue.get())
-        stdin_fut = asyncio.ensure_future(stdin_q.get())
-        sig_fut = asyncio.ensure_future(sigint.wait())
-        await asyncio.wait(
-            {broker_fut, stdin_fut, sig_fut},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for p in (broker_fut, stdin_fut, sig_fut):
-            if not p.done():
-                p.cancel()
-
-        # Handle stdin first: a line typed concurrently with an interactive
-        # event should be treated as steering, not eaten as the y/n answer.
-        if stdin_fut.done() and not should_exit:
-            line = stdin_fut.result()
-            if line is None:  # EOF
-                agent.cancel()
-                should_exit = True
-            else:
-                s = line.strip()
-                if s in ("/exit", "/quit"):
-                    agent.cancel()
-                    should_exit = True
-                elif s == "/stop":
-                    agent.cancel()
-                elif s == "":
-                    pass
-                else:
-                    await agent.steer(line)
-
-        if sig_fut.done() and not should_exit:
-            sigint.clear()
-            agent.cancel()
-
-        if broker_fut.done():
-            ev = broker_fut.result()
+    try:
+        while True:
+            ev = await queue.get()
             t = ev.get("type")
             if t in _INTERACTIVE:
-                exited = await _handle_interactive(agent, ev, stdin_q, renderer)
-                if exited:
+                if await _handle_interactive(agent, ev, renderer) == "exit":
                     agent.cancel()
                     should_exit = True
             else:
                 renderer.render(ev)
                 if t in _TERMINAL:
                     return should_exit
-
+    finally:
+        try:
+            loop.remove_signal_handler(signal.SIGINT)
+        except (NotImplementedError, RuntimeError):
+            pass
     return should_exit
 
 
 # --- entry point -------------------------------------------------------------
-
-async def _stdin_pump(reader: asyncio.StreamReader, q: asyncio.Queue) -> None:
-    """Continuously read stdin lines into ``q`` (None sentinel on EOF).
-
-    This is the process-wide single owner of stdin; the IDLE and RUNNING
-    states both consume ``q``, so stdin is never contended.
-    """
-    while True:
-        line = await reader.readline()
-        if not line:
-            await q.put(None)
-            return
-        await q.put(line.decode("utf-8", "replace").rstrip("\n"))
-
 
 def _write_session_json(session_dir: Path, info: dict) -> None:
     (session_dir / "session.json").write_text(json.dumps(info, indent=2, ensure_ascii=False))
@@ -495,19 +469,13 @@ async def run_cli(working_dir: str | None, resume: bool) -> None:
 
 
 async def _repl(agent: Agent, queue: asyncio.Queue, banner: str) -> None:
-    loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-    stdin_q: asyncio.Queue = asyncio.Queue()
-    pump_task = asyncio.create_task(_stdin_pump(reader, stdin_q))
-
-    sigint = asyncio.Event()
-    try:
-        loop.add_signal_handler(signal.SIGINT, sigint.set)
-    except (NotImplementedError, RuntimeError):
-        # Windows / no-loop fallback: rely on KeyboardInterrupt from asyncio.run.
-        pass
+    # asyncio.run installs a SIGINT handler that cancels the main task -- useless
+    # while blocked in a synchronous input(), since the cancel can't land until
+    # input() returns and Ctrl+C is simply swallowed. Switch to Python's default
+    # handler so Ctrl+C raises KeyboardInterrupt out of input(). RUNNING
+    # temporarily installs a loop-level handler (agent.cancel) and restores this
+    # default on exit.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
 
     renderer = Renderer()
     sys.stdout.write(_dim(f"{banner} · Ctrl+C 中断 / /exit 退出\n"))
@@ -518,15 +486,14 @@ async def _repl(agent: Agent, queue: asyncio.Queue, banner: str) -> None:
         while True:
             # --- IDLE ---
             renderer.ensure_newline()
-            if _COLOR:
-                sys.stdout.write(_blue("❯ "))
-                sys.stdout.flush()
-            line = await _idle_read(stdin_q, sigint)
-            if line is None:  # Ctrl+C / EOF
+            try:
+                line = input(_rl_wrap(_blue("❯ ")))
+            except (KeyboardInterrupt, EOFError):
                 if _COLOR:
                     sys.stdout.write("\n")
                     sys.stdout.flush()
                 break
+            renderer.at_line_start = True  # Enter moved to a new line
             stripped = line.strip()
             if stripped == "":
                 continue
@@ -539,7 +506,7 @@ async def _repl(agent: Agent, queue: asyncio.Queue, banner: str) -> None:
                 continue
 
             # Re-render the human input in blue (IDLE has no concurrent output,
-            # so the line-edit echo can be safely overwritten).
+            # so readline's echo can be safely overwritten). Single-line input.
             if _COLOR:
                 sys.stdout.write("\033[A\033[2K" + _blue(f"❯ {line}") + "\n")
             else:
@@ -549,13 +516,8 @@ async def _repl(agent: Agent, queue: asyncio.Queue, banner: str) -> None:
 
             # --- RUNNING ---
             await agent.start(line)
-            if await _running(agent, queue, stdin_q, sigint, renderer):
+            if await _running(agent, queue, renderer):
                 break
     finally:
-        pump_task.cancel()
-        try:
-            await pump_task
-        except (asyncio.CancelledError, Exception):
-            pass
         agent.detach_subscriber(queue)
         await agent.aclose()
