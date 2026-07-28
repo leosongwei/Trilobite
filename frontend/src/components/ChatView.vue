@@ -126,7 +126,13 @@ function scheduleTypeset() {
     typesetTimer = null
     await nextTick()
     if (chatRef.value) {
-      await typesetMath(chatRef.value)
+      // 仅对 assistant 正文（.markdown-body）启用 MathJax。整个 chat 容器内还有
+      // 工具调用小标题、思考块、用户消息等纯文本，它们的 `$`（如 bash 的 $HOME、
+      // grep 的行尾锚点 $）会被 MathJax 误判为内联公式分隔符而错乱渲染。
+      const bodies = Array.from(
+        chatRef.value.querySelectorAll<HTMLElement>('.markdown-body'),
+      )
+      if (bodies.length) await typesetMath(bodies)
     }
   })
 }

@@ -59,9 +59,10 @@ function getMJ() {
 // previous one to finish - no typeset is ever skipped.
 let typesetChain: Promise<void> = Promise.resolve()
 
-export function typesetMath(el: HTMLElement): Promise<void> {
+export function typesetMath(elements: HTMLElement | HTMLElement[]): Promise<void> {
   typesetChain = typesetChain.then(async () => {
-    if (!el.isConnected) return
+    const els = (Array.isArray(elements) ? elements : [elements]).filter((e) => e.isConnected)
+    if (els.length === 0) return
     try {
       await loadMathJax()
       const mj = getMJ()
@@ -76,7 +77,7 @@ export function typesetMath(el: HTMLElement): Promise<void> {
         mj.startup.document.clear()
       }
       await Promise.race([
-        mj.typesetPromise([el]),
+        mj.typesetPromise(els),
         new Promise<void>((_, reject) =>
           setTimeout(() => reject(new Error('typesetPromise timeout after 15s')), 15000),
         ),
