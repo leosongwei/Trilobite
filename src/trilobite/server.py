@@ -93,8 +93,7 @@ async def create_session(req: SessionCreate):
     session_dir = get_sessions_dir() / session_id
 
     session_dir.mkdir(parents=True, exist_ok=True)
-    now = time.time()
-    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": now, "updated_at": now}
+    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": time.time()}
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 
     agent = Agent(

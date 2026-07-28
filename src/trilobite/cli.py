@@ -374,15 +374,16 @@ def _create_session(working_dir: str) -> tuple[Path, dict]:
         "plan_mode": False,
         "additional_dirs": [],
         "created_at": now,
-        "updated_at": now,
     }
     _write_session_json(session_dir, info)
     return session_dir, info
 
 
 def _find_latest_session(cwd: Path) -> tuple[Path | None, dict | None]:
-    """Most recently used *main* session whose working_dir resolves to ``cwd``.
+    """Most recently saved *main* session whose working_dir resolves to ``cwd``.
 
+    "Latest" is judged by ``history.json``'s mtime (the last time history was
+    saved), so activity in either web or CLI is reflected automatically.
     Subagent sessions (``subagent_type`` set) are skipped; only top-level
     sessions are continuable from the CLI.
     """
@@ -410,7 +411,12 @@ def _find_latest_session(cwd: Path) -> tuple[Path | None, dict | None]:
                 continue
         except OSError:
             continue
-        ts = info.get("updated_at") or info.get("created_at") or 0
+        # Last save time; fall back to created_at for never-messaged sessions.
+        hist = d / "history.json"
+        try:
+            ts = hist.stat().st_mtime if hist.is_file() else (info.get("created_at") or 0)
+        except OSError:
+            ts = info.get("created_at") or 0
         if ts > best_ts:
             best_ts = ts
             best_dir = d
@@ -461,8 +467,6 @@ async def run_cli(working_dir: str | None, resume: bool) -> None:
             banner = f"# trilobite cli · {info['working_dir']}"
         else:
             agent, queue = await _make_agent(config, session_dir, info, resume=True)
-            info["updated_at"] = time.time()
-            _write_session_json(session_dir, info)
             banner = f"# resumed · {info.get('name', session_dir.name)} · {info.get('working_dir', cwd)}"
     else:
         session_dir, info = _create_session(working_dir)

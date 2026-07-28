@@ -66,20 +66,20 @@ trilobite -c             # CLI 续接当前目录最新的 session
 
 **`-t` 新建**：
 1. `init_config()` 加载配置（与 web 模式共用 `~/.config/trilobite/config.yaml`）。
-2. 在 `get_sessions_dir()` 下新建一个 session 目录（`uuid4().hex`），写 `session.json`（`working_dir` 解析为绝对路径、`plan_mode: false`、`additional_dirs: []`、`created_at` / `updated_at`）。
+2. 在 `get_sessions_dir()` 下新建一个 session 目录（`uuid4().hex`），写 `session.json`（`working_dir` 解析为绝对路径、`plan_mode: false`、`additional_dirs: []`、`created_at`）。
 3. 实例化 `Agent`（与 `POST /api/sessions` 相同的参数：`name`、`working_dir`、`session_dir`、`config`、`registry`），回写 `session_id`。
 4. `await agent.attach_subscriber()` 拿到事件队列 + `init` 快照（新 session 历史为空）。
 5. 进入 REPL 主循环（见第三节）。
 
 **`-c` 续接**：
 1. `init_config()`，取 `cwd`。
-2. 扫描 `get_sessions_dir()` 下所有 `session.json`，过滤掉 subagent session（`subagent_type` 非空）和相对路径 `working_dir`，匹配 `Path(working_dir).resolve() == cwd`，按 `updated_at`（回退 `created_at`）取最新。
+2. 扫描 `get_sessions_dir()` 下所有 `session.json`，过滤掉 subagent session（`subagent_type` 非空）和相对路径 `working_dir`，匹配 `Path(working_dir).resolve() == cwd`，按 `history.json` 的 mtime（最后一次存盘时间，回退 `created_at`）取最新。
 3. 无匹配则退化新建（打印 `无历史 session，新建`），流程同 `-t`。
-4. 有匹配则实例化 `Agent`（复用其 `session_id`，`Agent` 从 `history.json` 加载历史），恢复 `plan_mode` / `additional_dirs`，刷新 `updated_at` 回写 `session.json`。
+4. 有匹配则实例化 `Agent`（复用其 `session_id`，`Agent` 从 `history.json` 加载历史），恢复 `plan_mode` / `additional_dirs`。
 5. `attach_subscriber()` 拿队列 + 快照（**不回显历史**，只打印一条 `resumed · <name> · <working_dir>` 提示）。
 6. 进入 REPL 主循环。
 
-> `session.json` 新增 `updated_at` 字段（web 创建时亦写入），`-c` 续接时刷新，作为「最新 session」的排序依据。session 创建逻辑与 `POST /api/sessions` 端点一致，CLI 只是把「HTTP 请求驱动」换成「stdin 驱动」。
+> 「最新 session」按 `history.json` 的 mtime（最后一次存盘时间）排序，回退 `created_at`，web 与 CLI 的所有活动都自动反映，无需额外维护时间字段。session 创建逻辑与 `POST /api/sessions` 端点一致，CLI 只是把「HTTP 请求驱动」换成「stdin 驱动」。
 
 ## 三、交互模型：状态机
 
@@ -294,7 +294,7 @@ agent: <description> 退出 (state) ← subagent_state 事件
 
 - `-t` 新建 session；`-c` 续接当前目录最新的 session（无则新建）。session 目录在 `~/.config/trilobite/sessions/<uuid>/`。
 - `history.json`、`session.json`、`agent.log` 照常写入（与 web 模式完全一致），意味着 CLI 跑出的 session 之后能在 web 端侧边栏看到、点进去查看历史。
-- `session.json` 新增 `updated_at` 字段，`-c` 续接时刷新，用于排序「最新 session」。续接时 agent 加载 `history.json` 保持上下文，但终端不回显历史。
+- `session.json` 不额外维护时间字段；「最新 session」按 `history.json` 的 mtime（最后一次存盘时间）排序，回退 `created_at`，web 与 CLI 的所有活动都自动反映。续接时 agent 加载 `history.json` 保持上下文，但终端不回显历史。
 
 ## 八、实现位置
 
@@ -309,6 +309,6 @@ agent: <description> 退出 (state) ← subagent_state 事件
 
 1. **steering**：保留（常驻 reader 协程支持）。IDLE 输入蓝色重渲染；RUNNING 期间 steering 输入默认色回显、不做重渲染（避免与并发输出冲突）。接受此不一致。
 2. **token 用量**：每个 `usage` 事件打一行 dim `· <N> / <max> tokens`。
-3. **会话续接**：`-c` 续接当前目录最新的 session（按 `updated_at` 排序），agent 加载历史保持上下文；终端不回显历史（只显示 `resumed` 提示）。无历史 session 时退化为新建。
+3. **会话续接**：`-c` 续接当前目录最新的 session（按 `history.json` 的 mtime 排序），agent 加载历史保持上下文；终端不回显历史（只显示 `resumed` 提示）。无历史 session 时退化为新建。
 4. **plan/build 模式**：v1 固定 build 模式，不支持运行中切换。
 5. **Ctrl+C**：RUNNING 时 = `cancel()` 回 IDLE；IDLE 时 = 退出。与 `/stop` 等价（都走 `cancel()`，取消主 + 所有 subagent）。
