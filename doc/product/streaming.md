@@ -23,14 +23,14 @@ per-session 事件总线，维护：
 
 * `publish(event, history_len)`：广播事件；`turn` 开始累积缓冲，`done/cancelled/error` 结束 run，把 `persisted_len` 推进到当前历史长度并清空缓冲。
 * `commit(history_len)`：compaction 重写历史后调用，推进 `persisted_len` 并清空缓冲（避免重连时快照与回放重复）。
-* `attach(...)`：新客户端订阅——回放缓冲到其队列 + 返回 `init` 快照，整个过程持锁。
+* `attach(...)`：新客户端订阅--回放缓冲到其队列 + 返回 `init` 快照，整个过程持锁。
 * `detach(q)`：客户端断开时移除其队列。
 
 ### Agent (`src/trilobite/agent.py`)
 
 * `start(message)` / `steer(message)`：async，都 append 一条 user 消息并发 `user` 事件。`start` 停机时调用，启动新 run task；`steer` 仅 run 进行中调用，消息直接落 history，run 循环在下一个 turn 边界（续跑判断）拾取。
 * `run()`：不再接收 queue 参数，通过 `_send_stream_event` → `broker.publish` 广播；run 结束在 `finally` 中兜底清除 running 标志。
-* 工具执行不阻塞事件循环：`execute_tool` 仍是同步函数，但 `run()` 在调用处用 `asyncio.to_thread(...)` 把它丢到工作线程执行。所有 agent / subagent 共享同一个事件循环，若让阻塞调用直接在循环里跑，长 bash 命令会冻住整个循环——SSE 心跳发不出、新连接连 `init` 都拿不到、subagent 跑 bash 时主界面整体卡死（issue #5）。丢线程后循环保持响应；`task` 仍走 `await self._run_subagents`，`execute_tool` 本身不异步化。bash 内部用 `Popen`（`start_new_session=True`）启动命令，两个读取线程逐行 drain stdout/stderr，每行经 `on_output` 回调转发为 `tool_output` 事件流式推送到前端（工作线程通过 `asyncio.run_coroutine_threadsafe` 把事件调度回事件循环）；同时收集所有行用于最终拼接 `[stderr]`/`[exit code]` 标记并按 `max_output_lines`/`max_output_chars` 截断后作为 `tool_result` 返回。进程句柄经 `on_proc` 回注册到 agent，`interrupt()` 杀整个进程组让长命令立即返回再走总结（详见 subagent.md 的「bash 中断」）。
+* 工具执行不阻塞事件循环：`execute_tool` 仍是同步函数，但 `run()` 在调用处用 `asyncio.to_thread(...)` 把它丢到工作线程执行。所有 agent / subagent 共享同一个事件循环，若让阻塞调用直接在循环里跑，长 bash 命令会冻住整个循环--SSE 心跳发不出、新连接连 `init` 都拿不到、subagent 跑 bash 时主界面整体卡死（issue #5）。丢线程后循环保持响应；`task` 仍走 `await self._run_subagents`，`execute_tool` 本身不异步化。bash 内部用 `Popen`（`start_new_session=True`）启动命令，两个读取线程逐行 drain stdout/stderr，每行经 `on_output` 回调转发为 `tool_output` 事件流式推送到前端（工作线程通过 `asyncio.run_coroutine_threadsafe` 把事件调度回事件循环）；同时收集所有行用于最终拼接 `[stderr]`/`[exit code]` 标记并按 `max_output_lines`/`max_output_chars` 截断后作为 `tool_result` 返回。进程句柄经 `on_proc` 回注册到 agent，`interrupt()` 杀整个进程组让长命令立即返回再走总结（详见 subagent.md 的「bash 中断」）。
 * `attach_subscriber()` / `detach_subscriber(q)`：供 `/stream` 端点使用。
 * `is_running()`：基于 broker 状态（`start` 时即置 true，先于第一个 `turn` 事件）。
 
@@ -46,7 +46,7 @@ per-session 事件总线，维护：
 | `init` | `history, is_running, token_count, max_context_tokens, plan_mode, additional_dirs` | 连接时首发，前端据此重建对话与状态 |
 | `user` | `text, user_seq` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`user_seq` 为该消息在所有 user 消息中的序号 |
 | `user_edit` | `user_seq, text` | revert 编辑尚未被模型读取的 steer 消息时发（消息已在 history 但模型未读到），前端就地更新对应 user 气泡 |
-| `turn` | — | 一个 LLM 回合开始，置 `is_running=true` |
+| `turn` | -- | 一个 LLM 回合开始，置 `is_running=true` |
 | `thinking` | `text` | 思考增量 |
 | `text` | `text` | 正文增量 |
 | `tool_stream` | `tool_name, args, complete` | 工具参数流式 |
@@ -55,10 +55,10 @@ per-session 事件总线，维护：
 | `tool_result` | `tool, result, diff?` | 工具结果（`result` 经 `max_output_lines`/`max_output_chars` 截断后写入 history；`diff` 为 edit 的结构化行级 diff：`[{type, old, new, text}]`，带真实文件行号） |
 | `usage` | `token_count, max_context_tokens` | token 用量 |
 | `status` | `text` | 状态横幅（如 compaction） |
-| `plan_exit_request` | — | 请求退出 plan 模式 |
+| `plan_exit_request` | -- | 请求退出 plan 模式 |
 | `permission_request` | `path, tool, message` | 请求文件访问权限 |
-| `done` | — | run 正常结束，置 `is_running=false` |
-| `cancelled` | — | run 被取消，置 `is_running=false` |
+| `done` | -- | run 正常结束，置 `is_running=false` |
+| `cancelled` | -- | run 被取消，置 `is_running=false` |
 | `error` | `text, status_code?, error_type?, error_code?` | run 出错，置 `is_running=false` |
 
 ## 重连 / 多开一致性

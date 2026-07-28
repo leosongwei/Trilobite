@@ -79,7 +79,7 @@ subagent 的真实收益是 **省主 agent 上下文 + 并行**。我们用 Deep
 ### 阶段 1：声明式 agent 定义 + per-agent 权限
 
 - 在 `config.yaml` 增加 `agents` 段，每个 agent 定义 `{name, description, system_prompt(可选), mode, tools(允许列表), model(可选)}`。
-- 内置三个：`build`（primary，全工具）、`plan`（primary，只读）、`explore`（subagent，只 read/bash/grep-glob——我们暂时没有 grep/glob 工具，可先用 read+bash 替代）。
+- 内置三个：`build`（primary，全工具）、`plan`（primary，只读）、`explore`（subagent，只 read/bash/grep-glob--我们暂时没有 grep/glob 工具，可先用 read+bash 替代）。
 - `tool_call.py` 改造：`get_tool_definitions()` 和 `execute_tool()` 接受 `agent` 参数，按 agent 的 `tools` 白名单过滤。plan 模式的 write 拦截改成"plan agent 的 tools 不含 write"，统一机制。
 - 这一步不引入 subagent，但把"agent = 权限+prompt 的声明式单元"立起来，是后续基础。同时也顺手把 plan/build 模式收敛进同一套 agent 模型。
 
@@ -143,13 +143,13 @@ subagent 的真实收益是 **省主 agent 上下文 + 并行**。我们用 Deep
 
 ## 附：opencode 关键文件索引
 
-- `packages/opencode/src/tool/task.ts` — task 工具主体（前后台、深度、续跑、权限派生调用）
-- `packages/opencode/src/tool/task.txt` — task 工具描述（提示词工程，值得抄）
-- `packages/opencode/src/agent/subagent-permissions.ts` — 权限派生逻辑
-- `packages/core/src/plugin/agent.ts` — 内置 agent 定义（build/plan/general/explore/compaction/title/summary）
-- `packages/core/src/agent.ts` — agent 服务（selectable 过滤掉 subagent/hidden）
-- `packages/core/src/v1/config/agent.ts` — agent 配置 schema（mode/hidden/steps/permission 等）
-- `packages/core/src/v1/config/config.ts` — `subagent_depth` 配置
-- `packages/app/src/utils/session-route.ts` — 父子 session 上溯
-- `packages/app/src/pages/session/timeline/message-timeline.tsx` — task 卡片渲染 + 子 session 标题
-- `packages/opencode/src/session/prompt.ts` — @mention → task 调用转换
+- `packages/opencode/src/tool/task.ts` -- task 工具主体（前后台、深度、续跑、权限派生调用）
+- `packages/opencode/src/tool/task.txt` -- task 工具描述（提示词工程，值得抄）
+- `packages/opencode/src/agent/subagent-permissions.ts` -- 权限派生逻辑
+- `packages/core/src/plugin/agent.ts` -- 内置 agent 定义（build/plan/general/explore/compaction/title/summary）
+- `packages/core/src/agent.ts` -- agent 服务（selectable 过滤掉 subagent/hidden）
+- `packages/core/src/v1/config/agent.ts` -- agent 配置 schema（mode/hidden/steps/permission 等）
+- `packages/core/src/v1/config/config.ts` -- `subagent_depth` 配置
+- `packages/app/src/utils/session-route.ts` -- 父子 session 上溯
+- `packages/app/src/pages/session/timeline/message-timeline.tsx` -- task 卡片渲染 + 子 session 标题
+- `packages/opencode/src/session/prompt.ts` -- @mention → task 调用转换

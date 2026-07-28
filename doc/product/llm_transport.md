@@ -13,7 +13,7 @@ Agent 通过 HTTP 直接调用 OpenAI 兼容的 chat completions API（如 DeepS
 | Header | 值 | 说明 |
 |---|---|---|
 | `Authorization` | `Bearer <api_key>` | 认证 |
-| `Content-Type` | `application/json` | — |
+| `Content-Type` | `application/json` | -- |
 | `Accept` | `text/event-stream` | 流式请求需要 |
 | `User-Agent` | `opencode/1.18.4` | 伪装为 opencode |
 | `x-session-affinity` | `ses_xxxxxxxxxx...` | opencode 风格 session ID |
@@ -61,7 +61,7 @@ chunk.usage.total_tokens
 
 ## 非流式调用
 
-`Agent.chat_completion(messages, stream=False)` — 用于 compaction 等场景，返回 `resp.json()` 字典。
+`Agent.chat_completion(messages, stream=False)` -- 用于 compaction 等场景，返回 `resp.json()` 字典。
 
 ## 调试日志
 

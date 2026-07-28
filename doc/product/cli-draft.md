@@ -273,7 +273,7 @@ agent: <description> 退出 (state) ← subagent_state 事件
 | `src/trilobite/cli.py` | **新增**。CLI 入口 `run_cli(working_dir)`、REPL 主循环、`Renderer`、配色常量、工具调用/diff 格式化、交互提示。全部 async，跑在 `asyncio.run` 上。 |
 | `src/trilobite/server.py` | `main()` 改为 `argparse`：`-c` -> `asyncio.run(run_cli(...))`；否则原 `uvicorn.run(...)`。 |
 
-不改动 `agent.py` / `broker.py` / 工具层——CLI 是纯新增的订阅者 + 渲染器。
+不改动 `agent.py` / `broker.py` / 工具层--CLI 是纯新增的订阅者 + 渲染器。
 
 ## 九、待确认问题
 
