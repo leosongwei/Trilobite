@@ -489,7 +489,6 @@ class Agent:
 
     def _update_session_json(self, updates: dict):
         """Update fields in session.json."""
-        import json
         session_json = self.session_dir / "session.json"
         if session_json.exists():
             try:
@@ -498,6 +497,31 @@ class Agent:
                 session_json.write_text(json.dumps(info, indent=2))
             except Exception:
                 pass
+
+    def _maybe_auto_title(self, message: str) -> None:
+        """Auto-name the session from the first user message.
+
+        Takes the first 50 characters of the message (whitespace collapsed to
+        single spaces) as the session ``name``. Skipped once a title has been
+        set -- whether by this auto-naming or by a manual rename -- so re-runs
+        (e.g. reverting back to the first message) and user-chosen names are
+        preserved. The ``titled`` flag in session.json records this.
+        """
+        session_json = self.session_dir / "session.json"
+        if not session_json.exists():
+            return
+        try:
+            info = json.loads(session_json.read_text())
+        except Exception:
+            return
+        if info.get("titled"):
+            return
+        title = " ".join(message.split())[:50]
+        if not title:
+            return
+        info["name"] = title
+        info["titled"] = True
+        session_json.write_text(json.dumps(info, indent=2))
 
     async def _send_stream_event(self, event: dict):
         await self._broker.publish(event, len(self.history.raw))
@@ -1014,6 +1038,10 @@ class Agent:
         reconnecting client) renders it consistently.
         """
         user_seq = self._count_user_messages()
+        # Auto-title the session from the first user message (first 50 chars).
+        # Subagents carry a description instead and are never auto-titled.
+        if user_seq == 0 and self._subagent_type is None:
+            self._maybe_auto_title(message)
         self.add_user_message(message)
         self._broker.set_running(True)
         await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})

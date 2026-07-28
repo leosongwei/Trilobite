@@ -116,6 +116,9 @@ async def rename_session(name: str, req: RenameRequest):
         raise HTTPException(404, "Session not found")
     info = json.loads((session_dir / "session.json").read_text())
     info["name"] = req.name
+    # A manual rename finalizes the title: the auto-namer must not overwrite a
+    # user-chosen name on the first message.
+    info["titled"] = True
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
     return {"status": "ok", "name": req.name}
 
