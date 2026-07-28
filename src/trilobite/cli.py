@@ -61,6 +61,11 @@ def _orange(text: str) -> str:
     return _ansi("38;2;206;145;120", text)
 
 
+def _white(text: str) -> str:
+    # Force white explicitly: terminal default foreground varies by user config.
+    return _ansi("37", text)
+
+
 # --- event classification ----------------------------------------------------
 
 _TERMINAL = {"done", "cancelled", "error", "interrupted"}
@@ -150,7 +155,7 @@ class Renderer:
             self._last_stream = "text"
         elif t == "tool_output":
             # bash streams complete lines (newline already stripped upstream).
-            self.write(ev.get("text", "") + "\n")
+            self.write(_white(ev.get("text", "")) + "\n")
         elif t == "tool_start":
             self.block(_orange(f"[{_tool_call_str(ev.get('tool', '?'), ev.get('args') or {})}]") + "\n")
         elif t == "tool_result":
@@ -198,7 +203,7 @@ class Renderer:
             # suppressed.
             return
         text = ev.get("result", "")
-        self.block(text + ("" if text.endswith("\n") else "\n"))
+        self.block(_white(text) + ("" if text.endswith("\n") else "\n"))
 
     def _render_diff(self, diff: list) -> None:
         for row in diff:
