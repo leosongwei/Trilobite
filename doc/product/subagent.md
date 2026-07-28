@@ -223,7 +223,7 @@ Session 目录名是一个稳定的 UUID 标识（`id`），人可读的名字�
 ```
 sessions/
   <session_id>/               # 主 session（UUID 目录）
-    session.json              # name, working_dir, plan_mode, additional_dirs, created_at, session_id
+    session.json              # name, working_dir, plan_mode, additional_dirs, created_at, session_id, titled
     history.json
   <child_id>/                 # 子 session（UUID 目录，与父平级）
     session.json              # parent_session, subagent_type, depth, description, additional_dirs, created_at
@@ -232,6 +232,8 @@ sessions/
 ```
 
 子 session 的 `session.json` 记录 `parent_session`（父 session 的 `id`/UUID）、`subagent_type`、`depth`、`description`、`additional_dirs`、`created_at`（创建时间戳），用于前端标题、树归属、侧栏排序与权限目录持久化。扁平结构与现有 session 模型兼容。主 session 的 `session.json` 同样写入 `created_at`。`GET /api/sessions` 列表里每项带 `id`（目录名）与 `name`（人可读名）；改名走 `POST /api/sessions/{id}/rename`（只改 `name`，目录不动）。旧 session（目录名即人可读名）向后兼容：其 `id` 等于目录名。
+
+**会话自动命名**：主 session 创建时 `name` 默认取工作目录 basename。用户发出第一条消息时，`Agent.start` 取该消息的前 50 个字符（空白折叠为单空格）写回 `name`，并在 `session.json` 置 `titled: true`。`titled` 一旦为真就不再自动改名——既保证 revert 回退到首条消息重跑时幂等，也确保用户提前手动 rename（rename endpoint 同样置 `titled: true`）的选择不被覆盖。子 session 不参与自动命名（用 `description` 展示）。前端通过既有的 3 秒 `GET /api/sessions` 轮询感知 `name` 变化，无需额外事件。
 
 ### 运行期注册
 
