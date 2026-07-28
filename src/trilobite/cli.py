@@ -103,6 +103,16 @@ def _line_no(n) -> str:
     return str(n) if n is not None else ""
 
 
+def _usage_text(token_count: int, max_tokens: int) -> str:
+    """Token-usage line, matching the web TokenBar format."""
+    if max_tokens > 0:
+        pct = token_count / max_tokens * 100
+        return f"Tokens: {token_count:,} / {max_tokens:,} ({pct:.1f}%)"
+    if token_count > 0:
+        return f"Tokens: {token_count:,}"
+    return "Tokens: -"
+
+
 # --- renderer ----------------------------------------------------------------
 
 class Renderer:
@@ -150,7 +160,7 @@ class Renderer:
         elif t == "tool_result":
             self._render_tool_result(ev)
         elif t == "usage":
-            self.block(_dim(f"· {ev.get('token_count', 0)} / {ev.get('max_context_tokens', 0)} tokens\n"))
+            self.block(_dim(_usage_text(ev.get("token_count", 0), ev.get("max_context_tokens", 0)) + "\n"))
         elif t == "status":
             self.block(_yellow_dim(ev.get("text", "") + "\n"))
         elif t == "compact":

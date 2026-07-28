@@ -189,7 +189,7 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 | `tool_start` | 一行：`❯ <tool call>`（`❯` 前缀 dim，调用串白色）。见下「工具调用格式」 |
 | `tool_output` | 逐行流式追加（bash stdout/stderr），白色，每行末补 `\n` |
 | `tool_result` | 见下「工具结果渲染」 |
-| `usage` | 一行 dim：`· <N> / <max> tokens` |
+| `usage` | 一行 dim：`Tokens: <N> / <max> (<pct>%)`（与 web 端 TokenBar 同格式，千分位逗号 + 百分比） |
 | `status` | 横幅，黄色 dim |
 | `compact` | 横幅 `── context compacted ──`，dim |
 | `subagents` | 每个 child 一行 `agent: <desc> 启动`，dim |
@@ -308,7 +308,7 @@ agent: <description> 退出 (state) ← subagent_state 事件
 ## 九、设计决策
 
 1. **steering**：保留（常驻 reader 协程支持）。IDLE 输入蓝色重渲染；RUNNING 期间 steering 输入默认色回显、不做重渲染（避免与并发输出冲突）。接受此不一致。
-2. **token 用量**：每个 `usage` 事件打一行 dim `· <N> / <max> tokens`。
+2. **token 用量**：每个 `usage` 事件打一行 dim `Tokens: <N> / <max> (<pct>%)`，与 web 端 TokenBar 同格式。
 3. **会话续接**：`-c` 续接当前目录最新的 session（按 `history.json` 的 mtime 排序），agent 加载历史保持上下文；终端不回显历史（只显示 `resumed` 提示）。无历史 session 时退化为新建。
 4. **plan/build 模式**：v1 固定 build 模式，不支持运行中切换。
 5. **Ctrl+C**：RUNNING 时 = `cancel()` 回 IDLE；IDLE 时 = 退出。与 `/stop` 等价（都走 `cancel()`，取消主 + 所有 subagent）。
