@@ -4,7 +4,7 @@
 
 ## 一、概述
 
-Trilobite 目前只有 web 模式：启动 uvicorn 服务，前端 Vue 应用通过 SSE 订阅 agent 输出。本功能增加一个**不启动服务器**的命令行交互模式，用 `-c` 选项触发，以**命令执行目录**作为 agent 的 working dir，提供一个**类 bash** 的行式 REPL 界面（不是 opencode 那种 ncurses 全屏 TUI）。
+Trilobite 目前只有 web 模式：启动 uvicorn 服务，前端 Vue 应用通过 SSE 订阅 agent 输出。本功能增加一个**不启动服务器**的命令行交互模式，用 `-t`（新建会话）或 `-c`（续接当前目录最新会话）选项触发，以**命令执行目录**作为 agent 的 working dir，提供一个**类 bash** 的行式 REPL 界面（不是 opencode 那种 ncurses 全屏 TUI）。
 
 核心价值：在终端里快速起一个 coding agent 会话，无需开浏览器、无需占端口；适合 SSH 远程、无头环境、脚本化场景。
 
@@ -16,8 +16,10 @@ Trilobite 目前只有 web 模式：启动 uvicorn 服务，前端 Vue 应用通
 
 ### v1 范围（本次实现）
 
-- ✅ `trilobite -c [working_dir]` 启动 CLI；不带 `-c` 时行为不变（启动 web 服务器）。
-- ✅ 以 cwd（或指定目录）为 working dir，每次启动新建一个 session。
+- ✅ `trilobite -s` 启动 web 服务器（默认，无参等价于 `-s`）。
+- ✅ `trilobite -t [working_dir]` CLI 新建 session，working dir = 指定目录或 cwd。
+- ✅ `trilobite -c` CLI 续接当前目录（cwd）最新的 session；无历史 session 时退化为新建。
+- ✅ `-t` 以 cwd（或指定目录）为 working dir 新建 session。
 - ✅ 类 bash REPL：输入消息 -> agent 运行 -> 流式输出 -> 输入下一条。
 - ✅ 彩色输出（见第四节）。
 - ✅ inline diff 渲染（复用 web 端 inline 版本的 diff 行结构）。
@@ -31,7 +33,7 @@ Trilobite 目前只有 web 模式：启动 uvicorn 服务，前端 Vue 应用通
 
 - ❌ **Markdown 解析**：终端原样输出纯文本，不做 Markdown / 代码块 / 公式渲染。
 - ❌ **subagent 交互**：不切换 / 查看子 session、不单独中断某个 subagent。subagent 自然跑完，或由 `/stop` 连带取消（与 web 端主 session stop 行为一致）。subagent 的内部 thinking / 工具调用**不**在 CLI 主界面展示，只展示「启动 / 退出」两行（见第六节）。
-- ❌ **会话恢复**：每次 `-c` 新建 session，不恢复历史 session（历史仍持久化到磁盘，只是 CLI 不读回）。
+- ❌ **历史回显**：`-c` 续接时加载历史供 agent 保持上下文，但终端**不回显**历史消息（只显示一条 `resumed` 提示，从当前继续）。完整历史仍可在 web 端查看。
 - ❌ **ncurses / 全屏 TUI**：不接管终端、不做分屏面板。
 - ❌ **plan/build 模式切换**（Tab）：v1 不支持运行中切换模式（沿用 session 创建时的 build 模式）。
 
@@ -40,29 +42,44 @@ Trilobite 目前只有 web 模式：启动 uvicorn 服务，前端 Vue 应用通
 ### 命令行
 
 ```
-trilobite                # 启动 web 服务器（原有行为，不变）
-trilobite -c             # CLI 模式，working dir = cwd
-trilobite -c <dir>       # CLI 模式，working dir = <dir>
+trilobite                # 启动 web 服务器（默认，等价于 -s）
+trilobite -s             # 启动 web 服务器
+trilobite -t             # CLI 新建 session，working dir = cwd
+trilobite -t <dir>       # CLI 新建 session，working dir = <dir>
+trilobite -c             # CLI 续接当前目录最新的 session
 ```
 
-`server.py:main()` 改为用 `argparse` 解析参数：
+`server.py:main()` 用 `argparse` 解析参数，`-s` / `-t` / `-c` 互斥：
 
 | 参数 | 说明 |
 |---|---|
-| `-c`, `--cli` | 进入 CLI 模式 |
-| `[working_dir]`（位置参数，可选） | CLI 模式的 working dir，默认 `os.getcwd()` |
+| `-s`, `--server` | 启动 web 服务器（默认） |
+| `-t`, `--cli` | CLI 新建 session |
+| `-c`, `--continue` | CLI 续接当前目录（cwd）最新的 session |
+| `[working_dir]`（位置参数，可选） | `-t` 模式的 working dir，默认 cwd；`-c` 忽略，固定用 cwd |
 
-不带 `-c` 时走原有 `uvicorn.run(...)` 路径，**完全向后兼容**。
+无参等价于 `-s`，走 `uvicorn.run(...)` 路径，**完全向后兼容**。
 
 ### 启动流程（CLI 模式）
 
+`-t`（新建）与 `-c`（续接）共用 REPL，区别仅在 session 的获取：
+
+**`-t` 新建**：
 1. `init_config()` 加载配置（与 web 模式共用 `~/.config/trilobite/config.yaml`）。
-2. 在 `get_sessions_dir()` 下新建一个 session 目录（`uuid4().hex`），写 `session.json`（`working_dir`、`plan_mode: false`、`additional_dirs: []`）。
-3. 实例化 `Agent`（与 `server.py` 创建 session 时完全相同的参数：`name`、`working_dir`、`session_dir`、`config`、`registry`）。
+2. 在 `get_sessions_dir()` 下新建一个 session 目录（`uuid4().hex`），写 `session.json`（`working_dir` 解析为绝对路径、`plan_mode: false`、`additional_dirs: []`、`created_at` / `updated_at`）。
+3. 实例化 `Agent`（与 `POST /api/sessions` 相同的参数：`name`、`working_dir`、`session_dir`、`config`、`registry`），回写 `session_id`。
 4. `await agent.attach_subscriber()` 拿到事件队列 + `init` 快照（新 session 历史为空）。
 5. 进入 REPL 主循环（见第三节）。
 
-> session 的创建逻辑与 `POST /api/sessions` 端点一致，CLI 只是把「HTTP 请求驱动」换成「stdin 驱动」。
+**`-c` 续接**：
+1. `init_config()`，取 `cwd`。
+2. 扫描 `get_sessions_dir()` 下所有 `session.json`，过滤掉 subagent session（`subagent_type` 非空）和相对路径 `working_dir`，匹配 `Path(working_dir).resolve() == cwd`，按 `updated_at`（回退 `created_at`）取最新。
+3. 无匹配则退化新建（打印 `无历史 session，新建`），流程同 `-t`。
+4. 有匹配则实例化 `Agent`（复用其 `session_id`，`Agent` 从 `history.json` 加载历史），恢复 `plan_mode` / `additional_dirs`，刷新 `updated_at` 回写 `session.json`。
+5. `attach_subscriber()` 拿队列 + 快照（**不回显历史**，只打印一条 `resumed · <name> · <working_dir>` 提示）。
+6. 进入 REPL 主循环。
+
+> `session.json` 新增 `updated_at` 字段（web 创建时亦写入），`-c` 续接时刷新，作为「最新 session」的排序依据。session 创建逻辑与 `POST /api/sessions` 端点一致，CLI 只是把「HTTP 请求驱动」换成「stdin 驱动」。
 
 ## 三、交互模型：状态机
 
@@ -275,16 +292,16 @@ agent: <description> 退出 (state) ← subagent_state 事件
 
 ## 七、会话与持久化
 
-- 每次 `-c` 新建 session（`~/.config/trilobite/sessions/<uuid>/`）。
+- `-t` 新建 session；`-c` 续接当前目录最新的 session（无则新建）。session 目录在 `~/.config/trilobite/sessions/<uuid>/`。
 - `history.json`、`session.json`、`agent.log` 照常写入（与 web 模式完全一致），意味着 CLI 跑出的 session 之后能在 web 端侧边栏看到、点进去查看历史。
-- CLI 不读取 / 恢复已有 session（v1 non-goal）。
+- `session.json` 新增 `updated_at` 字段，`-c` 续接时刷新，用于排序「最新 session」。续接时 agent 加载 `history.json` 保持上下文，但终端不回显历史。
 
 ## 八、实现位置
 
 | 文件 | 改动 |
 |---|---|
-| `src/trilobite/cli.py` | **新增**。CLI 入口 `run_cli(working_dir)`、REPL 主循环、`Renderer`、配色常量、工具调用/diff 格式化、交互提示。全部 async，跑在 `asyncio.run` 上。 |
-| `src/trilobite/server.py` | `main()` 改为 `argparse`：`-c` -> `asyncio.run(run_cli(...))`；否则原 `uvicorn.run(...)`。 |
+| `src/trilobite/cli.py` | **新增**。CLI 入口 `run_cli(working_dir, resume)`、session 查找/创建、REPL 主循环、`Renderer`、配色常量、工具调用/diff 格式化、交互提示。全部 async，跑在 `asyncio.run` 上。 |
+| `src/trilobite/server.py` | `main()` 用 `argparse`：`-s`（默认）-> `uvicorn.run`；`-t` -> `run_cli(..., resume=False)`；`-c` -> `run_cli(None, resume=True)`。 |
 
 不改动 `agent.py` / `broker.py` / 工具层--CLI 是纯新增的订阅者 + 渲染器。唯一例外：给 `Agent` 加一个极小的 `async def aclose()`（关闭其 httpx client），CLI 退出时调用；web 模式 agent 常驻进程、无需调用，行为不变。
 
@@ -292,6 +309,6 @@ agent: <description> 退出 (state) ← subagent_state 事件
 
 1. **steering**：保留（常驻 reader 协程支持）。IDLE 输入蓝色重渲染；RUNNING 期间 steering 输入默认色回显、不做重渲染（避免与并发输出冲突）。接受此不一致。
 2. **token 用量**：每个 `usage` 事件打一行 dim `· <N> / <max> tokens`。
-3. **会话恢复**：v1 不做。每次 `-c` 新建 session。`-c --resume` 留作后续。
+3. **会话续接**：`-c` 续接当前目录最新的 session（按 `updated_at` 排序），agent 加载历史保持上下文；终端不回显历史（只显示 `resumed` 提示）。无历史 session 时退化为新建。
 4. **plan/build 模式**：v1 固定 build 模式，不支持运行中切换。
 5. **Ctrl+C**：RUNNING 时 = `cancel()` 回 IDLE；IDLE 时 = 退出。与 `/stop` 等价（都走 `cancel()`，取消主 + 所有 subagent）。

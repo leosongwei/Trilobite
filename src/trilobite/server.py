@@ -93,7 +93,8 @@ async def create_session(req: SessionCreate):
     session_dir = get_sessions_dir() / session_id
 
     session_dir.mkdir(parents=True, exist_ok=True)
-    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": time.time()}
+    now = time.time()
+    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": now, "updated_at": now}
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 
     agent = Agent(
@@ -395,20 +396,34 @@ app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(prog="trilobite", description="Trilobite coding agent.")
-    parser.add_argument("-c", "--cli", action="store_true", help="启动命令行交互模式（不启动 web 服务器）")
-    parser.add_argument("working_dir", nargs="?", default=None, help="CLI 模式的 working dir，默认 cwd")
+    parser = argparse.ArgumentParser(
+        prog="trilobite",
+        description="Trilobite coding agent. 默认启动 web 服务器。",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("-s", "--server", action="store_true", help="启动 web 服务器（默认）")
+    mode.add_argument("-t", "--cli", dest="cli_new", action="store_true", help="命令行交互模式，新建 session")
+    mode.add_argument("-c", "--continue", dest="cli_continue", action="store_true", help="命令行交互模式，续接当前目录最新的 session")
+    parser.add_argument("working_dir", nargs="?", default=None, help="-t 模式的 working dir，默认 cwd")
     args = parser.parse_args()
 
-    if args.cli:
+    if args.cli_new:
         import asyncio
         import os
 
         from src.trilobite.cli import run_cli
 
-        asyncio.run(run_cli(args.working_dir or os.getcwd()))
+        asyncio.run(run_cli(args.working_dir or os.getcwd(), resume=False))
+        return
+    if args.cli_continue:
+        import asyncio
+
+        from src.trilobite.cli import run_cli
+
+        asyncio.run(run_cli(None, resume=True))
         return
 
+    # default (no args or -s): web server
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=2345)
 

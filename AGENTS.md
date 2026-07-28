@@ -6,7 +6,7 @@ Trilobite 是一个基于 DeepSeek 的 coding agent，分为 **后端 (Python/Fa
 ## 后端 (`src/trilobite/`)
 
 * `server.py` - FastAPI 应用入口。`POST /message` 启动/转向 agent（返回 JSON，agent 作为独立 task 运行，关闭浏览器不会取消运行）；`GET /stream` SSE 订阅端点广播实时输出；挂载静态前端文件。`main()` 用 argparse 分发：`-c` 进入 CLI 模式，否则启动 uvicorn。
-* `cli.py` -- 命令行交互模式（`trilobite -c [working_dir]`）。纯订阅者 + 渲染器：实例化 `Agent`、`attach_subscriber()` 订阅 broker 队列（与 SSE `/stream` 同构），把事件渲染到终端。类 bash REPL：常驻 stdin reader 协程喂 `asyncio.Queue`，IDLE 读输入、RUNNING 用 `asyncio.wait` 多路复用 broker 事件 / stdin（steering）/ Ctrl+C（cancel）。不改动 agent/broker/工具层。详见 `doc/product/cli-draft.md`。
+* `cli.py` -- 命令行交互模式（`trilobite -t` 新建 / `-c` 续接当前目录最新 session / `-s` 服务器为默认）。纯订阅者 + 渲染器：实例化 `Agent`、`attach_subscriber()` 订阅 broker 队列（与 SSE `/stream` 同构），把事件渲染到终端。类 bash REPL：常驻 stdin reader 协程喂 `asyncio.Queue`，IDLE 读输入、RUNNING 用 `asyncio.wait` 多路复用 broker 事件 / stdin（steering）/ Ctrl+C（cancel）。`-c` 按 `session.json` 的 `updated_at` 找当前目录最新主 session 续接（加载历史、不回显）。不改动 agent/broker/工具层。详见 `doc/product/cli.md`。
 * `agent.py` -- 核心 Agent 类。管理会话生命周期：加载 working context (`AGENTS.md`)，与 LLM 流式对话，循环执行 tool calls，支持 plan/build 双模式切换和用户 steering。
 * `broker.py` - 流式事件总线（StreamBroker）。解耦 agent 运行与 HTTP 请求：事件广播到所有订阅者，维护当前 run 的回放缓冲和已提交历史长度（`persisted_len`），支持浏览器多开、关闭重开、切 tab 恢复。详见 `doc/product/streaming.md`。
 * `history.py` -- 对话历史管理。持久化到 JSON 文件，提供 API 调用的消息合并（连续同 role 消息合并避免 API 报错）。

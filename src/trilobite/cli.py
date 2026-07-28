@@ -17,6 +17,7 @@ import signal
 import sys
 import time
 import uuid
+from pathlib import Path
 
 from src.trilobite.agent import Agent
 from src.trilobite.config import get_sessions_dir, init_config
@@ -356,38 +357,124 @@ async def _stdin_pump(reader: asyncio.StreamReader, q: asyncio.Queue) -> None:
         await q.put(line.decode("utf-8", "replace").rstrip("\n"))
 
 
-async def run_cli(working_dir: str) -> None:
-    config = init_config()
+def _write_session_json(session_dir: Path, info: dict) -> None:
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2, ensure_ascii=False))
 
-    # Create a session exactly like POST /api/sessions: a UUID directory with a
-    # session.json, then an Agent over it.
+
+def _create_session(working_dir: str) -> tuple[Path, dict]:
+    """Create a new session dir + session.json, mirroring POST /api/sessions."""
+    working_dir = str(Path(working_dir).resolve())
     name = os.path.basename(working_dir) or "cli"
-    session_id = uuid.uuid4().hex
-    session_dir = get_sessions_dir() / session_id
+    session_dir = get_sessions_dir() / uuid.uuid4().hex
     session_dir.mkdir(parents=True, exist_ok=True)
+    now = time.time()
     info = {
         "name": name,
         "working_dir": working_dir,
         "plan_mode": False,
         "additional_dirs": [],
-        "created_at": time.time(),
+        "created_at": now,
+        "updated_at": now,
     }
-    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+    _write_session_json(session_dir, info)
+    return session_dir, info
 
+
+def _find_latest_session(cwd: Path) -> tuple[Path | None, dict | None]:
+    """Most recently used *main* session whose working_dir resolves to ``cwd``.
+
+    Subagent sessions (``subagent_type`` set) are skipped; only top-level
+    sessions are continuable from the CLI.
+    """
+    target = cwd.resolve()
+    best_dir: Path | None = None
+    best_info: dict | None = None
+    best_ts = -1.0
+    for d in get_sessions_dir().iterdir():
+        sj = d / "session.json"
+        if not sj.is_file():
+            continue
+        try:
+            info = json.loads(sj.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if info.get("subagent_type"):  # skip subagent sessions
+            continue
+        wd = info.get("working_dir")
+        # Only absolute paths can be reliably matched to a cwd; a relative
+        # working_dir would resolve against the *current* cwd and match wrongly.
+        if not wd or not Path(wd).is_absolute():
+            continue
+        try:
+            if Path(wd).resolve() != target:
+                continue
+        except OSError:
+            continue
+        ts = info.get("updated_at") or info.get("created_at") or 0
+        if ts > best_ts:
+            best_ts = ts
+            best_dir = d
+            best_info = info
+    return best_dir, best_info
+
+
+async def _make_agent(
+    config: dict, session_dir: Path, info: dict, *, resume: bool
+) -> tuple[Agent, asyncio.Queue]:
+    """Instantiate an Agent over a session dir and subscribe to its broker.
+
+    On resume the Agent loads the existing history.json; ``session_id`` is
+    reused and persisted plan_mode / additional_dirs are restored.
+    """
     registry: dict[str, Agent] = {}
     agent = Agent(
-        name=session_id,
-        working_dir=working_dir,
+        name=session_dir.name,
+        working_dir=info["working_dir"],
         session_dir=session_dir,
         config=config,
+        session_id=info.get("session_id"),
         registry=registry,
     )
     registry[agent.name] = agent
-    info["session_id"] = agent.session_id
-    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
-
+    if resume:
+        if info.get("additional_dirs"):
+            agent.set_additional_dirs(info["additional_dirs"])
+        if info.get("plan_mode"):
+            agent.set_plan_mode(info["plan_mode"])
     queue, _snapshot = await agent.attach_subscriber()
+    return agent, queue
 
+
+async def run_cli(working_dir: str | None, resume: bool) -> None:
+    config = init_config()
+
+    if resume:
+        cwd = Path.cwd()
+        session_dir, info = _find_latest_session(cwd)
+        if session_dir is None:
+            sys.stdout.write(_dim(f"# {cwd} 无历史 session，新建\n"))
+            sys.stdout.flush()
+            session_dir, info = _create_session(str(cwd))
+            agent, queue = await _make_agent(config, session_dir, info, resume=False)
+            info["session_id"] = agent.session_id
+            _write_session_json(session_dir, info)
+            banner = f"# trilobite cli · {info['working_dir']}"
+        else:
+            agent, queue = await _make_agent(config, session_dir, info, resume=True)
+            info["updated_at"] = time.time()
+            _write_session_json(session_dir, info)
+            banner = f"# resumed · {info.get('name', session_dir.name)} · {info.get('working_dir', cwd)}"
+    else:
+        session_dir, info = _create_session(working_dir)
+        agent, queue = await _make_agent(config, session_dir, info, resume=False)
+        info["session_id"] = agent.session_id
+        _write_session_json(session_dir, info)
+        banner = f"# trilobite cli · {info['working_dir']}"
+
+    await _repl(agent, queue, banner)
+
+
+async def _repl(agent: Agent, queue: asyncio.Queue, banner: str) -> None:
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
@@ -403,7 +490,7 @@ async def run_cli(working_dir: str) -> None:
         pass
 
     renderer = Renderer()
-    sys.stdout.write(_dim(f"# trilobite cli · {working_dir} · Ctrl+C 中断 / /exit 退出\n"))
+    sys.stdout.write(_dim(f"{banner} · Ctrl+C 中断 / /exit 退出\n"))
     sys.stdout.flush()
     renderer.at_line_start = True
 
