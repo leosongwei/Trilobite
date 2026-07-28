@@ -393,6 +393,22 @@ app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True
 
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="trilobite", description="Trilobite coding agent.")
+    parser.add_argument("-c", "--cli", action="store_true", help="启动命令行交互模式（不启动 web 服务器）")
+    parser.add_argument("working_dir", nargs="?", default=None, help="CLI 模式的 working dir，默认 cwd")
+    args = parser.parse_args()
+
+    if args.cli:
+        import asyncio
+        import os
+
+        from src.trilobite.cli import run_cli
+
+        asyncio.run(run_cli(args.working_dir or os.getcwd()))
+        return
+
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=2345)
 

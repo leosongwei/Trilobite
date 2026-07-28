@@ -1,6 +1,6 @@
 # CLI 模式（命令行交互）
 
-> 状态：**设计稿，待审核**。审核通过后再实现。本文是 CLI 模式的产品规格。
+> 状态：**实现规格**。本文是 CLI 模式的产品规格，据此实现。
 
 ## 一、概述
 
@@ -25,6 +25,7 @@ Trilobite 目前只有 web 模式：启动 uvicorn 服务，前端 Vue 应用通
 - ✅ 运行中可输入消息 steering（中途引导）。
 - ✅ 权限请求 / plan 退出请求：交互式 y/n 提示。
 - ✅ `/exit`、`/quit`、Ctrl+D 退出。
+- ✅ Ctrl+C：RUNNING 时中断当前 run 回 IDLE，IDLE 时退出 CLI。
 
 ### v1 不做的事（non-goals）
 
@@ -77,11 +78,10 @@ CLI 是一个两状态循环：
           ▼                                      ▼
         ┌──────────────────────────────────┐
         │  RUNNING（运行中）                 │
-        │  事件消费者：渲染 broker 事件       │
-        │  输入读取器：并发轮询 stdin         │
-        │    /stop  -> cancel                │
-        │    /exit  -> cancel + 退出         │
-        │    其他    -> steer                │
+        │  单消费者多路复用：                 │
+        │    broker 事件 -> 渲染             │
+        │    stdin 行   -> steer/stop/exit  │
+        │    Ctrl+C     -> cancel 回 IDLE   │
         └──────────────────────────────────┘
           │ 收到 done/cancelled/error/interrupted
           └──────────────────────────────────┘
@@ -101,25 +101,36 @@ CLI 是一个两状态循环：
 | Ctrl+D（EOF） | 退出 CLI |
 | 其他非空 | `await agent.start(text)`，进入 RUNNING |
 
-**人类输入蓝色**：IDLE 时无并发输出，输入回车后用 ANSI 把该行重渲染为蓝色（`input()` 先以默认色回显，回车后 `\033[A\033[2K` 上移清行，重写蓝色 `❯ <text>`）。仅 IDLE 做此重渲染（无并发，安全）。
+**人类输入蓝色**：IDLE 时无并发输出，输入回车后用 ANSI 把该行重渲染为蓝色（终端先以默认色回显，回车后 `\033[A\033[2K` 上移清行，重写蓝色 `❯ <text>`）。仅 IDLE 做此重渲染（无并发，安全）。
 
 ### RUNNING 状态
 
-进入 RUNNING 后，两个协程并发：
+进入 RUNNING 后，**单个消费者协程**多路复用三个源：
 
-1. **事件消费者**：从 broker 队列取事件并渲染（见第四节）。遇到 `permission_request` / `plan_exit_request` / `subagent_permission_request` 时，把问题投递给输入读取器统一处理（见第五节）。遇到 `done` / `cancelled` / `error` / `interrupted` 时结束本 run，回到 IDLE。
-2. **输入读取器**：用 `select` 以 0.2s 超时轮询 stdin（这样能在 run 结束时及时退出，不会被阻塞的 `input()` 卡住）。读取到的行：
+```
+await asyncio.wait(
+    {broker_q.get(), stdin_q.get(), sigint.wait()},
+    return_when=FIRST_COMPLETED,
+)
+```
+
+每轮取最先就绪的那个处理，未就绪的 future 取消（cancel 一个尚未就绪的 `Queue.get()` 不会丢数据）：
+
+- **broker 事件**：渲染（见第四节）。`permission_request` / `plan_exit_request` / `subagent_permission_request` 时，此刻 agent 阻塞在 `Event.wait()`、无并发输出，消费者直接 `await stdin_q.get()` 读 y/n 再 resolve（它是 stdin 的唯一持有者，天然串行，见第五节）。`done` / `cancelled` / `error` / `interrupted` 时结束本 run，回 IDLE。
+- **stdin 行**：
 
    | 输入 | 行为 |
    |---|---|
    | `/stop` | `agent.cancel()`（取消主 + 所有 subagent） |
    | `/exit`、`/quit` | `agent.cancel()` + 标记退出 |
-   | Ctrl+D | 同 `/exit` |
+   | Ctrl+D（EOF） | 同 `/exit` |
    | 其他非空 | `await agent.steer(text)`（中途引导） |
 
-   RUNNING 期间**不显示提示符**（类 bash：命令运行时不显示新提示）。用户直接输入，终端默认回显。steering 输入以默认色回显即可（不做蓝色重渲染，避免与并发输出冲突）。
+- **Ctrl+C（SIGINT）**：`agent.cancel()`，消费者继续从 broker_q 取到 `cancelled` 终结事件后回 IDLE（不退出）。
 
-> **为什么用 select 轮询而非 `input()`**：`/stop` 需要在 run 进行中输入，而 `input()` 会阻塞线程且无法在 run 结束时取消。`select(stdin, timeout=0.2)` 每 0.2s 醒来一次检查 run 是否结束，既支持中途输入，又能在 `done` 后及时返回 IDLE。
+RUNNING 期间**不显示提示符**（类 bash：命令运行时不显示新提示）。用户直接输入，终端默认回显。steering 输入以默认色回显（不做蓝色重渲染，避免与并发输出冲突）。
+
+> **为什么用常驻 reader 协程而非 `input()`**：steering / `/stop` 需要在 run 进行中输入，而 `input()` 阻塞线程且无法与 broker 事件多路复用。启动时用 `loop.connect_read_pipe` 把 stdin 接入事件循环得到一个 `asyncio.StreamReader`，一个 `stdin_pump` 协程 `await reader.readline()` 不断把行塞进 `stdin_q`（进程级唯一 stdin 读者，无竞争）。RUNNING 消费者用 `asyncio.wait` 把 broker 事件和 stdin 行合并等待，既支持中途 steering，又能在 `done` 后立即回 IDLE。这与 web 端架构同构：stdin reader 取代 HTTP 端点作为 steering 输入通道。
 
 ### 退出
 
@@ -228,11 +239,11 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 | `plan_exit_request` | （请求退出 plan 模式） | `agent.resolve_plan_exit(approved)` |
 | `subagent_permission_request` | `child_description`、`path`、`tool` | `agent.resolve_permission(approved)`（权限落在父 agent 上） |
 
-### 串行化 stdin
+### stdin 串行化
 
-RUNNING 期间事件消费者与输入读取器并发，但**只有输入读取器拥有 stdin**。事件消费者遇到需交互的事件时，把「问题」投递到一个 `asyncio.Queue`，输入读取器在下一轮轮询前优先取出并提问（打印提示 + 读 y/n + 解析）。这样避免两个协程争抢 stdin。
+RUNNING 期间只有一个消费者协程，且 `stdin_q` 同一时刻只有一个 `get()` 在等待（多路复用里未就绪的 future 会被取消）。遇到需交互的事件时，消费者直接 `await stdin_q.get()` 读 y/n —— 此刻它是 stdin 的唯一持有者，天然串行，无需额外队列。
 
-由于这些事件发生时 agent 正阻塞等待决议（`_permission_event.wait()` / `_plan_exit_event.wait()`），期间不会有其他输出流，提示能干净地显示。输入读取器的 0.2s 轮询保证问题在 0.2s 内被取出。
+由于这些事件发生时 agent 正阻塞等待决议（`_permission_event.wait()` / `_plan_exit_event.wait()`），期间不会有其他输出流，提示能干净地显示。
 
 提示格式（黄色）：
 
@@ -273,12 +284,12 @@ agent: <description> 退出 (state) ← subagent_state 事件
 | `src/trilobite/cli.py` | **新增**。CLI 入口 `run_cli(working_dir)`、REPL 主循环、`Renderer`、配色常量、工具调用/diff 格式化、交互提示。全部 async，跑在 `asyncio.run` 上。 |
 | `src/trilobite/server.py` | `main()` 改为 `argparse`：`-c` -> `asyncio.run(run_cli(...))`；否则原 `uvicorn.run(...)`。 |
 
-不改动 `agent.py` / `broker.py` / 工具层--CLI 是纯新增的订阅者 + 渲染器。
+不改动 `agent.py` / `broker.py` / 工具层--CLI 是纯新增的订阅者 + 渲染器。唯一例外：给 `Agent` 加一个极小的 `async def aclose()`（关闭其 httpx client），CLI 退出时调用；web 模式 agent 常驻进程、无需调用，行为不变。
 
-## 九、待确认问题
+## 九、设计决策
 
-1. **steering 输入颜色**：IDLE 输入蓝色（重渲染），但 RUNNING 期间的 steering 输入因并发输出不做重渲染，呈默认色。是否接受此不一致？还是 RUNNING 期间干脆不支持 steering（更纯粹的 bash 体验，只保留 `/stop`）？
-2. **token 用量**：是否每个 turn 都打一行 dim 用量？还是只在超过阈值（如 70%）时提示？还是完全不显示？
-3. **会话恢复**：v1 不恢复，但是否需要一个 `-c --resume <session>` 或列出最近 session 选择的入口？（建议 v1 不做，留作后续。）
-4. **plan/build 模式**：v1 固定 build 模式。是否需要 CLI 下也支持 Tab 切换或 `/plan`、`/build` 指令？（建议 v1 不做。）
-5. **`/stop` vs Ctrl+C**：`/stop` 走 `cancel()`（与 web stop 一致）。Ctrl+C（SIGINT）是否也绑定为同样的 cancel？还是 Ctrl+C 直接强退进程？（建议：Ctrl+C = cancel 当前 run 后回 IDLE，连按两次退出；与 `/stop` 等价。）
+1. **steering**：保留（常驻 reader 协程支持）。IDLE 输入蓝色重渲染；RUNNING 期间 steering 输入默认色回显、不做重渲染（避免与并发输出冲突）。接受此不一致。
+2. **token 用量**：每个 `usage` 事件打一行 dim `· <N> / <max> tokens`。
+3. **会话恢复**：v1 不做。每次 `-c` 新建 session。`-c --resume` 留作后续。
+4. **plan/build 模式**：v1 固定 build 模式，不支持运行中切换。
+5. **Ctrl+C**：RUNNING 时 = `cancel()` 回 IDLE；IDLE 时 = 退出。与 `/stop` 等价（都走 `cancel()`，取消主 + 所有 subagent）。

@@ -1,0 +1,440 @@
+"""Command-line interactive mode for Trilobite.
+
+A non-HTTP, bash-style REPL that drives the same ``Agent`` the web server
+uses. The CLI is a pure subscriber + renderer: it instantiates an ``Agent``,
+subscribes to its ``StreamBroker`` queue (exactly like the SSE ``/stream``
+endpoint) and renders events to the terminal. No agent / broker / tool logic
+is duplicated.
+
+Run via ``trilobite -c [working_dir]`` (wired up in ``server.main``).
+"""
+
+import asyncio
+import json
+import os
+import re
+import signal
+import sys
+import time
+import uuid
+
+from src.trilobite.agent import Agent
+from src.trilobite.config import get_sessions_dir, init_config
+
+
+# --- ANSI colors -------------------------------------------------------------
+
+_COLOR = sys.stdout.isatty()
+
+
+def _ansi(codes: str, text: str) -> str:
+    return f"\033[{codes}m{text}\033[0m" if _COLOR else text
+
+
+def _blue(text: str) -> str:
+    return _ansi("34", text)
+
+
+def _green(text: str) -> str:
+    return _ansi("32", text)
+
+
+def _red(text: str) -> str:
+    return _ansi("31", text)
+
+
+def _yellow(text: str) -> str:
+    return _ansi("33", text)
+
+
+def _dim(text: str) -> str:
+    return _ansi("2", text)
+
+
+def _yellow_dim(text: str) -> str:
+    return _ansi("2;33", text)
+
+
+# --- event classification ----------------------------------------------------
+
+_TERMINAL = {"done", "cancelled", "error", "interrupted"}
+_INTERACTIVE = {"permission_request", "plan_exit_request", "subagent_permission_request"}
+_EXIT_CODE_RE = re.compile(r"\[exit code: (-?\d+)\]")
+
+
+# --- tool call / diff formatting --------------------------------------------
+
+def _tool_call_str(tool: str, args: dict) -> str:
+    """A one-line, human-readable summary of a tool call's most relevant args."""
+    if tool == "bash":
+        return f"bash$ {args.get('command', '')}"
+    if tool == "read":
+        s = f"read {args.get('filename', '')}"
+        extras = []
+        if "start_line" in args:
+            extras.append(f"start={args['start_line']}")
+        if "limit_lines" in args:
+            extras.append(f"lines={args['limit_lines']}")
+        if "limit_chars" in args:
+            extras.append(f"chars={args['limit_chars']}")
+        if extras:
+            s += f" ({', '.join(extras)})"
+        return s
+    if tool == "edit":
+        return f"edit {args.get('filename', '')}"
+    if tool == "write":
+        return f"write {args.get('filename', '')} [{args.get('mode', 'overwrite')}]"
+    if tool == "glob":
+        return f"glob {args.get('pattern', '')}"
+    if tool == "grep":
+        return f"grep {args.get('pattern', '')}"
+    if tool == "TodoList":
+        return "TodoList"
+    if tool == "task":
+        tasks = args.get("tasks") or []
+        return f"task ({len(tasks)} subagents)"
+    if tool == "exit_plan_mode":
+        return "exit_plan_mode"
+    return tool
+
+
+def _line_no(n) -> str:
+    return str(n) if n is not None else ""
+
+
+# --- renderer ----------------------------------------------------------------
+
+class Renderer:
+    """Renders broker events to stdout, tracking whether the cursor sits at the
+    start of a line so block events can be placed on their own line."""
+
+    def __init__(self) -> None:
+        self.at_line_start = True
+        self._subagent_desc: dict[str, str] = {}
+
+    def write(self, text: str) -> None:
+        sys.stdout.write(text)
+        self.at_line_start = text.endswith("\n")
+        sys.stdout.flush()
+
+    def ensure_newline(self) -> None:
+        if not self.at_line_start:
+            self.write("\n")
+
+    def block(self, text: str) -> None:
+        """Emit a block (own line): ensure we're at line start, then write."""
+        self.ensure_newline()
+        self.write(text)
+
+    def render(self, ev: dict) -> None:
+        t = ev.get("type")
+        if t == "thinking":
+            self.write(_green(ev.get("text", "")))
+        elif t == "text":
+            self.write(ev.get("text", ""))
+        elif t == "tool_output":
+            # bash streams complete lines (newline already stripped upstream).
+            self.write(ev.get("text", "") + "\n")
+        elif t == "tool_start":
+            self.block(_dim("❯ ") + _tool_call_str(ev.get("tool", "?"), ev.get("args") or {}) + "\n")
+        elif t == "tool_result":
+            self._render_tool_result(ev)
+        elif t == "usage":
+            self.block(_dim(f"· {ev.get('token_count', 0)} / {ev.get('max_context_tokens', 0)} tokens\n"))
+        elif t == "status":
+            self.block(_yellow_dim(ev.get("text", "") + "\n"))
+        elif t == "compact":
+            self.block(_dim("── context compacted ──\n"))
+        elif t == "subagents":
+            self.ensure_newline()
+            for child in ev.get("children", []):
+                desc = child.get("description") or child.get("session", "")
+                self._subagent_desc[child.get("session", "")] = desc
+                self.write(_dim(f"agent: {desc} 启动\n"))
+        elif t == "subagent_state":
+            sess = ev.get("session", "")
+            desc = self._subagent_desc.get(sess, sess)
+            self.block(_dim(f"agent: {desc} 退出 ({ev.get('state', '')})\n"))
+        elif t == "cancelled":
+            self.block(_dim("── cancelled ──\n"))
+        elif t == "interrupted":
+            self.block(_dim("── interrupted ──\n"))
+        elif t == "error":
+            self.block(_red(f"✗ {ev.get('text', '')}\n"))
+        # init / user / turn / tool_stream / done: skipped
+
+    def _render_tool_result(self, ev: dict) -> None:
+        tool = ev.get("tool", "")
+        if tool == "edit" and "diff" in ev:
+            self.ensure_newline()
+            self._render_diff(ev["diff"])
+            return
+        if tool == "bash":
+            # Output was already streamed via tool_output; surface only a
+            # non-zero exit code.
+            m = _EXIT_CODE_RE.search(ev.get("result", ""))
+            if m and int(m.group(1)) != 0:
+                self.block(_red(f"✗ exit code: {m.group(1)}\n"))
+            return
+        text = ev.get("result", "")
+        self.block(text + ("" if text.endswith("\n") else "\n"))
+
+    def _render_diff(self, diff: list) -> None:
+        for row in diff:
+            typ = row.get("type")
+            text = row.get("text", "")
+            if typ == "added":
+                self.write(_green(f"{_line_no(row.get('new'))} + {text}\n"))
+            elif typ == "removed":
+                self.write(_red(f"{_line_no(row.get('old'))} - {text}\n"))
+            else:  # equal
+                self.write(_dim(f"{_line_no(row.get('new') or row.get('old'))}   {text}\n"))
+
+
+# --- interactive prompts (permission / plan exit) ---------------------------
+
+def _resolve(ev: dict, agent: Agent, approved: bool) -> None:
+    if ev.get("type") == "plan_exit_request":
+        agent.resolve_plan_exit(approved)
+    else:
+        agent.resolve_permission(approved)
+
+
+async def _handle_interactive(agent: Agent, ev: dict, stdin_q: asyncio.Queue, renderer: Renderer) -> bool:
+    """Prompt for a y/n answer to a permission / plan-exit request.
+
+    Returns True if stdin hit EOF (caller should cancel + exit). The agent is
+    blocked on its resolution event during this call, so no other output
+    streams compete for the terminal; we are the sole stdin_q consumer.
+    """
+    renderer.ensure_newline()
+    t = ev.get("type")
+    if t == "plan_exit_request":
+        sys.stdout.write(_yellow("⚠ 请求退出 plan 模式，切换到 build 模式？\n"))
+    elif t == "permission_request":
+        sys.stdout.write(_yellow(f"⚠ {ev.get('message', '')}\n"))
+        sys.stdout.write(_dim(f"   path: {ev.get('path', '')}   tool: {ev.get('tool', '')}\n"))
+    else:  # subagent_permission_request
+        sys.stdout.write(_yellow(f"⚠ {ev.get('message', '')}\n"))
+        sys.stdout.write(
+            _dim(
+                f"   subagent: {ev.get('child_description', '')}"
+                f"   path: {ev.get('path', '')}   tool: {ev.get('tool', '')}\n"
+            )
+        )
+    sys.stdout.write(_yellow("允许? [y/N] "))
+    sys.stdout.flush()
+    renderer.at_line_start = False
+
+    line = await stdin_q.get()
+    if line is None:  # EOF (Ctrl+D)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        renderer.at_line_start = True
+        _resolve(ev, agent, False)
+        return True
+
+    approved = line.strip().lower() in ("y", "yes")
+    # The Enter that submitted the answer already moved the cursor to a new line.
+    renderer.at_line_start = True
+    _resolve(ev, agent, approved)
+    return False
+
+
+# --- REPL states -------------------------------------------------------------
+
+async def _idle_read(stdin_q: asyncio.Queue, sigint: asyncio.Event) -> str | None:
+    """Wait for either a stdin line or a Ctrl+C during IDLE.
+
+    Returns the line, or None if Ctrl+C / EOF signals an exit.
+    """
+    stdin_fut = asyncio.ensure_future(stdin_q.get())
+    sig_fut = asyncio.ensure_future(sigint.wait())
+    await asyncio.wait({stdin_fut, sig_fut}, return_when=asyncio.FIRST_COMPLETED)
+    # Whichever didn't fire is still pending (no item consumed); drop it.
+    if not stdin_fut.done():
+        stdin_fut.cancel()
+    if not sig_fut.done():
+        sig_fut.cancel()
+    else:
+        sigint.clear()
+        return None
+    return stdin_fut.result()
+
+
+async def _running(
+    agent: Agent,
+    queue: asyncio.Queue,
+    stdin_q: asyncio.Queue,
+    sigint: asyncio.Event,
+    renderer: Renderer,
+) -> bool:
+    """Consume broker events until the run ends.
+
+    Multiplexes broker events, stdin lines and Ctrl+C. Returns True if the user
+    asked to exit (``/exit`` / EOF); the caller then stops the REPL.
+    """
+    should_exit = False
+    while True:
+        broker_fut = asyncio.ensure_future(queue.get())
+        stdin_fut = asyncio.ensure_future(stdin_q.get())
+        sig_fut = asyncio.ensure_future(sigint.wait())
+        await asyncio.wait(
+            {broker_fut, stdin_fut, sig_fut},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for p in (broker_fut, stdin_fut, sig_fut):
+            if not p.done():
+                p.cancel()
+
+        # Handle stdin first: a line typed concurrently with an interactive
+        # event should be treated as steering, not eaten as the y/n answer.
+        if stdin_fut.done() and not should_exit:
+            line = stdin_fut.result()
+            if line is None:  # EOF
+                agent.cancel()
+                should_exit = True
+            else:
+                s = line.strip()
+                if s in ("/exit", "/quit"):
+                    agent.cancel()
+                    should_exit = True
+                elif s == "/stop":
+                    agent.cancel()
+                elif s == "":
+                    pass
+                else:
+                    await agent.steer(line)
+
+        if sig_fut.done() and not should_exit:
+            sigint.clear()
+            agent.cancel()
+
+        if broker_fut.done():
+            ev = broker_fut.result()
+            t = ev.get("type")
+            if t in _INTERACTIVE:
+                exited = await _handle_interactive(agent, ev, stdin_q, renderer)
+                if exited:
+                    agent.cancel()
+                    should_exit = True
+            else:
+                renderer.render(ev)
+                if t in _TERMINAL:
+                    return should_exit
+
+    return should_exit
+
+
+# --- entry point -------------------------------------------------------------
+
+async def _stdin_pump(reader: asyncio.StreamReader, q: asyncio.Queue) -> None:
+    """Continuously read stdin lines into ``q`` (None sentinel on EOF).
+
+    This is the process-wide single owner of stdin; the IDLE and RUNNING
+    states both consume ``q``, so stdin is never contended.
+    """
+    while True:
+        line = await reader.readline()
+        if not line:
+            await q.put(None)
+            return
+        await q.put(line.decode("utf-8", "replace").rstrip("\n"))
+
+
+async def run_cli(working_dir: str) -> None:
+    config = init_config()
+
+    # Create a session exactly like POST /api/sessions: a UUID directory with a
+    # session.json, then an Agent over it.
+    name = os.path.basename(working_dir) or "cli"
+    session_id = uuid.uuid4().hex
+    session_dir = get_sessions_dir() / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    info = {
+        "name": name,
+        "working_dir": working_dir,
+        "plan_mode": False,
+        "additional_dirs": [],
+        "created_at": time.time(),
+    }
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+
+    registry: dict[str, Agent] = {}
+    agent = Agent(
+        name=session_id,
+        working_dir=working_dir,
+        session_dir=session_dir,
+        config=config,
+        registry=registry,
+    )
+    registry[agent.name] = agent
+    info["session_id"] = agent.session_id
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+
+    queue, _snapshot = await agent.attach_subscriber()
+
+    loop = asyncio.get_running_loop()
+    reader = asyncio.StreamReader()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+    stdin_q: asyncio.Queue = asyncio.Queue()
+    pump_task = asyncio.create_task(_stdin_pump(reader, stdin_q))
+
+    sigint = asyncio.Event()
+    try:
+        loop.add_signal_handler(signal.SIGINT, sigint.set)
+    except (NotImplementedError, RuntimeError):
+        # Windows / no-loop fallback: rely on KeyboardInterrupt from asyncio.run.
+        pass
+
+    renderer = Renderer()
+    sys.stdout.write(_dim(f"# trilobite cli · {working_dir} · Ctrl+C 中断 / /exit 退出\n"))
+    sys.stdout.flush()
+    renderer.at_line_start = True
+
+    try:
+        while True:
+            # --- IDLE ---
+            renderer.ensure_newline()
+            if _COLOR:
+                sys.stdout.write(_blue("❯ "))
+                sys.stdout.flush()
+            line = await _idle_read(stdin_q, sigint)
+            if line is None:  # Ctrl+C / EOF
+                if _COLOR:
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                break
+            stripped = line.strip()
+            if stripped == "":
+                continue
+            if stripped in ("/exit", "/quit"):
+                break
+            if stripped == "/stop":
+                sys.stdout.write(_dim("（未运行）\n"))
+                sys.stdout.flush()
+                renderer.at_line_start = True
+                continue
+
+            # Re-render the human input in blue (IDLE has no concurrent output,
+            # so the line-edit echo can be safely overwritten).
+            if _COLOR:
+                sys.stdout.write("\033[A\033[2K" + _blue(f"❯ {line}") + "\n")
+            else:
+                sys.stdout.write(f"❯ {line}\n")
+            sys.stdout.flush()
+            renderer.at_line_start = True
+
+            # --- RUNNING ---
+            await agent.start(line)
+            if await _running(agent, queue, stdin_q, sigint, renderer):
+                break
+    finally:
+        pump_task.cancel()
+        try:
+            await pump_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        agent.detach_subscriber(queue)
+        await agent.aclose()
