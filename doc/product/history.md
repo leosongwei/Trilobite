@@ -79,7 +79,7 @@ API 收到:  {role: user, content: "<multi_message/>\n用 Python\n<multi_message
 
 系统提示词里说明了 `<multi_message/>` 标记的含义。`CompactMarker` 不投影成 system（它无内容），重建的 `SystemMessage` 才是 API 上下文的新 system 起点。
 
-**跳过真正空的 cancelled turn**：`get_api_messages()` 还会丢弃**真正空**的 `AssistantMessage`（`content` 为空、无 `tool_calls`、**且无 `thinking`**）。hard-cancel/interrupt 时若 LLM stream 还在早期，`run()` 的 CancelledError 处理会 salvage 这条只有 thinking 的 partial assistant（保留给前端展示，**也传给 API**）。关键：`AssistantMessage.to_api_dicts()` 对无 tool_calls 的 turn 始终塞 `content`（哪怕是空串），实测空 content **字符串**被 Volcengine/glm-5.2 接受（200）；真正 400 的是 content **key 缺失**，而 `_assistant_dict` 对无 tool_calls 的 turn 永远带 content key，所以不会触发。因此只有连 thinking 都没有的空 turn 才在投影时丢弃（它本就无信息），其周围 user 消息照常由 `combine_new_messages` 合并。带半截思维链的 turn（`content=""` + `reasoning_content`）保留并发给 API，让模型在下一个 turn 继承被中断的推理。
+**跳过真正空的 cancelled turn**：`get_api_messages()` 还会丢弃**真正空**的 `AssistantMessage`（`content` 为空、无 `tool_calls`、**且无 `thinking`**）。hard-cancel/interrupt 时若 LLM stream 还在早期，`run()` 的 CancelledError 处理会 salvage 这条只有 thinking 的 partial assistant（保留给前端展示，**也传给 API**）。两个 API 陷阱（实测 Volcengine/glm-5.2）：① content **key 缺失**会 400--`_assistant_dict` 对无 tool_calls 的 turn 始终带 content key，故不触发；② content 为**空串**虽返回 200，但模型会**静默丢弃整条 assistant 消息（连同 `reasoning_content`）**，下一个 turn 完全读不到半截思维链。因此 `to_api_dicts()`（`_assistant_dict(for_api=True)`）对无 tool_calls 且 content 为空的 turn **用一个空格 `" "` 代替空串**发给 API，让 reasoning 得以继承；前端投影（`to_frontend_dicts`）与持久化（`to_storage_dict`）仍保留真实空串，不污染。只有连 thinking 都没有的空 turn 才在投影时丢弃（本就无信息），其周围 user 消息照常由 `combine_new_messages` 合并。
 
 ## 流式与控制流
 

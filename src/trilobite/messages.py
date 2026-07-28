@@ -151,7 +151,7 @@ class AssistantMessage(Message):
         self.tool_calls = tool_calls if tool_calls is not None else []
         self.tool_results = tool_results if tool_results is not None else []
 
-    def _assistant_dict(self) -> dict:
+    def _assistant_dict(self, for_api: bool = False) -> dict:
         d: dict = {"role": "assistant"}
         if self.tool_calls:
             if self.content:
@@ -160,15 +160,24 @@ class AssistantMessage(Message):
                 d["reasoning_content"] = self.thinking
             d["tool_calls"] = [tc.to_api_dict() for tc in self.tool_calls]
         else:
-            # Plain-text turn: content is always present (even ""), matching
-            # the legacy done-branch shape the API and frontend expect.
-            d["content"] = self.content
+            # Plain-text turn: content is always present (even "") so the API
+            # never sees a missing content key (which glm-5.2 rejects with 400).
+            # But an *empty* content string makes glm-5.2 silently drop the
+            # whole assistant message -- including its reasoning_content -- so
+            # the next turn cannot inherit a half-streamed thinking from a
+            # cancelled turn. For the API projection only, substitute a single
+            # space when content is empty so the reasoning survives. The
+            # frontend and storage keep the real (empty) content.
+            content = self.content
+            if for_api and not content:
+                content = " "
+            d["content"] = content
             if self.thinking:
                 d["reasoning_content"] = self.thinking
         return d
 
     def to_api_dicts(self) -> list[dict]:
-        result: list[dict] = [self._assistant_dict()]
+        result: list[dict] = [self._assistant_dict(for_api=True)]
         for tr in self.tool_results:
             # diff is frontend-only; never sent to the API.
             result.append({

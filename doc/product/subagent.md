@@ -133,7 +133,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 用户在子 session 视图点 **停止（■）**，触发 `POST /api/sessions/{child}/interrupt`（子 session 的停止按钮走 interrupt 而非 cancel，见前端）：
 
 1. 后端调用 `child_agent.interrupt()`：置中断标志 `_interrupted`、解除可能挂起的权限等待、**立即 kill 正在运行的 bash 子进程组**，并 **cancel 当前 run task**。cancel 立刻把 `CancelledError` 抛到 run 正在 await 的点——无论是 LLM 流的 `async for chunk in stream` 还是 bash 的 `asyncio.to_thread`，都不会空等。
-2. run 的 `except CancelledError` 处理检测到 `_interrupted` 为真，判定这是中断而非主 agent 的取消：调 `task.uncancel()` 清除挂起的取消，**保留被中断 turn 的部分输出**（半截思维链/半截正文以 `{role: assistant, content: "", reasoning_content: "..."}` 落盘，下个 turn 传给 API；空 content 字符串被 API 接受，只有 content key 缺失才 400），**抢救在飞 bash 的部分输出**（见下），**补齐 dangling tool_calls**（见下），然后执行**一个总结 turn**：以 user 消息注入"你被中断了。请简明总结你目前的发现/进展，然后停止。"，做一次无工具的 LLM 调用，输出作为子 agent 的最终 assistant 消息。
+2. run 的 `except CancelledError` 处理检测到 `_interrupted` 为真，判定这是中断而非主 agent 的取消：调 `task.uncancel()` 清除挂起的取消，**保留被中断 turn 的部分输出**（半截思维链以 `{role: assistant, content: "", reasoning_content: "..."}` 落盘；下个 turn 投影给 API 时 `_assistant_dict(for_api=True)` 把空 content 替换成一个空格 `" "`--因为 glm-5.2 会静默丢弃 content 为空串的 assistant 消息连同其 `reasoning_content`，传空格才能让模型继承半截推理），**抢救在飞 bash 的部分输出**（见下），**补齐 dangling tool_calls**（见下），然后执行**一个总结 turn**：以 user 消息注入"你被中断了。请简明总结你目前的发现/进展，然后停止。"，做一次无工具的 LLM 调用，输出作为子 agent 的最终 assistant 消息。
 3. 子 agent 发出 `interrupted` 事件并退出 run（随后 sealed，见下）。
 4. 主 agent 的 `task` 工具取这条总结作为该子 agent 的结果（`state="interrupted"`）。
 
@@ -169,7 +169,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 ### 边界情况
 
 - **主 agent 取消优先于子 agent 中断**：若某个子 agent 已被用户 interrupt、正在跑总结 turn，此时用户停掉主会话，取消信号会传到该子 agent，打断其总结 turn（`_summarize_and_exit` 内的 await 抛 `CancelledError`，被 `except CancelledError: raise` 透传），子 agent 硬停、**不完成总结**。主 agent 的取消语义始终更强。
-- **中断保留被中断 turn 的部分输出**：`CancelledError` 落在 LLM 流的 `async for chunk` 上时，本轮的 `AssistantMessage` 已经 drain 开始时 append 进 history（`persist=False`，未入盘），并已累积部分文本/思维链。interrupt 路径**保留**这个未 persist 的消息（有 thinking/content/tool_calls 时 `save()` 落盘，只有真正空时才 pop），半截思维链以 `{role: assistant, content: "", reasoning_content: "..."}` 进 history，并在总结 turn 传给 API（空 content 字符串被 API 接受，只有 content key 缺失才 400；`_assistant_dict` 对无 tool_calls 的 turn 始终带 content key）。若中断落在 tool 执行中途（消息已 persist），则保留，先 `_salvage_inflight_tool` 抢救在飞 bash 的部分输出，再由 `_patch_dangling_tool_calls` 兜底。
+- **中断保留被中断 turn 的部分输出**：`CancelledError` 落在 LLM 流的 `async for chunk` 上时，本轮的 `AssistantMessage` 已经 drain 开始时 append 进 history（`persist=False`，未入盘），并已累积部分文本/思维链。interrupt 路径**保留**这个未 persist 的消息（有 thinking/content/tool_calls 时 `save()` 落盘，只有真正空时才 pop），半截思维链以 `{role: assistant, content: "", reasoning_content: "..."}` 进 history。投影给 API 时，无 tool_calls 且 content 为空的 turn 由 `_assistant_dict(for_api=True)` 把 content 替换成空格 `" "`（glm-5.2 会丢弃 content 为空串的 assistant 消息连同 reasoning，传空格才能继承半截推理；前端/存储仍保留真实空串）。若中断落在 tool 执行中途（消息已 persist），则保留，先 `_salvage_inflight_tool` 抢救在飞 bash 的部分输出，再由 `_patch_dangling_tool_calls` 兜底。
 - **中断极早期窗口**：`_run_as_subagent` 在 `set_running(True)` 后、进入 `run()` 前还发了一条 user 事件。若中断的 `cancel()` 恰好落在这个 await 上，`CancelledError` 不在 `run()` 的 try 内（还在 `_run_as_subagent` 里），子 agent 直接硬停、无总结。窗口极小（仅一条事件发送），可接受。
 - **总结 turn 自身失败**：中断后总结 turn 的 LLM 调用若抛异常（API 错误等），被 `except Exception` 兜住，子 agent 以 `state="error"` 退出（`_final_result` 记录失败原因），不向上抛、不拖垮父 agent 的 `gather`。
 
