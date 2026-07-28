@@ -79,7 +79,7 @@ API 收到:  {role: user, content: "<multi_message/>\n用 Python\n<multi_message
 
 系统提示词里说明了 `<multi_message/>` 标记的含义。`CompactMarker` 不投影成 system（它无内容），重建的 `SystemMessage` 才是 API 上下文的新 system 起点。
 
-**跳过空 content 的 cancelled turn**：`get_api_messages()` 还会丢弃 `content` 为空且没有 `tool_calls` 的 `AssistantMessage`。hard-cancel 时若 LLM stream 还在早期（只产出了 thinking、没有 content），`run()` 的 CancelledError 处理会 salvage 这条只有 thinking 的 partial assistant（保留给前端展示思考过程）。但 `AssistantMessage.to_api_dicts()` 对纯文本 turn 会无条件塞 `content`（哪怕是空串），空 content 的 assistant 消息会被部分 API（如 Volcengine/DeepSeek）以 400 拒绝。因此在投影时直接丢弃这种空 turn--它的 thinking 仍留在 history 供前端显示，丢弃后周围的 user 消息照常由 `combine_new_messages` 合并，序列保持合法。
+**跳过真正空的 cancelled turn**：`get_api_messages()` 还会丢弃**真正空**的 `AssistantMessage`（`content` 为空、无 `tool_calls`、**且无 `thinking`**）。hard-cancel/interrupt 时若 LLM stream 还在早期，`run()` 的 CancelledError 处理会 salvage 这条只有 thinking 的 partial assistant（保留给前端展示，**也传给 API**）。关键：`AssistantMessage.to_api_dicts()` 对无 tool_calls 的 turn 始终塞 `content`（哪怕是空串），实测空 content **字符串**被 Volcengine/glm-5.2 接受（200）；真正 400 的是 content **key 缺失**，而 `_assistant_dict` 对无 tool_calls 的 turn 永远带 content key，所以不会触发。因此只有连 thinking 都没有的空 turn 才在投影时丢弃（它本就无信息），其周围 user 消息照常由 `combine_new_messages` 合并。带半截思维链的 turn（`content=""` + `reasoning_content`）保留并发给 API，让模型在下一个 turn 继承被中断的推理。
 
 ## 流式与控制流
 
@@ -146,7 +146,7 @@ steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写�
 | 纯文本 turn drain 完 | `save()` 定稿 |
 | 带 tool_calls turn drain 完 | `save()`（含 tool_calls，便于崩溃补全） |
 | 每个工具执行完 | 填 `tool_result` 后 `save()` |
-| 取消时保留部分输出 | `save()` 落盘 in-flight 的 `AssistantMessage`（有内容时）；空对象则 `pop()` 丢弃 |
+| 取消时保留部分输出 | `save()` 落盘 in-flight 的 `AssistantMessage`（有内容/thinking/tool_calls 时）；空对象则 `pop()` 丢弃。在飞 bash 调用由 `_salvage_inflight_tool()` 用 `_tool_output_buffer` 抢救部分输出 + 取消标注作为 result 落盘 |
 | 压缩 | 各步 append 后 save |
 
 ## 编辑重发（revert）

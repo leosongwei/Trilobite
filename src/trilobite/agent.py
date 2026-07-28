@@ -27,7 +27,7 @@ from src.trilobite.messages import (
 )
 from src.trilobite.prompts import SYSTEM_PROMPT, subagent_system_prompt
 from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
-from src.trilobite.tools.bash import kill_process_group
+from src.trilobite.tools.bash import kill_process_group, truncate_output
 from src.trilobite.tool_call import execute_tool
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -290,6 +290,12 @@ class Agent:
         # callbacks (bash on_output) can schedule stream events back onto it
         # via asyncio.run_coroutine_threadsafe.
         self._loop = None
+        # Per-tool-call buffer of streamed bash output lines (text, stream).
+        # When a run is cancelled mid-command, the asyncio.to_thread future is
+        # cancelled and execute_tool's return value is lost; this buffer lets
+        # the CancelledError handler salvage the partial output the on_output
+        # callback already collected. Keyed by tool_call_id.
+        self._tool_output_buffer: dict[str, list[tuple[str, str]]] = {}
         self._initial_prompt: str = ""
         self._final_state: str = "completed"
         self._final_result: str = ""
@@ -409,9 +415,7 @@ class Agent:
         self._interrupted = True
         self._permission_approved = False
         self._permission_event.set()
-        proc = self._current_proc
-        if proc is not None and proc.poll() is None:
-            kill_process_group(proc)
+        self._kill_current_proc()
         if self._task is not None and not self._task.done():
             self._task.cancel()
 
@@ -424,14 +428,33 @@ class Agent:
         """
         self._current_proc = proc
 
+    def _kill_current_proc(self) -> None:
+        """Kill a running bash process group so a cancelled/interrupted run
+        does not leave an orphaned command behind.
+
+        ``cancel()``/``stop()``/``interrupt()`` all cancel the run task, which
+        raises CancelledError at the ``await asyncio.to_thread`` and orphans
+        the worker thread; without killing the process group the command would
+        keep running in the background. Reads ``_current_proc`` (set by the
+        worker thread via ``_register_proc``).
+        """
+        proc = self._current_proc
+        if proc is not None and proc.poll() is None:
+            kill_process_group(proc)
+
     def _make_output_callback(self, tool_call_id: str):
         """Build a line-by-line output callback for a bash tool call.
 
         Runs in the worker thread that executes bash; each output line is
         forwarded to the event loop as a ``tool_output`` stream event keyed by
         ``tool_call_id`` so the frontend can append it to the matching tool.
+        Lines are also accumulated in ``_tool_output_buffer`` so a cancelled
+        run can salvage the partial output (the cancelled execute_tool never
+        returns its result).
         """
+        self._tool_output_buffer.pop(tool_call_id, None)  # fresh start
         def _on_output(text: str, stream: str) -> None:
+            self._tool_output_buffer.setdefault(tool_call_id, []).append((text, stream))
             if self._loop is None:
                 return
             event = {
@@ -627,6 +650,10 @@ class Agent:
                 self.history.append(asst, persist=False)
                 current_asst = asst
                 current_asst_persisted = False
+                # Drop buffered bash output from previous turns -- it is only
+                # needed to salvage a cancelled in-flight command, and a new
+                # turn means the previous one completed (or was salvaged).
+                self._tool_output_buffer.clear()
                 current_tool_id = ""
                 current_tool_name = ""
                 current_tool_args = ""
@@ -862,21 +889,29 @@ class Agent:
         except asyncio.CancelledError:
             if self._interrupted:
                 # A subagent interrupt hard-stops the current turn mid-flight
-                # (LLM stream or bash). Discard the partial output, clear the
-                # pending cancellation, and run one summary turn before exiting
-                # cleanly -- so the parent's task tool gets a summary result
-                # instead of a bare cancellation. (A real cancel from the
-                # parent leaves _interrupted False and falls through to the
-                # hard-stop path below.)
+                # (LLM stream or bash). Clear the pending cancellation, keep
+                # any partial output (e.g. half-streamed thinking) so the
+                # summary turn carries it to the API, salvage partial bash
+                # output, then run one summary turn before exiting cleanly --
+                # so the parent's task tool gets a summary result instead of a
+                # bare cancellation. (A real cancel from the parent leaves
+                # _interrupted False and falls through to the hard-stop path.)
                 if self._task is not None:
                     self._task.uncancel()
-                # Discard an unpersisted in-flight assistant message
-                # (interrupted mid-drain) so the summary turn starts from a
-                # clean boundary. A persisted one (mid tool-execution) is kept
-                # and _patch_dangling_tool_calls fills its missing results.
+                # Keep partial output from an interrupted in-flight turn
+                # (mid-drain, unpersisted) so the summary turn's API call
+                # carries the half-streamed thinking -- a bare discard would
+                # lose the model's reasoning. Only drop a truly empty
+                # placeholder (nothing streamed yet). A persisted turn (mid
+                # tool-execution) is already in history.
                 if current_asst is not None and not current_asst_persisted:
                     if self.history.raw and self.history.raw[-1] is current_asst:
-                        self.history.pop()
+                        if current_asst.thinking or current_asst.content or current_asst.tool_calls:
+                            self.history.save()
+                        else:
+                            self.history.pop()
+                # Salvage partial bash output for the in-flight tool call.
+                self._salvage_inflight_tool(current_asst)
                 self._patch_dangling_tool_calls()
                 try:
                     await self._summarize_and_exit()
@@ -895,6 +930,10 @@ class Agent:
             for c in list(self._children):
                 if c._task and not c._task.done():
                     c._task.cancel()
+            # Salvage partial bash output for the in-flight tool call before
+            # persisting, so the model sees what the cancelled command produced
+            # instead of a bare [interrupted] placeholder on the next run.
+            self._salvage_inflight_tool(current_asst)
             # Persist the in-flight assistant message if it has any content,
             # thinking, or tool_calls; otherwise drop the empty placeholder so
             # history stays clean.
@@ -1005,6 +1044,7 @@ class Agent:
         self._broker.detach(q)
 
     def cancel(self):
+        self._kill_current_proc()
         if self._task and not self._task.done():
             self._task.cancel()
         # Propagate cancellation to running subagents (hard stop, no summary).
@@ -1013,6 +1053,7 @@ class Agent:
 
     async def stop(self) -> None:
         """Cancel an in-progress run and wait for it to fully finish."""
+        self._kill_current_proc()
         task = self._task
         if task and not task.done():
             task.cancel()
@@ -1140,6 +1181,61 @@ class Agent:
         if errors:
             body = "\n".join(errors) + "\n" + body
         return {"result": f"<task_result>\n{body}\n</task_result>"}
+
+    def _format_partial_bash_output(self, tool_call_id: str, args: dict) -> str | None:
+        """Reconstruct the partial output streamed so far for a bash call.
+
+        Mirrors BashTool's output shape (stdout, then a ``[stderr]`` section)
+        but from the ``on_output`` buffer accumulated in the worker thread,
+        since the cancelled ``execute_tool`` never returns its result. Returns
+        None when nothing was streamed.
+        """
+        buf = self._tool_output_buffer.get(tool_call_id)
+        if not buf:
+            return None
+        snapshot = list(buf)  # copy: reader threads may still append
+        out_lines = [text for text, src in snapshot if src == "stdout"]
+        err_lines = [text for text, src in snapshot if src == "stderr"]
+        output = "\n".join(out_lines)
+        if err_lines:
+            if output:
+                output += "\n"
+            output += "[stderr]\n" + "\n".join(err_lines)
+        if not output:
+            return None
+        max_lines = args.get("max_output_lines", 100)
+        max_chars = args.get("max_output_chars", 10000)
+        return truncate_output(output, max_lines, max_chars)
+
+    def _salvage_inflight_tool(self, asst: AssistantMessage | None) -> None:
+        """Fill the in-flight bash tool's result with partial output on cancel.
+
+        When a run is cancelled mid-tool-execution, the executing tool call has
+        no result yet. For bash, salvage the output streamed so far (via
+        ``on_output``) and append a note that the user cancelled, so the model
+        sees what the command produced instead of a bare ``[interrupted]``
+        placeholder. Only the first unanswered tool call (the one actually
+        executing) is considered; later, not-yet-started calls are left for
+        ``_patch_dangling_tool_calls``.
+        """
+        if asst is None or not asst.tool_calls:
+            return
+        answered = {tr.tool_call_id for tr in asst.tool_results}
+        for tc in asst.tool_calls:
+            if tc.id and tc.id not in answered:
+                # The first unanswered tool call is the one that was executing.
+                if tc.name == "bash":
+                    try:
+                        args = json.loads(tc.arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                    partial = self._format_partial_bash_output(tc.id, args)
+                    note = "\n[command cancelled by user; output above is partial]"
+                    content = (partial + note) if partial else "[command cancelled by user]"
+                    asst.tool_results.append(ToolResult(tool_call_id=tc.id, content=content))
+                    self._tool_output_buffer.pop(tc.id, None)
+                    self.history.save()
+                break
 
     def _patch_dangling_tool_calls(self) -> None:
         """Fill placeholder tool results for tool_calls lacking a result.

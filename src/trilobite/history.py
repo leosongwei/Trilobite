@@ -112,15 +112,18 @@ class History:
             if isinstance(msg, CompactMarker):
                 start = i + 1  # start just past the marker
 
-        # Drop assistant turns that have no content and no tool_calls (e.g. a
-        # turn cancelled mid-stream, which leaves only thinking): their empty
-        # content string is rejected by some APIs (e.g. Volcengine) and they
-        # carry no model-visible output. The thinking is still kept in
-        # persisted history for the frontend, and dropping them here lets the
-        # surrounding user messages combine normally.
+        # Drop assistant turns that are truly empty -- no content, no
+        # tool_calls, AND no thinking. A turn cancelled mid-stream may leave
+        # only half-streamed thinking (content="" + reasoning_content): that
+        # carries the model's reasoning and must be sent to the API (an empty
+        # *string* content is accepted; only a missing content key is rejected,
+        # which _assistant_dict never produces for tool-less turns). Truly
+        # empty turns carry nothing and are dropped so surrounding user
+        # messages combine normally.
         msgs = [
             m for m in self._messages[start:]
-            if not (isinstance(m, AssistantMessage) and not m.content and not m.tool_calls)
+            if not (isinstance(m, AssistantMessage)
+                    and not m.content and not m.tool_calls and not m.thinking)
         ]
         result: list[dict] = []
         i = 0
