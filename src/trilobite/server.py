@@ -372,15 +372,18 @@ async def get_session_info(name: str):
 @app.get("/api/sessions/{name}/history")
 async def get_history(name: str):
     agent = agents.get(name)
-    if agent is None:
-        session_dir = get_sessions_dir() / name
-        if not session_dir.exists():
-            raise HTTPException(404, "Session not found")
-        history_path = session_dir / "history.json"
-        if history_path.exists():
-            return json.loads(history_path.read_text())
-        return []
-    return agent.history.raw
+    if agent is not None:
+        return agent.history.to_flat_dicts()
+    # Agent not loaded: read the file and expand to the flat v1-style list the
+    # frontend expects.
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    history_path = session_dir / "history.json"
+    if history_path.exists():
+        from src.trilobite.history import History
+        return History(history_path).to_flat_dicts()
+    return []
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")

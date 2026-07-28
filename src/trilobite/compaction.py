@@ -20,9 +20,12 @@ def should_compact(agent: Agent) -> bool:
     """
     tools = agent._permission.filter_definitions()
     pending = agent.history.raw[agent._token_covered:]
+    # Pending entries are typed Message objects; expand to API dicts for the
+    # token estimate (an AssistantMessage unfolds into assistant + tool msgs).
+    pending_dicts = [d for m in pending for d in m.to_api_dicts()]
     estimated = (
         agent._token_count
-        + estimate_tokens_for_messages(pending)
+        + estimate_tokens_for_messages(pending_dicts)
         + estimate_tokens_for_tools(tools)
     )
     threshold = int(agent.max_context_tokens * agent.compaction_trigger_ratio)

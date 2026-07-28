@@ -125,7 +125,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ### 用户 steering 子 agent
 
-- 子 agent 运行期间，用户可在侧边栏切入该子 session，像主 agent 一样 **steering**（`POST /api/sessions/{child}/message` 在子 agent 运行时走 steer 路径，注入中途引导消息）。子 agent 的 run 循环在工具调用之间 pickup steering。
+- 子 agent 运行期间，用户可在侧边栏切入该子 session，像主 agent 一样 **steering**（`POST /api/sessions/{child}/message` 在子 agent 运行时走 steer 路径，直接把引导消息 append 进 history）。子 agent 的 run 循环在 turn 边界（续跑判断时）pickup 未读的 steering 消息。
 - 子 agent 是**有界任务**：steering 只是中途引导，不改变"跑完即收尾"的语义。子 agent 最终以一条总结/最终回复结束。
 
 ### 中断 -> 总结 -> 退出
@@ -168,8 +168,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 ### 边界情况
 
 - **主 agent 取消优先于子 agent 中断**：若某个子 agent 已被用户 interrupt、正在跑总结 turn，此时用户停掉主会话，取消信号会传到该子 agent，打断其总结 turn（`_summarize_and_exit` 内的 await 抛 `CancelledError`，被 `except CancelledError: raise` 透传），子 agent 硬停、**不完成总结**。主 agent 的取消语义始终更强。
-- **中断丢弃被中断 turn 的部分输出**：`CancelledError` 落在 LLM 流的 `async for chunk` 上时，`content_parts` 可能已有部分文本，但该 assistant 消息还没 append 进 history（stream 没结束）。这部分输出被丢弃，不进 history、不进结果。只有已 append 的内容（如 tool_calls）留下，由 `_patch_dangling_tool_calls` 兜底。
-- **中断落在 tool 执行中途**：assistant 消息（带 `tool_calls`）已 append，但部分 tool result 未落。`_patch_dangling_tool_calls` 给缺 result 的 `tool_call_id` 补 `[interrupted]` 占位，避免总结 turn 的 API 调用因 `tool_calls` 无对应 result 而报错。
+- **中断丢弃被中断 turn 的部分输出**：`CancelledError` 落在 LLM 流的 `async for chunk` 上时，本轮的 `AssistantMessage` 已经 drain 开始时 append 进 history（`persist=False`，未入盘），并已累积部分文本。interrupt 路径会 pop 掉这个未 persist 的消息，部分输出被丢弃，不进 history、不进结果。若中断落在 tool 执行中途（消息已 persist），则保留并由 `_patch_dangling_tool_calls` 兜底。
 - **中断极早期窗口**：`_run_as_subagent` 在 `set_running(True)` 后、进入 `run()` 前还发了一条 user 事件。若中断的 `cancel()` 恰好落在这个 await 上，`CancelledError` 不在 `run()` 的 try 内（还在 `_run_as_subagent` 里），子 agent 直接硬停、无总结。窗口极小（仅一条事件发送），可接受。
 - **总结 turn 自身失败**：中断后总结 turn 的 LLM 调用若抛异常（API 错误等），被 `except Exception` 兜住，子 agent 以 `state="error"` 退出（`_final_result` 记录失败原因），不向上抛、不拖垮父 agent 的 `gather`。
 

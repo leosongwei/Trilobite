@@ -2,230 +2,170 @@
 
 ## 概述
 
-对话历史是 agent 的记忆载体，由 `History` 类管理，持久化在 `~/.config/trilobite/sessions/<session_name>/history.json`。每次用户请求和 API 返回都会全量序列化到这个文件。history 的第一条消息始终是 system 消息（详见 [context_building.md](./context_building.md)）。
+对话历史是 agent 的记忆载体，由 `History` 类管理，持久化在 `~/.config/trilobite/sessions/<session_name>/history.json`。history 的第一条消息始终是 system 消息（详见 [context_building.md](./context_building.md)）。
+
+历史内部以**有类型的消息对象**表示（`messages.py`），而非裸 dict。一条 `AssistantMessage` 是自包含的一轮 agent 动作：thinking + content + tool_calls + tool_results 都在一个对象里。这让用户在运行中追加的 steering 消息**永远落在整个 assistant turn 之后**，不可能插进 `assistant(tool_calls)` 和它的 tool results 之间，从根本上保证了发给 API 的消息序列永远合法。
+
+## 消息对象模型
+
+定义在 `src/trilobite/messages.py`：
+
+```
+SystemMessage(content)                      # 初始 system prompt
+CompactMarker(content)                      # 压缩边界：重建的 system prompt，重启 API 上下文
+UserMessage(content, compact_summary=False) # 用户输入（compact_summary 标记压缩摘要）
+AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一轮
+  ├─ ToolCall(id, name, arguments)          # arguments 流式追加
+  └─ ToolResult(tool_call_id, content, diff) # diff 仅 edit 工具，仅供前端
+```
+
+每个对象有三种投影：
+
+| 方法 | 用途 |
+|------|------|
+| `to_api_dicts()` | 展开成 OpenAI 兼容 dict 列表发给 LLM。`AssistantMessage` 展开为 `[assistant, tool, tool, ...]`。**diff 不发给 API**。 |
+| `to_storage_dict()` | v2 JSON 形状，持久化到 history.json |
+| `to_frontend_dicts()` | 扁平的 v1 兼容 dict 列表，用于 `init` SSE 快照（前端协议不变） |
+
+`AssistantMessage` 的 assistant dict 形状遵循旧约定：带 `tool_calls` 时 `content`/`reasoning_content` 可选；纯文本 turn 时 `content` 始终存在（即使空串）。
+
+## 持久化：v2 格式与 v1 兼容
+
+`history.json` 是 v2 格式，带版本号：
+
+```json
+{
+  "version": 2,
+  "messages": [
+    { "type": "system", "content": "..." },
+    { "type": "user", "content": "帮我读一下 main.py" },
+    { "type": "assistant", "thinking": "...", "content": "让我先读...",
+      "tool_calls": [{ "id": "call_1", "name": "read", "arguments": "{\"filename\":\"main.py\"}" }],
+      "tool_results": [{ "tool_call_id": "call_1", "content": "1: ...", "diff": null }] },
+    { "type": "compact_marker", "content": "..." },
+    { "type": "user", "content": "<compact>...</compact>", "compact_summary": true }
+  ]
+}
+```
+
+**v1 兼容**：旧 session 的 `history.json` 是裸 dict 数组（无版本号）。`History._load` 检测顶层类型——是 list 即按 v1 加载：`from_v1()` 遍历扁平数组，把 `assistant(tool_calls)` + 紧跟的连续 `tool` 消息**合并**成一个自包含 `AssistantMessage`（`reasoning_content` 映射为 `thinking`）。加载失败会记录日志而非静默吞掉。
+
+**惰性升级**：任何 `save()` 都写 v2 格式。所以一个 v1 session 一旦被新代码读写就自动转成 v2，不需要批量迁移脚本。
 
 ## History 类
 
-`History` 类封装了历史的读取、保存和 API 投影功能：
+`src/trilobite/history.py` 的 `History` 封装历史的读取、保存和 API 投影：
 
 | 方法 | 说明 |
 |------|------|
-| `append(msg)` | 追加一条消息并保存 |
-| `extend(msgs)` | 批量追加并保存 |
-| `insert(i, msg)` | 在指定位置插入并保存 |
-| `replace_all(msgs)` | 替换全部消息并保存 |
-| `truncate(index)` | 丢弃从 `index` 开始的所有消息并保存（revert 用） |
-| `get_api_messages()` | 返回合并后的消息列表（用于发送 API） |
-| `raw` | 原始消息列表（用于 compaction、history endpoint 等） |
+| `append(msg, persist=True)` | 追加一条消息。`persist=False` 用于 drain 开始时入列的空 `AssistantMessage`（见下文） |
+| `extend(msgs)` / `insert(i, msg)` | 批量追加 / 指定位置插入 |
+| `pop()` | 弹出末尾消息（compact 保留 steer 时用） |
+| `truncate(index)` | 丢弃从 `index` 开始的所有消息（revert 用） |
+| `save()` | 显式全量写盘（mutate 消息对象后调用） |
+| `get_api_messages()` | 返回 API 投影：从最后一个 `CompactMarker` 开始，连续 user 合并 |
+| `to_flat_dicts()` | 展开成扁平 v1 兼容 dict 列表（前端 `init` 快照用） |
+| `raw` | 原始对象列表（compaction、revert 等遍历用） |
 
 ### 存储与投影的分离
 
-消息在 history.json 中**逐条独立存储**，保留原始边界。发送给 API 时，`get_api_messages()` 会将连续的 user 消息合并为一条（文本用 `\n\n` 连接），避免连续同角色消息导致 API 异常。
+消息在 history.json 中以对象化结构存储，保留原始边界。发送给 API 时，`get_api_messages()` 从最后一个 `CompactMarker` 开始投影（之前的全部从 API 上下文丢弃，但仍保留在持久化历史里供前端查看），并把连续的 user 消息合并为一条（文本用 `\n\n` 连接），避免连续同角色消息导致 API 异常：
 
 ```
 history.json 存储:                    API 收到:
-{"role": "user", "content": "用 Python"}     ┐
-{"role": "user", "content": "另外加上日志"}  ┘ -> {"role": "user", "content": "用 Python\n\n另外加上日志"}
+UserMessage("用 Python")        ┐
+UserMessage("另外加上日志")      ┘ ->  {role:user, content:"用 Python\n\n另外加上日志"}
 ```
 
-## 消息类型
+`CompactMarker` 自身投影成一条干净的 `system` 消息（标志被丢弃），成为 API 上下文的新起点。`CompactMarker` 之前的消息（包括压缩指令、摘要 turn）从 API 视图消失，但留在前端历史里。
 
-history 中包含四种角色的消息：
+## 流式与控制流
 
-### user（用户输入）
+### drain 即 append：消息对象是流式输出的一等公民
 
-```json
-{ "role": "user", "content": "帮我读一下 main.py" }
+每轮 turn **一开始**就 append 一个空的 `AssistantMessage`（`persist=False`），drain 流式增量直接 mutate 这个对象（`asst.thinking += delta`、`asst.content += delta`、`asst.tool_calls.append(...)`），并经事件流发给前端。不再有 `content_parts`/`thinking_parts` 累加器。
+
+空对象 `persist=False` 入列（不入盘），只在定稿后 `save()`：纯文本 turn 在 drain 完后 save；带工具的 turn 在 `tool_calls` 落定后 save 一次，每填一个 `tool_result` 再 save 一次。这样崩溃在 drain 中途不会留下半条记录；崩溃在工具之间则留下一个可被 `_patch_dangling_tool_calls` 补全的记录。
+
+### 续跑判断：何时结束 run
+
+`run()` 主循环每轮 turn 之前做续跑判断——只在「有新内容要模型响应」时才跑下一轮，否则结束 run：
+
+```
+has_unread_user = _count_user_messages() > _user_read_cursor
+if not (_pending_tool_results or has_unread_user or _force_run):
+    break   # run 结束，发 done
 ```
 
-### assistant - 带工具调用
+三个续跑信号：
 
-```json
-{
-  "role": "assistant",
-  "tool_calls": [
-    {
-      "id": "call_abc123",
-      "type": "function",
-      "function": {
-        "name": "read",
-        "arguments": "{\"filename\":\"main.py\"}"
-      }
-    }
-  ],
-  "content": "让我先读一下这个文件。",
-  "reasoning_content": "用户想看 main.py 的内容，我需要调用 read 工具。"
-}
+* `_pending_tool_results` —— 上一轮产出了 `tool_calls`，模型还没看到 tool results（自包含 turn 里的 `tool_results`）。决定跑一轮后即清零，所以纯文本 turn 不会因此无限续跑。
+* `has_unread_user` —— 自模型上次读取（`get_api_messages` 调用时刻，记录在 `_user_read_cursor`）后有新的 user 消息（start/steer）。
+* `_force_run` —— 压缩后强制跑一轮，让模型在重建的上下文上继续。
+
+`_user_read_cursor` 在 `get_api_messages()` 调用**之后**（drain 之前）更新，记录这一轮模型实际读到的 user 消息数。这样 drain 中途到达的 steer 落在 cursor 之后，驱动下一轮续跑。
+
+### done 的时机
+
+纯文本 turn（无 tool_calls）不再立即发 `done` 并 break。它先 persist、标记 `completed`，然后回到循环顶部做续跑判断——如果 drain 期间来了 steer，`has_unread_user` 为真就再跑一轮响应它；否则才 break，循环退出后发 `done`。这修复了旧设计中「纯文本最终回复期间 steer 会滞留队列、要等下一次 run 才被看到」的问题。
+
+## Steering（运行中追加消息）
+
+steer 不再经过队列。`steer()` 直接 append 一个 `UserMessage` 到 history 并发 `user` 事件。由于 steer 只在 `is_running()` 时被调用（停机时走 `start`），run 循环正活着，下一个续跑判断会检测到这条未读消息并跑一轮让模型响应。
+
+因为 `AssistantMessage` 自包含 `tool_results`，steer 的 `UserMessage` 物理上只能落在整个 assistant turn 之后，永远不可能插进 `assistant(tool_calls)` 与其 tool results 之间——这是对象化设计的核心收益。
+
+发送给 API 时，连续的 user 消息（包括多条 steer）由 `get_api_messages()` 合并：
+
+```
+history:  ... assistant(tool_calls, tool_results), UserMessage("用 Python"), UserMessage("另外加上日志")
+API 收到: ... assistant, tool, tool, {user: "用 Python\n\n另外加上日志"}
 ```
 
-- `tool_calls`：工具调用数组，`function.arguments` 是 JSON 字符串（非对象）
-- `content`：仅在有文本输出时存在
-- `reasoning_content`：仅在有思维链时存在
+## 压缩（compaction）
 
-### assistant - 最终回复
+压缩时一个关键边界：未读的 steer 消息会落在最后一个 assistant turn 之后、压缩指令之前，如果直接插 compact marker 会被裁剪掉（marker 之前的消息从 API 视图丢弃）。`_compact_turn` 因此先 pop 末尾的未读 `UserMessage`，压缩正常进行（append 压缩指令、摘要 turn、`CompactMarker`、`compact_summary`），再把 pop 出的 steer 重新 append 到 marker 之后。这样 steer 跨越压缩仍可见。
 
-```json
-{
-  "role": "assistant",
-  "content": "这个文件是一个 FastAPI 应用，主要包含...",
-  "reasoning_content": "我已经读取了文件内容，现在需要给用户一个清晰的总结。"
-}
-```
-
-### tool（工具执行结果）
-
-```json
-{
-  "role": "tool",
-  "tool_call_id": "call_abc123",
-  "content": "1: from fastapi import FastAPI\n2: \n3: app = FastAPI()\n..."
-}
-```
-
-`tool_call_id` 对应前一个 assistant 消息中 `tool_calls[].id`。
-
-> edit 工具的结果消息还会附带一个 `diff` 字段（结构化行级 diff：`[{type, old, new, text}]`，带真实文件行号），仅供前端回放渲染、不发给 LLM。早期会话持久化的是 `diff_prev`/`diff_current` 文本片段，前端回放时作为降级 fallback。
+压缩后设 `_force_run`，让主循环在重建的上下文上强制跑一轮。详见 [compact.md](./compact.md)。
 
 ## 保存时机
 
-以下操作后都会自动序列化 history 到 `history.json`（`append`/`extend`/`insert`/`replace_all` 均自动保存）：
+| 时机 | 说明 |
+|------|------|
+| `start()` / `steer()` | append `UserMessage`（立即 save） |
+| drain 开始 | append 空 `AssistantMessage`（`persist=False`，不入盘） |
+| 纯文本 turn drain 完 | `save()` 定稿 |
+| 带 tool_calls turn drain 完 | `save()`（含 tool_calls，便于崩溃补全） |
+| 每个工具执行完 | 填 `tool_result` 后 `save()` |
+| 取消时保留部分输出 | `save()` 落盘 in-flight 的 `AssistantMessage`（有内容时）；空对象则 `pop()` 丢弃 |
+| 压缩 | 各步 append 后 save |
 
-| 时机 | 代码位置 | 说明 |
-|------|----------|------|
-| 添加用户消息 | `add_user_message()` | 用户发送消息时 |
-| 保存 assistant + tool 消息 | `run()` 工具调用分支 | 每条消息追加时 |
-| 保存 assistant 最终回复 | `run()` done 分支 | 模型给出最终答案时 |
-| Steering 消息注入 | `_check_steer()` | 用户在运行中追加消息时 |
-| 取消时保存部分输出 | `run()` CancelledError | 保留已有的思维链和文本 |
-| Compaction 后 | `compact_if_needed()` | 用压缩后的历史替换 |
-| System 消息初始化 | `_ensure_system_message()` | 首次使用时插入 system 消息 |
+## 编辑重发（revert）
 
-## 实际例子
+用户可以编辑之前发送的某条消息并从该处重新推理（`POST /api/sessions/{id}/revert`，参数 `user_seq` + `message`）。`Agent.revert` 按该消息是否已被模型读取分两种处理：
 
-### 一个完整的工具调用对话
+* **已被模型读取**（`user_seq < _user_read_cursor`）：若正在运行先 `stop()`，用 `history.truncate(target)` 丢弃该 user 消息及其后所有内容，`broker.commit(target)` 重置回放基准，再 `start(message)` 重新推理。端点返回 `rerun`，前端重连 SSE。
+* **尚未被读取**（steer 还在 history 里、模型未读到，`user_seq >= _user_read_cursor`）：直接改 history 中该 `UserMessage.content`，**不中断运行**，广播 `user_edit` 事件让前端就地更新。端点返回 `queued`，前端无需重连。
 
-用户输入"帮我读一下 main.py"，模型调用 read 工具后给出总结。history.json：
+`user_seq` 计数排除 `compact_summary`（与 `_count_user_messages` 一致），定位 target 时同样排除，避免了旧设计中两处计数基准不一致的 bug。
 
-```json
-[
-  {
-    "role": "system",
-    "content": "你是一个编码助手。\n\n<AGENTS.md>\n..."
-  },
-  {
-    "role": "user",
-    "content": "帮我读一下 main.py"
-  },
-  {
-    "role": "assistant",
-    "tool_calls": [
-      {
-        "id": "call_abc123",
-        "type": "function",
-        "function": {
-          "name": "read",
-          "arguments": "{\"filename\":\"main.py\"}"
-        }
-      }
-    ],
-    "reasoning_content": "用户想看 main.py，调用 read 工具。"
-  },
-  {
-    "role": "tool",
-    "tool_call_id": "call_abc123",
-    "content": "1: from fastapi import FastAPI\n2: app = FastAPI()"
-  },
-  {
-    "role": "assistant",
-    "content": "main.py 是一个 FastAPI 应用，只有两行代码。"
-  }
-]
-```
+## 前端协议不变
 
-### 模型只返回思维链没有文本输出
+前端拿到的是 `init` 快照里的扁平 `HistoryMessage[]`（`AssistantMessage` 展开成 `assistant` + 多条 `tool`）。字段名（`reasoning_content`、`compact_marker`、`compact_summary`、`diff`、`tool_calls`、`tool_call_id`）与 v1 完全一致，`parseHistory` 无需改动。对象化是后端内部重构。
 
-这种情况也会忠实记录（`content` 为空字符串）：
+## broker 回放
 
-```json
-[
-  { "role": "user", "content": "你好呀" },
-  {
-    "role": "assistant",
-    "content": "",
-    "reasoning_content": "对方发了中文的'你好呀'，看起来就是打个招呼..."
-  },
-  { "role": "user", "content": "hmmm" },
-  {
-    "role": "assistant",
-    "content": "你好呀！有什么可以帮你的吗？"
-  }
-]
-```
-
-### Steering（运行中追加消息）
-
-用户发送"写个脚本"，模型开始调用工具。在工具执行间隙，用户追加"用 Python"：
-
-history.json 中**独立存储**每条 steering 消息：
-
-```json
-[
-  { "role": "system", "content": "..." },
-  { "role": "user", "content": "写个脚本" },
-  {
-    "role": "assistant",
-    "tool_calls": [{ "id": "call_1", "type": "function", "function": { "name": "bash", "arguments": "{}" } }]
-  },
-  { "role": "tool", "tool_call_id": "call_1", "content": "..." },
-  { "role": "user", "content": "用 Python" },
-  {
-    "role": "assistant",
-    "content": "好的，我用 Python 来写这个脚本。"
-  }
-]
-```
-
-### 多条 steering 消息
-
-用户在同一个工具执行间隙连发多条消息时，每条消息**独立存储**在 history 中：
-
-```json
-[
-  { "role": "tool", "tool_call_id": "call_1", "content": "..." },
-  { "role": "user", "content": "用 Python" },
-  { "role": "user", "content": "另外加上日志" }
-]
-```
-
-发送给 API 时，`get_api_messages()` 自动合并连续的 user 消息：
-
-```json
-[
-  { "role": "tool", "tool_call_id": "call_1", "content": "..." },
-  { "role": "user", "content": "用 Python\n\n另外加上日志" }
-]
-```
-
-这样既保留了原始消息边界（history.json 忠实记录），又避免了 API 对连续同角色消息的兼容性问题。
+`StreamBroker` 的 `persisted_len` 语义不变：仍按 run 边界推进（仅终态 `done`/`cancelled`/`error`/`interrupted` 及压缩后 `commit` 推进），run 期间 append/mutate 的对象都在 `persisted_len` 之后，由 `_turn_buffer` 的事件流镜像覆盖。`attach` 切片 `raw[:persisted_len]`（对象列表），由 `attach_subscriber` 展开成扁平 dict 放入 `init` 快照。详见 [streaming.md](./streaming.md)。
 
 ## 会话命名冲突处理
 
 创建新 session 时，如果指定的名称已存在，后端会自动追加数字后缀避免冲突：
 
 ```
-foo        → 首次创建，使用原名
-foo        → 再次创建，自动变为 foo(2)
-foo        → 再次创建，自动变为 foo(3)
-foo(2)     → 再次创建，自动变为 foo(4)
+foo        -> 首次创建，使用原名
+foo        -> 再次创建，自动变为 foo(2)
+foo        -> 再次创建，自动变为 foo(3)
+foo(2)     -> 再次创建，自动变为 foo(4)
 ```
 
 前端 `createSession` 会接收并采用后端返回的实际名称，确保 UI 显示与持久化一致。
-
-## 编辑重发（revert）
-
-用户可以编辑之前发送的某条消息并从该处重新推理（`POST /api/sessions/{id}/revert`，参数 `user_seq` + `message`）。`Agent.revert` 按该消息是否已被模型读取分两种处理：
-
-* **已在 history 中**（模型已读）：若正在运行先 `stop()`（cancel 并等待 run 结束），用 `history.truncate(target)` 丢弃该 user 消息及其后所有内容，`broker.commit(target)` 重置回放基准，再 `start(message)` 重新推理。端点返回 `rerun`，前端重连 SSE，由 `init`（截断后的历史）+ 回放缓冲（新 user 事件 + 新 run）重建对话。
-* **仍在 steer 队列中**（模型尚未读取）：直接替换队列中对应消息，**不中断运行**，并广播 `user_edit` 事件让前端就地更新气泡文本。端点返回 `queued`，前端无需重连。
-
-`user_seq` 由后端在 `user` 事件中携带（`start`/`steer` 时计算），保证前后端对用户消息序号的理解一致。
