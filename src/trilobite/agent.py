@@ -982,7 +982,7 @@ class Agent:
             if self._subagent_type is not None:
                 self._sealed = True
             # The run is over regardless of how it ended; clear the running
-            # flag (a safety net — done/cancelled/error already set it) and
+            # flag (a safety net -- done/cancelled/error already set it) and
             # drop the task reference so is_running() is accurate.
             self._broker.set_running(False)
             self._task = None

@@ -92,7 +92,7 @@ Open http://localhost:5173. Changes to `.vue`/`.ts` files update instantly.
 ## How it works
 
 - Create a session with a name and working directory
-- Type a message — the agent reads, writes files, and runs bash commands in that directory
+- Type a message -- the agent reads, writes files, and runs bash commands in that directory
 - If the working directory has an `AGENTS.md`, it's automatically included as context
 - Todo list tracks progress with `pending / in_progress / done` states
 - Context automatically compacts via LLM summarization when approaching the token limit
@@ -123,13 +123,13 @@ On context compaction, the system prompt + working context is reused, and the co
 
 Each user message triggers an agentic loop that runs until the model produces a final answer with no tool calls:
 
-1. **Compaction check** — if token usage exceeds the trigger ratio, summarize older history via LLM and replace it with a compact summary.
-2. **Build messages** — concatenate `system_prompt + working_context` as the system message, followed by the full conversation history.
-3. **Stream API call** — send the messages with tool definitions and thinking mode enabled; stream back thinking tokens, text content, and tool call arguments.
-4. **Accumulate response** — collect streamed `reasoning_content`, `content`, and `tool_calls` into complete pieces.
+1. **Compaction check** -- if token usage exceeds the trigger ratio, summarize older history via LLM and replace it with a compact summary.
+2. **Build messages** -- concatenate `system_prompt + working_context` as the system message, followed by the full conversation history.
+3. **Stream API call** -- send the messages with tool definitions and thinking mode enabled; stream back thinking tokens, text content, and tool call arguments.
+4. **Accumulate response** -- collect streamed `reasoning_content`, `content`, and `tool_calls` into complete pieces.
 5. **Branch**:
-   - **If tool calls returned** — execute each tool sequentially in the working directory, append tool results to history, then check for steering input (see below) and loop back to step 1.
-   - **If no tool calls** — the text content is the final answer; save it to history, emit `done`, and exit the loop.
+   - **If tool calls returned** -- execute each tool sequentially in the working directory, append tool results to history, then check for steering input (see below) and loop back to step 1.
+   - **If no tool calls** -- the text content is the final answer; save it to history, emit `done`, and exit the loop.
 
 **Steering**: while the loop is running, the user can type new messages. These are queued and injected into history between tool-call rounds, so the next API call sees the new input without interrupting the current stream.
 

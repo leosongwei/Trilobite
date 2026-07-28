@@ -132,7 +132,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 用户在子 session 视图点 **停止（■）**，触发 `POST /api/sessions/{child}/interrupt`（子 session 的停止按钮走 interrupt 而非 cancel，见前端）：
 
-1. 后端调用 `child_agent.interrupt()`：置中断标志 `_interrupted`、解除可能挂起的权限等待、**立即 kill 正在运行的 bash 子进程组**，并 **cancel 当前 run task**。cancel 立刻把 `CancelledError` 抛到 run 正在 await 的点——无论是 LLM 流的 `async for chunk in stream` 还是 bash 的 `asyncio.to_thread`，都不会空等。
+1. 后端调用 `child_agent.interrupt()`：置中断标志 `_interrupted`、解除可能挂起的权限等待、**立即 kill 正在运行的 bash 子进程组**，并 **cancel 当前 run task**。cancel 立刻把 `CancelledError` 抛到 run 正在 await 的点--无论是 LLM 流的 `async for chunk in stream` 还是 bash 的 `asyncio.to_thread`，都不会空等。
 2. run 的 `except CancelledError` 处理检测到 `_interrupted` 为真，判定这是中断而非主 agent 的取消：调 `task.uncancel()` 清除挂起的取消，**保留被中断 turn 的部分输出**（半截思维链以 `{role: assistant, content: "", reasoning_content: "..."}` 落盘；下个 turn 投影给 API 时 `_assistant_dict(for_api=True)` 把空 content 替换成一个空格 `" "`--因为 glm-5.2 会静默丢弃 content 为空串的 assistant 消息连同其 `reasoning_content`，传空格才能让模型继承半截推理），**抢救在飞 bash 的部分输出**（见下），**补齐 dangling tool_calls**（见下），然后执行**一个总结 turn**：以 user 消息注入"你被中断了。请简明总结你目前的发现/进展，然后停止。"，做一次无工具的 LLM 调用，输出作为子 agent 的最终 assistant 消息。
 3. 子 agent 发出 `interrupted` 事件并退出 run（随后 sealed，见下）。
 4. 主 agent 的 `task` 工具取这条总结作为该子 agent 的结果（`state="interrupted"`）。
@@ -150,7 +150,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 `interrupt()`（以及主 agent 的 `cancel()`/`stop()`，经统一的 `_kill_current_proc()`）若发现 `_current_proc` 还活着，调 `kill_process_group`（`os.killpg` 整组 SIGKILL）：
 
 - 只 kill shell 不够：`shell=True` 下真正的命令（如 `sleep`）是 shell 的子进程、继承 stdout 管道，shell 死了子进程还活着持管，读取线程的 `readline` 会阻塞到子进程结束。杀整组才能让管道 EOF、读取线程退出、`proc.wait()` 立即返回。
-- kill 后工作线程的 `execute_tool` 很快返回（exit code -9）；但中断/取消不等它返回——cancel task 直接让 run 的 `await asyncio.to_thread` 抛 `CancelledError`，立刻进入总结/硬停。工作线程在后台收尾，无害。
+- kill 后工作线程的 `execute_tool` 很快返回（exit code -9）；但中断/取消不等它返回--cancel task 直接让 run 的 `await asyncio.to_thread` 抛 `CancelledError`，立刻进入总结/硬停。工作线程在后台收尾，无害。
 - **抢救部分输出**：cancel 掉的 `asyncio.to_thread` 不会把 `execute_tool` 的返回值交还 run，bash 已产出的输出本会丢失。`_make_output_callback` 在流式推送每行给前端的同时，把它们累积进 `_tool_output_buffer`（按 `tool_call_id`）；`_salvage_inflight_tool()` 找到第一个还没 result 的 tool_call（即在飞的那个），若是 bash 就把缓冲里的 stdout/stderr 按 bash 的输出形状（stdout + `[stderr]` 段）拼出、套用 `max_output_lines/max_output_chars` 截断、末尾加 `[command cancelled by user; output above is partial]` 标注，作为该 tool_call 的 result 落盘。这样模型在总结 turn（中断）或下个 turn（硬停取消）能看到命令已产出的内容，而非空洞的 `[interrupted]`。
 
 非 bash 工具（read/edit/write）很快返回，但中断同样靠 cancel task 立刻生效，不等它们。
@@ -291,7 +291,7 @@ sessions/
    - 主 agent 取消时传播取消给运行中的子 agent（硬停）。
 3. **`server.py`**：创建主 agent 时传 `registry=agents`；`/message` 对 sealed 子 agent 拒绝；新增 `POST /api/sessions/{id}/interrupt`（调 `agent.interrupt()`）；`/stream`、`/history`、`/permission` 对子 session 复用现有逻辑；侧边栏 session 列表返回树结构（带 parent/children）。
 4. **前端**：`store.ts` 会话树 + `subagents`/`subagent_state`/`subagent_permission_request` 事件处理；侧边栏树组件；`ToolEntry`（或新 `SubagentTree` 组件）渲染 `task` 节点；子 session 视图（复用 `ChatView`、运行中显示输入+■ 停止按钮（走 interrupt）、sealed 禁用输入、返回导航）；全局权限横幅。`ChatInput.stop()` 按 `isSubagent` 分流：subagent -> `/interrupt`，主 agent -> `/cancel`。
-5. **提示词**：提示词全部硬编码在 `src/trilobite/prompts.py`（不可配置）：`SYSTEM_PROMPT`（含 `task` 工具使用指引：subagent 屏蔽上下文、省主 agent token，是非 needle 查询的探索/上下文收集的**首选**方式，可在单次调用里并行多个独立子任务；needle 查询——已知文件路径、单个定义、2-3 个已知文件——直接用 read/grep 不开 subagent；开 subagent 要给自包含 prompt；子 agent 输出对用户不可见，主 agent 需转述）、`SUBAGENT_ROLE_PREFIX`（公共前缀）、`SUBAGENT_ROLE_PROMPTS`（explore/general 角色提示）。`tool_call.py` 的 `TASK_TOOL_DEF` 描述采用同一正向框架（强调省 token + 探索首选，排除项收窄为 needle 查询）。
+5. **提示词**：提示词全部硬编码在 `src/trilobite/prompts.py`（不可配置）：`SYSTEM_PROMPT`（含 `task` 工具使用指引：subagent 屏蔽上下文、省主 agent token，是非 needle 查询的探索/上下文收集的**首选**方式，可在单次调用里并行多个独立子任务；needle 查询--已知文件路径、单个定义、2-3 个已知文件--直接用 read/grep 不开 subagent；开 subagent 要给自包含 prompt；子 agent 输出对用户不可见，主 agent 需转述）、`SUBAGENT_ROLE_PREFIX`（公共前缀）、`SUBAGENT_ROLE_PROMPTS`（explore/general 角色提示）。`tool_call.py` 的 `TASK_TOOL_DEF` 描述采用同一正向框架（强调省 token + 探索首选，排除项收窄为 needle 查询）。
 
 ## 十二、风险与决策记录
 
