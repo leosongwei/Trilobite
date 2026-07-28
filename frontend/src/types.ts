@@ -39,6 +39,7 @@ export interface HistoryMessage {
   tool_call_id?: string
   compact_marker?: boolean
   compact_summary?: boolean
+  is_compact_prompt?: boolean
 }
 
 export interface Session {

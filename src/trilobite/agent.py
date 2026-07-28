@@ -17,9 +17,17 @@ from src.trilobite.broker import StreamBroker
 from src.trilobite.compaction import should_compact, build_compact_prompt
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS
 from src.trilobite.history import History
+from src.trilobite.messages import (
+    AssistantMessage,
+    CompactMarker,
+    SystemMessage,
+    ToolCall,
+    ToolResult,
+    UserMessage,
+)
 from src.trilobite.prompts import SYSTEM_PROMPT, subagent_system_prompt
 from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
-from src.trilobite.tools.bash import kill_process_group
+from src.trilobite.tools.bash import kill_process_group, truncate_output
 from src.trilobite.tool_call import execute_tool
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -240,8 +248,18 @@ class Agent:
         self._token_count: int = 0
         self._token_covered: int = 0
         self._task: asyncio.Task | None = None
-        self._steering: asyncio.Event = asyncio.Event()
-        self._steer_messages: list[str] = []
+        # Continuation signals for the run loop. The loop runs another turn if
+        # either (a) the previous turn produced tool_calls whose results the
+        # model has not seen yet, or (b) a user message (start/steer) arrived
+        # since the model last read history. ``_force_run`` is set after
+        # compaction so the model gets one turn on the rebuilt context.
+        # ``_need_compact`` requests the next turn run with tools disabled so
+        # the model produces a handoff summary; the turn after that rebuilds
+        # the context.
+        self._pending_tool_results: bool = False
+        self._user_read_cursor: int = 0
+        self._force_run: bool = False
+        self._need_compact: bool = False
         if subagent_type == "explore":
             self._permission: AgentPermission = ExploreSubagentPermission()
         elif subagent_type == "general":
@@ -272,6 +290,12 @@ class Agent:
         # callbacks (bash on_output) can schedule stream events back onto it
         # via asyncio.run_coroutine_threadsafe.
         self._loop = None
+        # Per-tool-call buffer of streamed bash output lines (text, stream).
+        # When a run is cancelled mid-command, the asyncio.to_thread future is
+        # cancelled and execute_tool's return value is lost; this buffer lets
+        # the CancelledError handler salvage the partial output the on_output
+        # callback already collected. Keyed by tool_call_id.
+        self._tool_output_buffer: dict[str, list[tuple[str, str]]] = {}
         self._initial_prompt: str = ""
         self._final_state: str = "completed"
         self._final_result: str = ""
@@ -349,8 +373,8 @@ class Agent:
         For new sessions or old histories without one, create it from current
         config. Once recorded, the system message is immutable in history.
         """
-        if not self.history or self.history[0].get("role") != "system":
-            self.history.insert(0, {"role": "system", "content": self.system_prompt + self.working_context})
+        if not self.history or not isinstance(self.history[0], SystemMessage):
+            self.history.insert(0, SystemMessage(self.system_prompt + self.working_context))
 
     @property
     def _plan_mode(self) -> bool:
@@ -391,9 +415,7 @@ class Agent:
         self._interrupted = True
         self._permission_approved = False
         self._permission_event.set()
-        proc = self._current_proc
-        if proc is not None and proc.poll() is None:
-            kill_process_group(proc)
+        self._kill_current_proc()
         if self._task is not None and not self._task.done():
             self._task.cancel()
 
@@ -406,14 +428,33 @@ class Agent:
         """
         self._current_proc = proc
 
+    def _kill_current_proc(self) -> None:
+        """Kill a running bash process group so a cancelled/interrupted run
+        does not leave an orphaned command behind.
+
+        ``cancel()``/``stop()``/``interrupt()`` all cancel the run task, which
+        raises CancelledError at the ``await asyncio.to_thread`` and orphans
+        the worker thread; without killing the process group the command would
+        keep running in the background. Reads ``_current_proc`` (set by the
+        worker thread via ``_register_proc``).
+        """
+        proc = self._current_proc
+        if proc is not None and proc.poll() is None:
+            kill_process_group(proc)
+
     def _make_output_callback(self, tool_call_id: str):
         """Build a line-by-line output callback for a bash tool call.
 
         Runs in the worker thread that executes bash; each output line is
         forwarded to the event loop as a ``tool_output`` stream event keyed by
         ``tool_call_id`` so the frontend can append it to the matching tool.
+        Lines are also accumulated in ``_tool_output_buffer`` so a cancelled
+        run can salvage the partial output (the cancelled execute_tool never
+        returns its result).
         """
+        self._tool_output_buffer.pop(tool_call_id, None)  # fresh start
         def _on_output(text: str, stream: str) -> None:
+            self._tool_output_buffer.setdefault(tool_call_id, []).append((text, stream))
             if self._loop is None:
                 return
             event = {
@@ -464,91 +505,86 @@ class Agent:
     def _count_user_messages(self) -> int:
         """Count real user messages, excluding compact summaries.
 
-        Compact summaries are stored as ``role: user`` (so the API sees them
-        as user content) but are not real user turns, so they must not
+        Compact summaries are stored as :class:`UserMessage` (so the API sees
+        them as user content) but are not real user turns, so they must not
         receive a ``user_seq`` - otherwise revert/edit numbering would drift.
         """
         return sum(
             1 for m in self.history.raw
-            if m.get("role") == "user" and not m.get("compact_summary")
+            if isinstance(m, UserMessage) and not m.compact_summary
         )
 
     def _has_compactable_content(self) -> bool:
         """Whether there is real conversation after the last compact marker."""
         start = 0
         for i, msg in enumerate(self.history.raw):
-            if msg.get("compact_marker"):
+            if isinstance(msg, CompactMarker):
                 start = i + 1
         for msg in self.history.raw[start:]:
-            if msg.get("compact_summary") or msg.get("role") == "system":
-                continue
-            return True
+            if isinstance(msg, (UserMessage, AssistantMessage)) and not (
+                isinstance(msg, UserMessage)
+                and (msg.compact_summary or msg.is_compact_prompt)
+            ):
+                return True
         return False
 
-    async def _compact_turn(self) -> None:
-        """Run one compaction turn.
+    def _collect_pending_steers(self) -> list[str]:
+        """Real user messages that arrived after the compact prompt.
 
-        Appends the compact instruction as a user message, streams the model's
-        handoff summary (visible like a normal turn), then inserts a compact
-        marker (rebuilt system prompt) followed by the summary wrapped in
-        ``<compact>`` tags as a user message.
-
-        Resulting history tail::
-
-            ..., {user: compact prompt}, {assistant: summary},
-            {system: rebuilt prompt, compact_marker}, {user: <compact>summary</compact>},
-            ...new conversation...
-
-        ``get_api_messages()`` starts from the marker, so pre-compaction
-        messages are dropped from the API context while remaining in the
-        persisted (frontend) history.
+        During a compact turn the user may steer; those messages land after the
+        compact prompt (and possibly after the in-flight note). They were folded
+        into the note's context via ``combine_new_messages`` but are genuine
+        user turns the model must still respond to on the fresh context. Left
+        behind the compact marker they would be dropped from the API context,
+        so the caller re-appends them after the compact summary.
         """
-        prompt = build_compact_prompt(self)
-        user_seq = self._count_user_messages()
-        self.history.append({"role": "user", "content": prompt})
-        await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
+        raw = self.history.raw
+        prompt_idx = -1
+        for i in range(len(raw) - 1, -1, -1):
+            m = raw[i]
+            if isinstance(m, UserMessage) and m.is_compact_prompt:
+                prompt_idx = i
+                break
+        if prompt_idx < 0:
+            return []
+        return [
+            m.content for m in raw[prompt_idx + 1:]
+            if isinstance(m, UserMessage) and not m.compact_summary and not m.is_compact_prompt
+        ]
 
-        messages = self.history.get_api_messages()
-        await self._send_stream_event({"type": "turn"})
-        stream = await self.chat_completion(messages=messages, stream=True, tools=None)
+    def _finalize_compaction(self, summary: str) -> list[str]:
+        """Rebuild the context after a compaction turn.
 
-        content_parts: list[str] = []
-        thinking_parts: list[str] = []
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta is None:
-                continue
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                thinking_parts.append(delta.reasoning_content)
-                await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
-            if delta.content:
-                content_parts.append(delta.content)
-                await self._send_stream_event({"type": "text", "text": delta.content})
+        Drops a contentless :class:`CompactMarker` (the API-context boundary),
+        a fresh :class:`SystemMessage` with the rebuilt prompt, and the summary
+        wrapped in ``<compact>`` tags as a ``compact_summary`` user message.
+        ``get_api_messages()`` starts just past the marker, so pre-compaction
+        messages are dropped from the API context while remaining in persisted
+        history.
 
-        summary = "".join(content_parts) or "[compaction produced no output]"
-
-        assistant_msg: dict = {"role": "assistant", "content": summary}
-        if thinking_parts:
-            assistant_msg["reasoning_content"] = "".join(thinking_parts)
-        self.history.append(assistant_msg)
-
+        Returns the steering user messages that arrived during the compact turn
+        so the caller can re-append them (with user events) after the summary;
+        otherwise they would sit behind the marker and be lost from the API
+        context.
+        """
+        pending_steers = self._collect_pending_steers()
         rebuilt_system = self.system_prompt + self.working_context
-        self.history.append({"role": "system", "content": rebuilt_system, "compact_marker": True})
-        self.history.append({"role": "user", "content": f"<compact>\n{summary}\n</compact>", "compact_summary": True})
-        await self._send_stream_event({"type": "compact"})
-
+        self.history.append(CompactMarker())
+        self.history.append(SystemMessage(rebuilt_system))
+        self.history.append(UserMessage(f"<compact>\n{summary}</compact>", compact_summary=True))
+        self._need_compact = False
+        self._force_run = True
         self._token_count = 0
-        self._token_covered = len(self.history.raw)
-        self._persist_token_count()
+        return pending_steers
 
     async def run(self):
         self._task = asyncio.current_task()
         self._loop = asyncio.get_running_loop()
 
-        content_parts: list[str] = []
-        thinking_parts: list[str] = []
-
         self._ensure_system_message()
+        # Guard against a dangling assistant(tool_calls) lacking results left
+        # behind by a crashed/interrupted run -- the API would reject it.
+        self._patch_dangling_tool_calls()
 
         # Check for mode change once per run (when user sends a message).
         # Injected into messages list, not stored in history.
@@ -559,36 +595,65 @@ class Agent:
             mode_notification = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
             self._last_notified_mode = self._plan_mode
 
+        # The assistant message being streamed/mutated in the current turn
+        # (None outside a turn). Held as locals so the CancelledError handler
+        # can salvage or discard partial output.
+        current_asst: AssistantMessage | None = None
+        current_asst_persisted = False
+
         try:
             while True:
+                # ── continuation check ── run another turn only when there is
+                # something new for the model to respond to: tool results it
+                # has not seen, a user message (start/steer) it has not read,
+                # or a forced turn after compaction. Otherwise the run ends.
+                has_unread_user = self._count_user_messages() > self._user_read_cursor
+                if not (self._pending_tool_results or has_unread_user or self._force_run):
+                    break
+                # About to run a turn, which consumes any pending tool results
+                # and forced run; clear them so a plain-text turn afterwards
+                # does not spuriously continue.
+                self._force_run = False
+                self._pending_tool_results = False
+
                 # Subagent step cap: prevent runaway loops.
                 if self._max_steps is not None and self._step_count >= self._max_steps:
                     self._final_state = "error"
                     self._final_result = f"max_steps ({self._max_steps}) exceeded"
                     await self._send_stream_event({"type": "error", "text": self._final_result})
                     break
-                if should_compact(self):
-                    await self._compact_turn()
-                    await self._broker.commit(len(self.history.raw))
-                    continue
                 messages = self.history.get_api_messages()
-                if mode_notification:
+                # Record how many user messages the model is reading this turn
+                # (at get_api_messages time, before the stream drains). A steer
+                # arriving mid-drain lands after this cursor and drives the
+                # next continuation check.
+                self._user_read_cursor = self._count_user_messages()
+                if mode_notification and not self._need_compact:
                     messages.insert(1, {"role": "user", "content": mode_notification})
                     mode_notification = None
 
                 await self._send_stream_event({"type": "turn"})
 
+                # A pending compaction runs with tools disabled so the model
+                # produces a handoff summary instead of calling tools.
+                tools = None if self._need_compact else self._permission.filter_definitions()
                 stream = await self.chat_completion(
                     messages=messages,
                     stream=True,
-                    tools=self._permission.filter_definitions(),
+                    tools=tools,
                 )
 
-                content_parts.clear()
-                thinking_parts.clear()
-                tool_calls: list[dict] = []
-                content_parts: list[str] = []
-                thinking_parts: list[str] = []
+                # Begin the turn: append an empty assistant message and mutate
+                # it as the stream drains. It is persisted only once finalized,
+                # so a crash mid-turn leaves no half-written entry on disk.
+                asst = AssistantMessage()
+                self.history.append(asst, persist=False)
+                current_asst = asst
+                current_asst_persisted = False
+                # Drop buffered bash output from previous turns -- it is only
+                # needed to salvage a cancelled in-flight command, and a new
+                # turn means the previous one completed (or was salvaged).
+                self._tool_output_buffer.clear()
                 current_tool_id = ""
                 current_tool_name = ""
                 current_tool_args = ""
@@ -606,11 +671,11 @@ class Agent:
                         continue
 
                     if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                        thinking_parts.append(delta.reasoning_content)
+                        asst.thinking += delta.reasoning_content
                         await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
 
                     if delta.content:
-                        content_parts.append(delta.content)
+                        asst.content += delta.content
                         await self._send_stream_event({"type": "text", "text": delta.content})
 
                     if delta.tool_calls:
@@ -623,11 +688,11 @@ class Agent:
                                         "args": current_tool_args,
                                         "complete": True,
                                     })
-                                    tool_calls.append({
-                                        "id": current_tool_id,
-                                        "type": "function",
-                                        "function": {"name": current_tool_name, "arguments": current_tool_args},
-                                    })
+                                    asst.tool_calls.append(ToolCall(
+                                        id=current_tool_id,
+                                        name=current_tool_name,
+                                        arguments=current_tool_args,
+                                    ))
                                 current_tool_id = tc.id
                                 current_tool_name = tc.function.name if tc.function else ""
                                 current_tool_args = ""
@@ -663,11 +728,11 @@ class Agent:
                         "args": current_tool_args,
                         "complete": True,
                     })
-                    tool_calls.append({
-                        "id": current_tool_id,
-                        "type": "function",
-                        "function": {"name": current_tool_name, "arguments": current_tool_args},
-                    })
+                    asst.tool_calls.append(ToolCall(
+                        id=current_tool_id,
+                        name=current_tool_name,
+                        arguments=current_tool_args,
+                    ))
 
                 await self._send_stream_event({
                     "type": "usage",
@@ -675,35 +740,32 @@ class Agent:
                     "max_context_tokens": self.max_context_tokens,
                 })
 
-                content = "".join(content_parts)
-                thinking = "".join(thinking_parts)
-
                 self._log.info(
                     "TURN result content_len=%d thinking_len=%d tool_calls=%d token_count=%d plan_mode=%s",
-                    len(content), len(thinking), len(tool_calls), self._token_count, self._plan_mode,
+                    len(asst.content), len(asst.thinking), len(asst.tool_calls), self._token_count, self._plan_mode,
                 )
-                if not content and not thinking and not tool_calls:
+                if not asst.content and not asst.thinking and not asst.tool_calls:
                     self._log.warning("TURN produced EMPTY assistant output (no content/thinking/tool_calls)")
 
                 self._step_count += 1
 
-                if tool_calls:
-                    assistant_msg: dict = {"role": "assistant", "tool_calls": tool_calls}
-                    if content:
-                        assistant_msg["content"] = content
-                    if thinking:
-                        assistant_msg["reasoning_content"] = thinking
-                    self.history.append(assistant_msg)
+                if asst.tool_calls:
+                    # Persist the assistant message (with tool_calls) before
+                    # executing tools, so a crash between tools leaves a
+                    # patchable dangling entry rather than nothing.
+                    self.history.save()
+                    current_asst_persisted = True
+                    self._pending_tool_results = True
 
-                    for tc in tool_calls:
+                    for tc in asst.tool_calls:
                         args = {}
                         try:
-                            args = json.loads(tc["function"]["arguments"])
+                            args = json.loads(tc.arguments)
                         except json.JSONDecodeError:
                             pass
 
-                        tool_name = tc["function"]["name"]
-                        await self._send_stream_event({"type": "tool_start", "tool": tool_name, "args": args, "tool_call_id": tc["id"]})
+                        tool_name = tc.name
+                        await self._send_stream_event({"type": "tool_start", "tool": tool_name, "args": args, "tool_call_id": tc.id})
 
                         tool_result: dict[str, Any]
                         blocked = self._permission.intercept(tool_name)
@@ -730,7 +792,7 @@ class Agent:
                             # call doesn't freeze the event loop -- otherwise the
                             # shared loop stalls SSE heartbeats and every other
                             # agent/subagent on it (issue #5).
-                            on_output = self._make_output_callback(tc["id"])
+                            on_output = self._make_output_callback(tc.id)
                             tool_result = await asyncio.to_thread(
                                 execute_tool, tool_name, args, self.working_dir,
                                 self.session_dir, self._additional_dirs,
@@ -759,50 +821,97 @@ class Agent:
                                 self._additional_dirs.append(Path(perm_path).resolve())
                                 self._persist_additional_dirs()
                                 # Retry the tool with updated additional_dirs
-                                on_output = self._make_output_callback(tc["id"])
+                                on_output = self._make_output_callback(tc.id)
                                 tool_result = await asyncio.to_thread(
                                     execute_tool, tool_name, args, self.working_dir,
                                     self.session_dir, self._additional_dirs,
                                     self._register_proc, on_output)
                             # else: keep original error result
 
-                        result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"], "tool_call_id": tc["id"]}
+                        result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"], "tool_call_id": tc.id}
                         if "diff" in tool_result:
                             result_event["diff"] = tool_result["diff"]
                         await self._send_stream_event(result_event)
 
-                        history_msg: dict[str, Any] = {
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": tool_result["result"],
-                        }
-                        if "diff" in tool_result:
-                            history_msg["diff"] = tool_result["diff"]
-                        self.history.append(history_msg)
-
-                    # Check for steering between tool calls
-                    self._check_steer()
+                        # The tool result lives inside the assistant message
+                        # (self-contained turn), so a steering user message can
+                        # never land between the tool_calls and their results.
+                        asst.tool_results.append(ToolResult(
+                            tool_call_id=tc.id,
+                            content=tool_result["result"],
+                            diff=tool_result.get("diff"),
+                        ))
+                        self.history.save()
                 else:
-                    assistant_final: dict = {"role": "assistant", "content": content or ""}
-                    if thinking:
-                        assistant_final["reasoning_content"] = thinking
-                    self.history.append(assistant_final)
+                    self.history.save()
+                    current_asst_persisted = True
+
+                # ── compaction handling after the turn ──
+                if self._need_compact:
+                    # This was the compaction turn (tools disabled): the
+                    # assistant output is the handoff summary. Rebuild the
+                    # context (marker + fresh system + compact_summary), then
+                    # re-append any steering messages that arrived during the
+                    # compact turn so the model responds to them on the fresh
+                    # context instead of losing them behind the marker.
+                    pending_steers = self._finalize_compaction(asst.content)
+                    for s in pending_steers:
+                        user_seq = self._count_user_messages()
+                        self.history.append(UserMessage(s))
+                        await self._send_stream_event({"type": "user", "text": s, "user_seq": user_seq})
+                    self._token_covered = len(self.history.raw)
+                    self._persist_token_count()
+                    await self._broker.commit(len(self.history.raw))
+                    await self._send_stream_event({"type": "compact"})
+                elif should_compact(self):
+                    # Token threshold exceeded: request a compaction turn next.
+                    # The compact prompt is a marked user message -- it combines
+                    # with any pending steering via combine_new_messages and the
+                    # next turn runs with tools disabled. Steering that arrives
+                    # during the compact turn is re-appended past the marker by
+                    # _finalize_compaction so it is not lost.
+                    self._need_compact = True
+                    prompt = build_compact_prompt(self)
+                    user_seq = self._count_user_messages()
+                    self.history.append(UserMessage(prompt, is_compact_prompt=True))
+                    await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
+                elif not asst.tool_calls:
+                    # Plain-text final turn, nothing pending: the run completes.
                     self._final_state = "completed"
-                    self._final_result = content or ""
-                    await self._send_stream_event({"type": "done"})
-                    break
+                    self._final_result = asst.content
+
+            # Loop exited normally: the run completed with no pending work.
+            # Emit ``done`` only for a completed run (max_steps already
+            # emitted ``error`` above).
+            if self._final_state == "completed":
+                await self._send_stream_event({"type": "done"})
 
         except asyncio.CancelledError:
             if self._interrupted:
                 # A subagent interrupt hard-stops the current turn mid-flight
-                # (LLM stream or bash). Discard the partial output, clear the
-                # pending cancellation, and run one summary turn before exiting
-                # cleanly -- so the parent's task tool gets a summary result
-                # instead of a bare cancellation. (A real cancel from the
-                # parent leaves _interrupted False and falls through to the
-                # hard-stop path below.)
+                # (LLM stream or bash). Clear the pending cancellation, keep
+                # any partial output (e.g. half-streamed thinking) so the
+                # summary turn carries it to the API, salvage partial bash
+                # output, then run one summary turn before exiting cleanly --
+                # so the parent's task tool gets a summary result instead of a
+                # bare cancellation. (A real cancel from the parent leaves
+                # _interrupted False and falls through to the hard-stop path.)
                 if self._task is not None:
                     self._task.uncancel()
+                # Keep partial output from an interrupted in-flight turn
+                # (mid-drain, unpersisted) so the summary turn's API call
+                # carries the half-streamed thinking -- a bare discard would
+                # lose the model's reasoning. Only drop a truly empty
+                # placeholder (nothing streamed yet). A persisted turn (mid
+                # tool-execution) is already in history.
+                if current_asst is not None and not current_asst_persisted:
+                    if self.history.raw and self.history.raw[-1] is current_asst:
+                        if current_asst.thinking or current_asst.content or current_asst.tool_calls:
+                            self.history.save()
+                        else:
+                            self.history.pop()
+                # Salvage partial bash output for the in-flight tool call.
+                self._salvage_inflight_tool(current_asst)
                 self._patch_dangling_tool_calls()
                 try:
                     await self._summarize_and_exit()
@@ -814,20 +923,31 @@ class Agent:
                     self._final_result = f"interrupt summary failed: {e}"
                     await self._send_stream_event({"type": "error", "text": self._final_result})
                 return
-            content = "".join(content_parts)
-            thinking = "".join(thinking_parts)
+            # Hard cancel: salvage partial output from the in-flight turn.
             self._final_state = "error"
             self._final_result = "cancelled"
             # Propagate cancellation to running subagents (hard stop, no summary).
             for c in list(self._children):
                 if c._task and not c._task.done():
                     c._task.cancel()
-            self._log.warning("RUN cancelled content_len=%d thinking_len=%d", len(content), len(thinking))
-            if content or thinking:
-                msg: dict = {"role": "assistant", "content": content or ""}
-                if thinking:
-                    msg["reasoning_content"] = thinking
-                self.history.append(msg)
+            # Salvage partial bash output for the in-flight tool call before
+            # persisting, so the model sees what the cancelled command produced
+            # instead of a bare [interrupted] placeholder on the next run.
+            self._salvage_inflight_tool(current_asst)
+            # Persist the in-flight assistant message if it has any content,
+            # thinking, or tool_calls; otherwise drop the empty placeholder so
+            # history stays clean.
+            if current_asst is not None and self.history.raw and self.history.raw[-1] is current_asst:
+                if current_asst.content or current_asst.thinking or current_asst.tool_calls:
+                    self.history.save()
+                    self._log.warning(
+                        "RUN cancelled content_len=%d thinking_len=%d tool_calls=%d",
+                        len(current_asst.content), len(current_asst.thinking), len(current_asst.tool_calls))
+                else:
+                    self.history.pop()
+                    self._log.warning("RUN cancelled (no partial output)")
+            else:
+                self._log.warning("RUN cancelled")
             await self._send_stream_event({"type": "cancelled"})
             raise
         except Exception as e:
@@ -867,24 +987,20 @@ class Agent:
             self._broker.set_running(False)
             self._task = None
 
-    def _check_steer(self) -> bool:
-        """Check if steering messages were queued and add them to history. Returns True if steered."""
-        if not self._steer_messages:
-            return False
-        messages = [{"role": "user", "content": m} for m in self._steer_messages]
-        self._steer_messages.clear()
-        self._steering.clear()
-        self.history.extend(messages)
-        return True
-
     async def steer(self, message: str):
-        user_seq = self._count_user_messages() + len(self._steer_messages)
+        """Append a steering user message mid-run.
+
+        The message goes straight into history (no queue): the run loop is
+        alive, so its next continuation check picks it up and runs another turn
+        so the model can respond. It lands after the in-flight assistant turn,
+        never splitting tool_calls from their results.
+        """
+        user_seq = self._count_user_messages()
+        self.history.append(UserMessage(message))
         await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
-        self._steer_messages.append(message)
-        self._steering.set()
 
     def add_user_message(self, message: str):
-        self.history.append({"role": "user", "content": message})
+        self.history.append(UserMessage(message))
 
     def is_running(self) -> bool:
         return self._broker.is_running
@@ -912,6 +1028,12 @@ class Agent:
             self._plan_mode,
             [str(d) for d in self._additional_dirs],
         )
+        # Expand the committed typed messages into the flat v1-style dict list
+        # the frontend expects (an AssistantMessage unfolds into its assistant
+        # dict followed by its tool-result dicts).
+        snapshot["history"] = [
+            d for m in snapshot["history"] for d in m.to_frontend_dicts()
+        ]
         snapshot["is_subagent"] = self._subagent_type is not None
         snapshot["sealed"] = self._sealed
         snapshot["subagent_type"] = self._subagent_type
@@ -922,6 +1044,7 @@ class Agent:
         self._broker.detach(q)
 
     def cancel(self):
+        self._kill_current_proc()
         if self._task and not self._task.done():
             self._task.cancel()
         # Propagate cancellation to running subagents (hard stop, no summary).
@@ -930,6 +1053,7 @@ class Agent:
 
     async def stop(self) -> None:
         """Cancel an in-progress run and wait for it to fully finish."""
+        self._kill_current_proc()
         task = self._task
         if task and not task.done():
             task.cancel()
@@ -1058,32 +1182,87 @@ class Agent:
             body = "\n".join(errors) + "\n" + body
         return {"result": f"<task_result>\n{body}\n</task_result>"}
 
+    def _format_partial_bash_output(self, tool_call_id: str, args: dict) -> str | None:
+        """Reconstruct the partial output streamed so far for a bash call.
+
+        Mirrors BashTool's output shape (stdout, then a ``[stderr]`` section)
+        but from the ``on_output`` buffer accumulated in the worker thread,
+        since the cancelled ``execute_tool`` never returns its result. Returns
+        None when nothing was streamed.
+        """
+        buf = self._tool_output_buffer.get(tool_call_id)
+        if not buf:
+            return None
+        snapshot = list(buf)  # copy: reader threads may still append
+        out_lines = [text for text, src in snapshot if src == "stdout"]
+        err_lines = [text for text, src in snapshot if src == "stderr"]
+        output = "\n".join(out_lines)
+        if err_lines:
+            if output:
+                output += "\n"
+            output += "[stderr]\n" + "\n".join(err_lines)
+        if not output:
+            return None
+        max_lines = args.get("max_output_lines", 100)
+        max_chars = args.get("max_output_chars", 10000)
+        return truncate_output(output, max_lines, max_chars)
+
+    def _salvage_inflight_tool(self, asst: AssistantMessage | None) -> None:
+        """Fill the in-flight bash tool's result with partial output on cancel.
+
+        When a run is cancelled mid-tool-execution, the executing tool call has
+        no result yet. For bash, salvage the output streamed so far (via
+        ``on_output``) and append a note that the user cancelled, so the model
+        sees what the command produced instead of a bare ``[interrupted]``
+        placeholder. Only the first unanswered tool call (the one actually
+        executing) is considered; later, not-yet-started calls are left for
+        ``_patch_dangling_tool_calls``.
+        """
+        if asst is None or not asst.tool_calls:
+            return
+        answered = {tr.tool_call_id for tr in asst.tool_results}
+        for tc in asst.tool_calls:
+            if tc.id and tc.id not in answered:
+                # The first unanswered tool call is the one that was executing.
+                if tc.name == "bash":
+                    try:
+                        args = json.loads(tc.arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                    partial = self._format_partial_bash_output(tc.id, args)
+                    note = "\n[command cancelled by user; output above is partial]"
+                    content = (partial + note) if partial else "[command cancelled by user]"
+                    asst.tool_results.append(ToolResult(tool_call_id=tc.id, content=content))
+                    self._tool_output_buffer.pop(tc.id, None)
+                    self.history.save()
+                break
+
     def _patch_dangling_tool_calls(self) -> None:
         """Fill placeholder tool results for tool_calls lacking a result.
 
-        An interrupt cancels a turn mid-flight. If the cancellation lands
-        after the assistant message (with ``tool_calls``) was appended but
-        before every tool result landed, history is left inconsistent:
-        OpenAI-compatible APIs reject ``tool_calls`` that are not followed by
-        a matching ``tool`` result, which would break the summary turn. Scan
-        the trailing assistant message and append a placeholder result for
-        any unanswered ``tool_call_id``.
+        An interrupt or crash can leave a trailing :class:`AssistantMessage`
+        with ``tool_calls`` but not all ``tool_results``. OpenAI-compatible
+        APIs reject ``tool_calls`` without matching results, which would break
+        the next turn. Scan the trailing assistant message and append a
+        placeholder result for any unanswered ``tool_call_id``.
         """
         raw = self.history.raw
         if not raw:
             return
         last = raw[-1]
-        if last.get("role") != "assistant" or not last.get("tool_calls"):
+        if not isinstance(last, AssistantMessage) or not last.tool_calls:
             return
-        answered = {m.get("tool_call_id") for m in raw if m.get("role") == "tool"}
-        for tc in last["tool_calls"]:
-            tc_id = tc.get("id")
-            if tc_id and tc_id not in answered:
-                self.history.append({
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "content": "[interrupted]",
-                })
+        answered = {tr.tool_call_id for tr in last.tool_results}
+        patched = False
+        for tc in last.tool_calls:
+            if tc.id and tc.id not in answered:
+                last.tool_results.append(ToolResult(
+                    tool_call_id=tc.id,
+                    content="[interrupted]",
+                ))
+                patched = True
+        if patched:
+            self.history.save()
 
     async def _summarize_and_exit(self) -> None:
         """Produce a final summary turn after an interrupt, then exit.
@@ -1092,23 +1271,25 @@ class Agent:
         summary that becomes this subagent's result.
         """
         summary_prompt = "你被中断了。请简明总结你目前的发现/进展，然后停止。"
-        self.history.append({"role": "user", "content": summary_prompt})
+        self.history.append(UserMessage(summary_prompt))
         await self._send_stream_event({"type": "user", "text": summary_prompt, "user_seq": self._count_user_messages() - 1})
         await self._send_stream_event({"type": "turn"})
         messages = self.history.get_api_messages()
         stream = await self.chat_completion(messages=messages, stream=True, tools=None)
-        parts: list[str] = []
+        asst = AssistantMessage()
+        self.history.append(asst, persist=False)
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None
             if delta is None:
                 continue
             if getattr(delta, "content", None):
-                parts.append(delta.content)
+                asst.content += delta.content
                 await self._send_stream_event({"type": "text", "text": delta.content})
-        summary = "".join(parts) or "[no summary produced]"
-        self.history.append({"role": "assistant", "content": summary})
+        if not asst.content:
+            asst.content = "[no summary produced]"
+        self.history.save()
         self._final_state = "interrupted"
-        self._final_result = summary
+        self._final_result = asst.content
         await self._send_stream_event({"type": "interrupted"})
 
     async def _broadcast_subagent_permission(self, child: Agent, path: str, tool: str, message: str) -> None:
@@ -1133,49 +1314,59 @@ class Agent:
 
         Two cases:
 
-        * The message is already in history (the model has seen it): stop the
-          run, truncate history to just before that message, then start a fresh
-          run with the edited text.
-        * The message is still queued as a steering message the model has not
-          read yet: replace it in place without interrupting the run.
+        * The message has already been read by the model (``user_seq`` below
+          the read cursor): stop the run, truncate history to just before that
+          message, then start a fresh run with the edited text.
+        * The message has not been read yet (a steering message still pending
+          in history): swap its text in place without interrupting the run.
 
         Returns ``"rerun"`` or ``"queued"`` so the client knows whether to
         reconnect (rerun rebuilds from the truncated history) or just apply a
         local text update (queued).
         """
-        history_users = self._count_user_messages()
-        if user_seq < history_users:
+        # Locate the user_seq-th real user message (compact summaries excluded,
+        # matching _count_user_messages).
+        target = -1
+        count = 0
+        for i, msg in enumerate(self.history.raw):
+            if isinstance(msg, UserMessage) and not msg.compact_summary:
+                if count == user_seq:
+                    target = i
+                    break
+                count += 1
+        if target < 0:
+            raise ValueError("user message not found")
+
+        if user_seq < self._user_read_cursor or not self.is_running():
+            # Already read by the model, or no run is alive to consume an
+            # in-place edit: rerun from the edited message.
             if self.is_running():
                 await self.stop()
-            target = -1
-            count = 0
-            for i, msg in enumerate(self.history.raw):
-                if msg.get("role") == "user":
-                    if count == user_seq:
-                        target = i
-                        break
-                    count += 1
             self.history.truncate(target)
+            # Truncation removed the messages the cursor counted past; align it
+            # to the truncated history so start()'s new message reads as unread
+            # and the run loop actually turns. Otherwise (k+1) > old_cursor is
+            # false and the run exits immediately without calling the model.
+            self._user_read_cursor = self._count_user_messages()
             await self._broker.commit(target)
             await self.start(message)
             return "rerun"
 
-        # Still queued, not yet read by the model: swap the text in place.
-        k = user_seq - history_users
-        if not (0 <= k < len(self._steer_messages)):
-            raise ValueError("user message not found")
-        self._steer_messages[k] = message
+        # Not yet read and a run is live (steering message pending): edit in place.
+        self.history.raw[target].content = message
+        self.history.save()
         await self._send_stream_event({"type": "user_edit", "user_seq": user_seq, "text": message})
         return "queued"
 
     async def compact_now(self) -> None:
         """Manually trigger context compaction (the ``/compact`` command).
 
-        Compacts regardless of the token threshold. The compact turn is
-        streamed like normal output. If there is no real conversation to
-        compact (e.g. right after a previous compact), a status notice is sent
-        instead. After compaction, if a steering message arrived mid-compact,
-        a normal run is kicked off to consume it; otherwise the run ends.
+        Compacts regardless of the token threshold. The compact prompt is
+        appended as a normal user message and the run loop handles the rest:
+        the next turn runs with tools disabled (handoff summary), then the
+        context is rebuilt and the model continues on the fresh context. If
+        there is no real conversation to compact (e.g. right after a previous
+        compact), a status notice is sent instead.
         """
         self._broker.set_running(True)
 
@@ -1191,16 +1382,9 @@ class Agent:
             self._task = None
             return
 
-        await self._compact_turn()
-        await self._broker.commit(len(self.history.raw))
-        await self._send_stream_event({
-            "type": "usage",
-            "token_count": self._token_count,
-            "max_context_tokens": self.max_context_tokens,
-        })
-        if self._steer_messages:
-            self._task = asyncio.create_task(self.run())
-        else:
-            await self._send_stream_event({"type": "done"})
-            self._broker.set_running(False)
-            self._task = None
+        self._need_compact = True
+        prompt = build_compact_prompt(self)
+        user_seq = self._count_user_messages()
+        self.history.append(UserMessage(prompt, is_compact_prompt=True))
+        await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
+        self._task = asyncio.create_task(self.run())

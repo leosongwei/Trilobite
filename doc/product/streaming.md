@@ -28,7 +28,7 @@ per-session 事件总线，维护：
 
 ### Agent (`src/trilobite/agent.py`)
 
-* `start(message)` / `steer(message)`：async，发 `user` 事件后启动/转向 run。
+* `start(message)` / `steer(message)`：async，都 append 一条 user 消息并发 `user` 事件。`start` 停机时调用，启动新 run task；`steer` 仅 run 进行中调用，消息直接落 history，run 循环在下一个 turn 边界（续跑判断）拾取。
 * `run()`：不再接收 queue 参数，通过 `_send_stream_event` → `broker.publish` 广播；run 结束在 `finally` 中兜底清除 running 标志。
 * 工具执行不阻塞事件循环：`execute_tool` 仍是同步函数，但 `run()` 在调用处用 `asyncio.to_thread(...)` 把它丢到工作线程执行。所有 agent / subagent 共享同一个事件循环，若让阻塞调用直接在循环里跑，长 bash 命令会冻住整个循环——SSE 心跳发不出、新连接连 `init` 都拿不到、subagent 跑 bash 时主界面整体卡死（issue #5）。丢线程后循环保持响应；`task` 仍走 `await self._run_subagents`，`execute_tool` 本身不异步化。bash 内部用 `Popen`（`start_new_session=True`）启动命令，两个读取线程逐行 drain stdout/stderr，每行经 `on_output` 回调转发为 `tool_output` 事件流式推送到前端（工作线程通过 `asyncio.run_coroutine_threadsafe` 把事件调度回事件循环）；同时收集所有行用于最终拼接 `[stderr]`/`[exit code]` 标记并按 `max_output_lines`/`max_output_chars` 截断后作为 `tool_result` 返回。进程句柄经 `on_proc` 回注册到 agent，`interrupt()` 杀整个进程组让长命令立即返回再走总结（详见 subagent.md 的「bash 中断」）。
 * `attach_subscriber()` / `detach_subscriber(q)`：供 `/stream` 端点使用。
@@ -45,7 +45,7 @@ per-session 事件总线，维护：
 |---|---|---|
 | `init` | `history, is_running, token_count, max_context_tokens, plan_mode, additional_dirs` | 连接时首发，前端据此重建对话与状态 |
 | `user` | `text, user_seq` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`user_seq` 为该消息在所有 user 消息中的序号 |
-| `user_edit` | `user_seq, text` | revert 编辑队列中尚未被模型读取的 steer 消息时发，前端就地更新对应 user 气泡 |
+| `user_edit` | `user_seq, text` | revert 编辑尚未被模型读取的 steer 消息时发（消息已在 history 但模型未读到），前端就地更新对应 user 气泡 |
 | `turn` | — | 一个 LLM 回合开始，置 `is_running=true` |
 | `thinking` | `text` | 思考增量 |
 | `text` | `text` | 正文增量 |

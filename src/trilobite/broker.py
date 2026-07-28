@@ -92,7 +92,7 @@ class StreamBroker:
 
     async def attach(
         self,
-        history_raw: list[dict],
+        history_raw: list,
         token_count: int,
         max_context_tokens: int,
         plan_mode: bool,
@@ -102,8 +102,10 @@ class StreamBroker:
 
         Replay the current run's buffered events into the client's queue, then
         build the ``init`` snapshot from history up to ``_persisted_len``.
-        Everything happens under the lock so the snapshot and the replay see a
-        consistent point-in-time view (no event lost, none duplicated).
+        ``history_raw`` is the typed message list (the caller expands the
+        committed slice into flat dicts for the snapshot). Everything happens
+        under the lock so the snapshot and the replay see a consistent
+        point-in-time view (no event lost, none duplicated).
         """
         async with self._lock:
             q: asyncio.Queue = asyncio.Queue()
