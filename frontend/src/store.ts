@@ -371,6 +371,13 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
         i++
         continue
       }
+      // A mode-change notice is persisted as role:user for API prefix/cache
+      // stability but is not a real user turn, so it is hidden here and does
+      // not receive a user_seq (matching _count_user_messages).
+      if (msg.is_mode_notification) {
+        i++
+        continue
+      }
       items.push({
         kind: 'user',
         content: msg.content || '',

@@ -19,36 +19,30 @@ Trilobite 有两种工作模式，由前端切换按钮控制：
 2. Agent 更新 `_plan_mode` 标记
 3. 模式持久化到 `session.json`（重启后恢复）
 
-**通知是动态注入的，不存入 history。** 用户切换模式时不会立即产生任何消息。只有当用户发送消息触发 `run()` 时，才检查模式是否变化。如果变了，在构建 API messages 时动态插入一条通知；如果没变，不打扰模型。
+**通知持久化为 history 末尾的 user 消息。** 用户切换模式时不会立即产生任何消息。只有当用户发送消息触发 `run()` 时，才检查模式是否变化。如果变了，把通知作为一条带 `is_mode_notification` 标记的 user 消息 append 到 history 末尾（在用户的新消息之后）；如果没变，不打扰模型。
+
+> 通知持久化到 history 而非临时插入请求，是为了保持 API 请求前缀单调增长、命中上下文缓存：临时插入到 messages 开头会破坏前缀，且不持久化会导致下一轮前缀再次分叉。通知对前端隐藏（`is_mode_notification` 标记），也不计入 `user_seq`。
 
 ### 注入机制
 
 `run()` 开始时（用户发消息时）检查一次：
 
 ```python
-mode_notification = None
 if self._last_notified_mode is None:          # 首次调用或 session 恢复
-    self._last_notified_mode = self._plan_mode # 同步，不注入
+    self._last_notified_mode = self._plan_mode # 同步，不追加
 elif self._plan_mode != self._last_notified_mode:
-    mode_notification = PLAN_MODE_NOTIFICATION or BUILD_MODE_NOTIFICATION
+    notif = PLAN_MODE_NOTIFICATION or BUILD_MODE_NOTIFICATION
     self._last_notified_mode = self._plan_mode
+    self.history.append(UserMessage(notif, is_mode_notification=True))
 ```
 
-在第一次 API 请求中，将通知插入 messages 列表（system 消息之后），后续工具调用轮次不重复注入：
-
-```python
-messages = self.history.get_api_messages()
-if mode_notification:
-    messages.insert(1, {"role": "user", "content": mode_notification})
-    mode_notification = None  # 只注入一次
-```
+通知作为普通 user 消息进入 history，`get_api_messages()` 自然会把它投影进 API 请求（与相邻 user 消息合并）。因为它 append 在末尾，已有前缀不变；持久化后后续每轮前缀一致。
 
 **效果**：
-- 用户快速切换 Plan->Build->Plan，净变化为零 -> 不注入任何通知
-- 用户切换模式后发消息 -> 注入通知，模型知道模式变了
-- 用户切换模式但没发消息 -> 不注入（模型不需要知道）
-- 模型在工具调用循环中 -> 不重复注入（只注入一次）
-- Session 恢复后首次调用 -> 同步状态，不注入通知
+- 用户快速切换 Plan->Build->Plan，净变化为零 -> 不追加任何通知
+- 用户切换模式后发消息 -> 追加通知，模型知道模式变了
+- 用户切换模式但没发消息 -> 不追加（模型不需要知道）
+- Session 恢复后首次调用 -> 同步状态，不追加通知
 
 ## 通知文案
 
@@ -66,7 +60,7 @@ You are no longer in read-only mode.
 You are permitted to make file changes, run shell commands, and utilize your arsenal of tools as needed.
 ```
 
-通知**不持久化在 history 中**，只在 API 请求的 messages 列表中临时存在。history.json 保持干净，前端不会显示通知消息。
+通知**持久化在 history 中**（作为带 `is_mode_notification` 标记的 user 消息，append 在用户消息之后），但对前端隐藏、不计入 `user_seq`。前端通过 plan/build 切换按钮显示当前模式，无需重复展示通知文本。
 
 ## Plan 模式行为
 
@@ -129,7 +123,7 @@ Plan 模式下，LLM 的方案就是普通的文本回复。没有特殊的 plan
 用户：帮我设计一个用户登录方案
 
        -> run() 开始，检测到模式从 Build 变为 Plan
-       -> messages 中注入 Plan 通知（不存入 history）
+       -> history 末尾追加 Plan 通知（is_mode_notification，前端隐藏）
 
 Agent：调用 read 读取 server.py
       调用 bash 运行 grep -r "auth" src/
@@ -143,7 +137,7 @@ Agent：调用 read 读取 server.py
 用户：按这个方案做吧
 
        -> run() 开始，检测到模式从 Plan 变为 Build
-       -> messages 中注入 Build 通知（不存入 history）
+       -> history 末尾追加 Build 通知（is_mode_notification，前端隐藏）
 
 Agent：调用 write 创建 auth.py
       调用 write 修改 server.py
@@ -153,22 +147,24 @@ Agent：调用 write 创建 auth.py
 
 ### history 记录
 
-history.json 中**没有**模式切换通知，只有用户消息和模型回复：
+模式切换通知作为带 `is_mode_notification` 标记的 user 消息持久化在 history.json 中（紧跟用户消息之后），但对前端隐藏、不计入 `user_seq`：
 
 ```json
 [
   { "role": "system", "content": "..." },
   { "role": "user", "content": "帮我设计一个用户登录方案" },
+  { "role": "user", "content": "Your operational mode has changed...", "is_mode_notification": true },
   { "role": "assistant", "tool_calls": [{"function": {"name": "read", ...}}] },
   { "role": "tool", "content": "..." },
   { "role": "assistant", "content": "建议添加 JWT 认证..." },
   { "role": "user", "content": "按这个方案做吧" },
+  { "role": "user", "content": "Your operational mode has changed...", "is_mode_notification": true },
   { "role": "assistant", "tool_calls": [{"function": {"name": "edit", ...}}] },
   { "role": "tool", "content": "..." }
 ]
 ```
 
-模式通知只存在于 API 请求的 messages 中，不持久化。
+通知持久化是为了保持 API 请求前缀单调增长、命中上下文缓存；前端通过 `is_mode_notification` 标记跳过渲染。
 
 ### 快速切换不产生通知
 

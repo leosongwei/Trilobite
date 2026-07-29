@@ -134,7 +134,7 @@ API 收到: ... assistant, tool, tool, {user: "用 Python\n\n另外加上日志"
 压缩完全统一进主循环，没有专门的 compact 方法。流程：
 
 1. **触发**：一轮（含工具执行）结束后读 token 用量，若超过阈值，标记 `_need_compact=True` 并把压缩指令（`build_compact_prompt`）作为一条普通 `UserMessage` append 进 history。它和任何未读的 steering 消息一样，是 user 消息--不区分「正常 prompt」和「steering prompt」。
-2. **压缩 turn**：下一轮续跑判断发现有新 user 消息（压缩指令），照常跑一轮；但因为 `_need_compact=True`，`tools=None`（关闭工具），模型只能产出文本 handoff note。这轮的 `get_api_messages` 会把 steering + 压缩指令用 `combine_new_messages` 合并成一条 user，模型一次性读到全部并写进 note。
+2. **压缩 turn**：下一轮续跑判断发现有新 user 消息（压缩指令），照常跑一轮。压缩 turn 仍发送完整的工具定义（与正常轮一致，保持请求前缀稳定以命中上下文缓存），由 `COMPACTION_PROMPT` 指示模型只产出文本 handoff note、不调用工具。若模型仍调用工具，调用会被拦截（不执行，返回"正在压缩"提示），该 turn 不 finalize 而是重试直到模型输出纯文本 summary。这轮的 `get_api_messages` 会把 steering + 压缩指令用 `combine_new_messages` 合并成一条 user，模型一次性读到全部并写进 note。
 3. **重建**：压缩 turn（纯文本）结束后，`_finalize_compaction` 落盘一个无内容的 `CompactMarker`、一条重建的 `SystemMessage`、以及把 note 包成 `<compact>...</compact>` 的 `compact_summary` user 消息。`get_api_messages` 从 marker 之后开始，所以压缩前的全部（steering、压缩指令、note turn）从 API 上下文丢弃，但留在持久化历史里。重置 token 计数，设 `_force_run`。
 4. **继续**：`_force_run` 让主循环在重建的上下文上再跑一轮，模型基于 note 继续。
 
