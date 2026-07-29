@@ -65,6 +65,30 @@ chunk.usage.total_tokens
 
 `Agent.chat_completion(messages, stream=False)` -- 用于 compaction 等场景，返回 `resp.json()` 字典。
 
+## VLM / 图片输入
+
+当 `config.yaml` 中 `enable_vl: true` 时，前端在 send 按钮左侧显示“添加图片”按钮，允许一次附带多张图片。用户需自行把 `model` 改为支持视觉的模型（如 `gpt-4o` 等）。
+
+图片上传流程：
+
+1. 前端把图片转成 base64 `data_url`，随 `/api/sessions/{id}/message` 一起发送。
+2. 后端把二进制内容写入 `sessions/<id>/images/<hash>.ext`，并在 `UserMessage` 里保留 `Image(filename, mime_type, original_name)` 元数据。
+3. `History.get_api_messages(image_dir=...)` 在构建 API 请求时读取图片文件、base64 编码，生成 OpenAI 兼容的 `content` 数组：
+
+```json
+{
+  "role": "user",
+  "content": [
+    {"type": "text", "text": "看看这张图"},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,...", "detail": "auto"}}
+  ]
+}
+```
+
+图片文件通过 `/api/sessions/{id}/images/{filename}` 提供给前端渲染。
+
+如果之后把 `enable_vl` 改回 `false`，新上传的图片会被丢弃，但历史中的图片元数据和文件会保留；`History.get_api_messages(enable_vl=false)` 会在构造 LLM 请求时自动去掉图片 part，只保留文字，让同一份历史可以在非视觉模型上继续。
+
 ## 调试日志
 
 每个 session 的 LLM 通信细节记录到 `sessions/<name>/agent.log`，用于排查流式输出被截断等问题。

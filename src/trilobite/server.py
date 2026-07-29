@@ -1,17 +1,21 @@
 import asyncio
+import base64
+import hashlib
 import importlib.metadata
 import json
+import re
 import time
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
 from src.trilobite.config import init_config, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
+from src.trilobite.messages import Image
 
 app = FastAPI(title="Trilobite")
 
@@ -25,8 +29,16 @@ class SessionCreate(BaseModel):
 class RenameRequest(BaseModel):
     name: str
 
+class ImageAttachment(BaseModel):
+    mime_type: str
+    data_url: str
+    original_name: str | None = None
+
+
 class MessageRequest(BaseModel):
     message: str
+    images: list[ImageAttachment] | None = None
+
 
 class ModeRequest(BaseModel):
     mode: str
@@ -42,6 +54,52 @@ class SessionInfo(BaseModel):
     working_dir: str
     is_running: bool
     history_length: int
+
+
+def _mime_to_ext(mime_type: str) -> str:
+    return {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/svg+xml": ".svg",
+    }.get(mime_type.lower(), ".bin")
+
+
+def _ext_to_mime(ext: str) -> str:
+    return {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+    }.get(ext.lower(), "application/octet-stream")
+
+
+def _decode_data_url(data_url: str) -> bytes:
+    m = re.match(r"^data:([^;]+);base64,(.+)$", data_url)
+    if not m:
+        raise ValueError("invalid data URL")
+    return base64.b64decode(m.group(2))
+
+
+def _save_images(session_dir: Path, attachments: list[ImageAttachment]) -> list[Image]:
+    images_dir = session_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    images: list[Image] = []
+    for att in attachments:
+        data = _decode_data_url(att.data_url)
+        ext = _mime_to_ext(att.mime_type)
+        filename = f"{hashlib.sha256(data).hexdigest()[:12]}{ext}"
+        (images_dir / filename).write_bytes(data)
+        images.append(Image(
+            filename=filename,
+            mime_type=att.mime_type,
+            original_name=att.original_name or filename,
+        ))
+    return images
 
 
 @app.on_event("startup")
@@ -62,6 +120,11 @@ async def get_version():
     except importlib.metadata.PackageNotFoundError:
         version = "unknown"
     return {"version": version}
+
+
+@app.get("/api/config")
+async def get_config():
+    return {"enable_vl": bool(config.get("enable_vl", False))}
 
 
 @app.get("/api/sessions")
@@ -204,12 +267,18 @@ async def send_message(name: str, req: MessageRequest):
         await agent.compact_now()
         return {"status": "compacted"}
     if agent.is_running():
+        # Steering only carries text; attached images are ignored mid-run.
         await agent.steer(req.message)
         return {"status": "steered"}
     # The agent runs as an independent task; the HTTP response returns
     # immediately. Output is delivered through the /stream subscription
     # endpoint, so closing the browser never cancels an in-progress run.
-    await agent.start(req.message)
+    if not config.get("enable_vl", False):
+        # Image support is disabled: do not save new attachments, but keep any
+        # images already stored in the session history.
+        req.images = None
+    images = _save_images(agent.session_dir, req.images) if req.images else []
+    await agent.start(req.message, images=images or None)
     return {"status": "started"}
 
 
@@ -387,6 +456,21 @@ async def get_history(name: str):
         from src.trilobite.history import History
         return History(history_path).to_flat_dicts()
     return []
+
+
+@app.get("/api/sessions/{name}/images/{filename}")
+async def get_image(name: str, filename: str):
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    # Only serve hash-style filenames under the session's images directory.
+    if not re.fullmatch(r"[a-f0-9]{12}\.[a-z0-9]+", filename):
+        raise HTTPException(400, "invalid image filename")
+    path = session_dir / "images" / filename
+    if not path.is_file():
+        raise HTTPException(404, "image not found")
+    mime = _ext_to_mime(path.suffix)
+    return Response(path.read_bytes(), media_type=mime)
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")

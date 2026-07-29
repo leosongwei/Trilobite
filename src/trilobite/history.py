@@ -93,7 +93,7 @@ class History:
         self._messages = self._messages[:index]
         self.save()
 
-    def get_api_messages(self) -> list[dict]:
+    def get_api_messages(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         """Return messages for the API, starting just past the last compact marker.
 
         A :class:`CompactMarker` acts as a fresh start: every message up to and
@@ -106,6 +106,13 @@ class History:
         Consecutive user messages are combined with :func:`combine_new_messages`
         (``<multi_message/>`` separators) so the API never sees repeated
         same-role messages and the model can tell distinct user inputs apart.
+
+        ``image_dir`` is the directory where attached image files are stored;
+        it is required when any user message references images.
+
+        ``enable_vl`` controls whether image parts are actually sent to the
+        model. When false, images are stripped from the API payload but kept
+        in the persisted history.
         """
         start = 0
         for i, msg in enumerate(self._messages):
@@ -136,7 +143,7 @@ class History:
                 while i < len(msgs) and isinstance(msgs[i], UserMessage):
                     group.append(msgs[i])
                     i += 1
-                result.append(combine_new_messages(group))
+                result.append(combine_new_messages(group, image_dir, enable_vl))
             else:
                 for d in msg.to_api_dicts():
                     result.append(d)

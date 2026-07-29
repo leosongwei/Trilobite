@@ -3,6 +3,15 @@
     <template v-if="!editing">
       <button class="user-pencil" @click="startEdit" title="编辑并重发">✎</button>
       <span class="message user">{{ item.content }}</span>
+      <div v-if="item.images?.length" class="user-images">
+        <img
+          v-for="img in item.images"
+          :key="img.filename"
+          class="user-image"
+          :src="`/api/sessions/${sessionId}/images/${img.filename}`"
+          :title="img.original_name"
+        />
+      </div>
     </template>
     <div v-else class="user-edit-wrap">
       <textarea
@@ -26,7 +35,8 @@ import type { UserItem } from '../types'
 import { useStore } from '../store'
 
 const props = defineProps<{ item: UserItem }>()
-const { revert } = useStore()
+const { state, revert } = useStore()
+const sessionId = state.currentSession
 
 const editing = ref(false)
 const draft = ref('')
@@ -51,3 +61,19 @@ async function confirmEdit() {
   }
 }
 </script>
+
+<style scoped>
+.user-images {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.user-image {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #3c3c3c;
+}
+</style>

@@ -20,6 +20,7 @@ from src.trilobite.history import History
 from src.trilobite.messages import (
     AssistantMessage,
     CompactMarker,
+    Image,
     SystemMessage,
     ToolCall,
     ToolResult,
@@ -651,7 +652,10 @@ class Agent:
                     self._final_result = f"max_steps ({self._max_steps}) exceeded"
                     await self._send_stream_event({"type": "error", "text": self._final_result})
                     break
-                messages = self.history.get_api_messages()
+                messages = self.history.get_api_messages(
+                    image_dir=self.session_dir / "images",
+                    enable_vl=bool(self.config.get("enable_vl", False)),
+                )
                 # Record how many user messages the model is reading this turn
                 # (at get_api_messages time, before the stream drains). A steer
                 # arriving mid-drain lands after this cursor and drives the
@@ -1028,13 +1032,13 @@ class Agent:
         self.history.append(UserMessage(message))
         await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
 
-    def add_user_message(self, message: str):
-        self.history.append(UserMessage(message))
+    def add_user_message(self, message: str, images: list[Image] | None = None):
+        self.history.append(UserMessage(message, images=images))
 
     def is_running(self) -> bool:
         return self._broker.is_running
 
-    async def start(self, message: str) -> None:
+    async def start(self, message: str, images: list[Image] | None = None) -> None:
         """Begin a run independently of any HTTP request lifecycle.
 
         Closing a browser only drops SSE subscribers; the agent keeps running
@@ -1047,9 +1051,14 @@ class Agent:
         # Subagents carry a description instead and are never auto-titled.
         if user_seq == 0 and self._subagent_type is None:
             self._maybe_auto_title(message)
-        self.add_user_message(message)
+        self.add_user_message(message, images=images)
         self._broker.set_running(True)
-        await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
+        await self._send_stream_event({
+            "type": "user",
+            "text": message,
+            "images": [img.to_frontend_dict() for img in (images or [])] or None,
+            "user_seq": user_seq,
+        })
         self._task = asyncio.create_task(self.run())
 
     async def attach_subscriber(self) -> tuple[asyncio.Queue, dict]:
@@ -1071,6 +1080,7 @@ class Agent:
         snapshot["sealed"] = self._sealed
         snapshot["subagent_type"] = self._subagent_type
         snapshot["description"] = self._description
+        snapshot["enable_vl"] = bool(self.config.get("enable_vl", False))
         return q, snapshot
 
     def detach_subscriber(self, q: asyncio.Queue) -> None:
@@ -1315,7 +1325,10 @@ class Agent:
         self.history.append(UserMessage(summary_prompt))
         await self._send_stream_event({"type": "user", "text": summary_prompt, "user_seq": self._count_user_messages() - 1})
         await self._send_stream_event({"type": "turn"})
-        messages = self.history.get_api_messages()
+        messages = self.history.get_api_messages(
+            image_dir=self.session_dir / "images",
+            enable_vl=bool(self.config.get("enable_vl", False)),
+        )
         stream = await self.chat_completion(messages=messages, stream=True, tools=None)
         asst = AssistantMessage()
         self.history.append(asst, persist=False)
