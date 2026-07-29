@@ -22,7 +22,14 @@ def should_compact(agent: Agent) -> bool:
     pending = agent.history.raw[agent._token_covered:]
     # Pending entries are typed Message objects; expand to API dicts for the
     # token estimate (an AssistantMessage unfolds into assistant + tool msgs).
-    pending_dicts = [d for m in pending for d in m.to_api_dicts()]
+    pending_dicts = [
+        d
+        for m in pending
+        for d in m.to_api_dicts(
+            image_dir=agent.session_dir / "images",
+            enable_vl=bool(agent.config.get("enable_vl", False)),
+        )
+    ]
     estimated = (
         agent._token_count
         + estimate_tokens_for_messages(pending_dicts)

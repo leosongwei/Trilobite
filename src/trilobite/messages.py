@@ -26,7 +26,7 @@ from typing import Any
 class Message:
     """Base class for typed conversation messages."""
 
-    def to_api_dicts(self) -> list[dict]:
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         raise NotImplementedError
 
     def to_storage_dict(self) -> dict:
@@ -42,7 +42,7 @@ class SystemMessage(Message):
     def __init__(self, content: str):
         self.content = content
 
-    def to_api_dicts(self) -> list[dict]:
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         return [{"role": "system", "content": self.content}]
 
     def to_storage_dict(self) -> dict:
@@ -61,7 +61,7 @@ class CompactMarker(Message):
     persisted history (the frontend renders it as a divider).
     """
 
-    def to_api_dicts(self) -> list[dict]:
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         return []
 
     def to_storage_dict(self) -> dict:
@@ -246,7 +246,7 @@ class AssistantMessage(Message):
                 d["reasoning_content"] = self.thinking
         return d
 
-    def to_api_dicts(self) -> list[dict]:
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         result: list[dict] = [self._assistant_dict(for_api=True)]
         for tr in self.tool_results:
             # diff is frontend-only; never sent to the API.

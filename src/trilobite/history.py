@@ -145,7 +145,7 @@ class History:
                     i += 1
                 result.append(combine_new_messages(group, image_dir, enable_vl))
             else:
-                for d in msg.to_api_dicts():
+                for d in msg.to_api_dicts(image_dir=image_dir, enable_vl=enable_vl):
                     result.append(d)
                 i += 1
         return result
