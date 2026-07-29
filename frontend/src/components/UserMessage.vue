@@ -9,10 +9,15 @@
             v-for="img in item.images"
             :key="img.filename"
             class="user-image"
-            :src="`/api/sessions/${sessionId}/images/${img.filename}`"
+            :src="imageUrl(img.filename)"
             :title="img.original_name"
+            @click="openLightbox(imageUrl(img.filename))"
           />
         </div>
+      </div>
+      <div v-if="lightboxImage" class="lightbox" @click.self="closeLightbox">
+        <button class="lightbox-close" @click="closeLightbox" title="关闭">✕</button>
+        <img class="lightbox-img" :src="lightboxImage" @click.stop />
       </div>
     </template>
     <div v-else class="user-edit-wrap">
@@ -43,6 +48,27 @@ const sessionId = state.currentSession
 const editing = ref(false)
 const draft = ref('')
 const taRef = ref<HTMLTextAreaElement | null>(null)
+const lightboxImage = ref<string | null>(null)
+
+function imageUrl(filename: string): string {
+  return `/api/sessions/${sessionId}/images/${filename}`
+}
+
+function openLightbox(url: string) {
+  lightboxImage.value = url
+  window.addEventListener('keydown', onKeydown)
+}
+
+function closeLightbox() {
+  lightboxImage.value = null
+  window.removeEventListener('keydown', onKeydown)
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    closeLightbox()
+  }
+}
 
 function startEdit() {
   draft.value = props.item.content
@@ -81,5 +107,35 @@ async function confirmEdit() {
   object-fit: cover;
   border-radius: 6px;
   border: 1px solid #3c3c3c;
+  cursor: pointer;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 6px;
 }
 </style>
