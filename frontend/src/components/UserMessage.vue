@@ -2,15 +2,17 @@
   <div class="user-message">
     <template v-if="!editing">
       <button class="user-pencil" @click="startEdit" title="编辑并重发">✎</button>
-      <span class="message user">{{ item.content }}</span>
-      <div v-if="item.images?.length" class="user-images">
-        <img
-          v-for="img in item.images"
-          :key="img.filename"
-          class="user-image"
-          :src="`/api/sessions/${sessionId}/images/${img.filename}`"
-          :title="img.original_name"
-        />
+      <div class="user-content">
+        <span class="message user">{{ item.content }}</span>
+        <div v-if="item.images?.length" class="user-images">
+          <img
+            v-for="img in item.images"
+            :key="img.filename"
+            class="user-image"
+            :src="`/api/sessions/${sessionId}/images/${img.filename}`"
+            :title="img.original_name"
+          />
+        </div>
       </div>
     </template>
     <div v-else class="user-edit-wrap">
@@ -63,6 +65,10 @@ async function confirmEdit() {
 </script>
 
 <style scoped>
+.user-content {
+  display: block;
+  flex: 1;
+}
 .user-images {
   display: flex;
   gap: 6px;
