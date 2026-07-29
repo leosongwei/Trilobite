@@ -261,9 +261,9 @@ class Agent:
         # model has not seen yet, or (b) a user message (start/steer) arrived
         # since the model last read history. ``_force_run`` is set after
         # compaction so the model gets one turn on the rebuilt context.
-        # ``_need_compact`` requests the next turn run with tools disabled so
-        # the model produces a handoff summary; the turn after that rebuilds
-        # the context.
+        # ``_need_compact`` requests the next turn produce a handoff summary;
+        # tools are still advertised (for cache stability) but any call is
+        # intercepted. The turn after that rebuilds the context.
         self._pending_tool_results: bool = False
         self._user_read_cursor: int = 0
         self._force_run: bool = False
@@ -696,8 +696,10 @@ class Agent:
                 # Keep the tools list identical on every turn, including the
                 # compaction turn, so the request prefix matches the cached
                 # prefix -- withholding tools would force a full cache miss on
-                # the compaction turn for no real benefit. The compaction
-                # prompt already instructs the model to respond with text only.
+                # the compaction turn. The compaction prompt tells the model to
+                # respond with text only, and any tool call it makes anyway is
+                # intercepted below (see the _need_compact branch in the tool
+                # dispatch), so the tools never actually execute.
                 tools = self._permission.filter_definitions(
                     enable_vl=bool(self.config.get("enable_vl", False))
                 )
@@ -835,6 +837,14 @@ class Agent:
                         blocked = self._permission.intercept(tool_name)
                         if blocked is not None:
                             tool_result = {"result": blocked}
+                        elif self._need_compact:
+                            # Compaction turn: tools stay advertised (for
+                            # prefix-cache stability) but must not execute. If
+                            # the model calls one despite the compaction prompt,
+                            # intercept it so no side effects happen; the turn
+                            # is retried below until the model emits a text-only
+                            # handoff summary.
+                            tool_result = {"result": "Compaction in progress: tool calls are not executed during the compaction turn. Respond with the handoff summary as text only, do not call any tools."}
                         elif tool_name == "exit_plan_mode":
                             if not self._plan_mode:
                                 tool_result = {"result": "Not in plan mode."}
@@ -915,13 +925,20 @@ class Agent:
                     current_asst_persisted = True
 
                 # ── compaction handling after the turn ──
-                if self._need_compact:
-                    # This was the compaction turn (tools disabled): the
-                    # assistant output is the handoff summary. Rebuild the
-                    # context (marker + fresh system + compact_summary), then
-                    # re-append any steering messages that arrived during the
-                    # compact turn so the model responds to them on the fresh
-                    # context instead of losing them behind the marker.
+                if self._need_compact and asst.tool_calls:
+                    # The model called tools during the compaction turn despite
+                    # the prompt; they were intercepted above (no side effects).
+                    # Do not finalize with an empty/partial summary -- loop
+                    # again so the model, now seeing the interception results,
+                    # retries with a text-only handoff summary.
+                    pass
+                elif self._need_compact:
+                    # This was the compaction turn and the model produced a
+                    # text-only handoff summary. Rebuild the context (marker +
+                    # fresh system + compact_summary), then re-append any
+                    # steering messages that arrived during the compact turn so
+                    # the model responds to them on the fresh context instead
+                    # of losing them behind the marker.
                     pending_steers = self._finalize_compaction(asst.content)
                     for s in pending_steers:
                         user_seq = self._count_user_messages()
@@ -935,9 +952,10 @@ class Agent:
                     # Token threshold exceeded: request a compaction turn next.
                     # The compact prompt is a marked user message -- it combines
                     # with any pending steering via combine_new_messages and the
-                    # next turn runs with tools disabled. Steering that arrives
-                    # during the compact turn is re-appended past the marker by
-                    # _finalize_compaction so it is not lost.
+                    # next turn asks for a handoff summary (tools advertised but
+                    # intercepted). Steering that arrives during the compact
+                    # turn is re-appended past the marker by _finalize_compaction
+                    # so it is not lost.
                     self._need_compact = True
                     prompt = build_compact_prompt(self)
                     user_seq = self._count_user_messages()
@@ -1452,9 +1470,10 @@ class Agent:
 
         Compacts regardless of the token threshold. The compact prompt is
         appended as a normal user message and the run loop handles the rest:
-        the next turn runs with tools disabled (handoff summary), then the
-        context is rebuilt and the model continues on the fresh context. If
-        there is no real conversation to compact (e.g. right after a previous
+        the next turn asks for a handoff summary (tools advertised but
+        intercepted), then the context is rebuilt and the model continues on
+        the fresh context. If there is no real conversation to compact (e.g.
+        right after a previous
         compact), a status notice is sent instead.
         """
         self._broker.set_running(True)
