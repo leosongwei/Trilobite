@@ -535,15 +535,19 @@ class Agent:
         await self._broker.publish(event, len(self.history.raw))
 
     def _count_user_messages(self) -> int:
-        """Count real user messages, excluding compact summaries.
+        """Count real user messages, excluding compact summaries and mode notices.
 
         Compact summaries are stored as :class:`UserMessage` (so the API sees
         them as user content) but are not real user turns, so they must not
         receive a ``user_seq`` - otherwise revert/edit numbering would drift.
+        Mode-change notices are the same: persisted as user content for cache
+        stability, but not real user turns.
         """
         return sum(
             1 for m in self.history.raw
-            if isinstance(m, UserMessage) and not m.compact_summary
+            if isinstance(m, UserMessage)
+            and not m.compact_summary
+            and not m.is_mode_notification
         )
 
     async def _append_image_user_message(self, image: Image) -> None:
@@ -599,6 +603,7 @@ class Agent:
         return [
             m.content for m in raw[prompt_idx + 1:]
             if isinstance(m, UserMessage) and not m.compact_summary and not m.is_compact_prompt
+            and not m.is_mode_notification
         ]
 
     def _finalize_compaction(self, summary: str) -> list[str]:
@@ -635,14 +640,19 @@ class Agent:
         # behind by a crashed/interrupted run -- the API would reject it.
         self._patch_dangling_tool_calls()
 
-        # Check for mode change once per run (when user sends a message).
-        # Injected into messages list, not stored in history.
-        mode_notification: str | None = None
+        # A plan/build mode change is recorded once per run (when the user
+        # sends a message) as a persisted user message at the end of history
+        # -- after the user's new message -- instead of being transiently
+        # spliced into the request. Persisting it keeps the API prefix growing
+        # monotonically so the turn stays cacheable, and later turns reuse the
+        # same prefix. The notice is hidden from the frontend and excluded from
+        # user_seq via is_mode_notification.
         if self._last_notified_mode is None:
             self._last_notified_mode = self._plan_mode
         elif self._plan_mode != self._last_notified_mode:
-            mode_notification = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
+            notif = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
             self._last_notified_mode = self._plan_mode
+            self.history.append(UserMessage(notif, is_mode_notification=True))
 
         # The assistant message being streamed/mutated in the current turn
         # (None outside a turn). Held as locals so the CancelledError handler
@@ -680,15 +690,15 @@ class Agent:
                 # arriving mid-drain lands after this cursor and drives the
                 # next continuation check.
                 self._user_read_cursor = self._count_user_messages()
-                if mode_notification and not self._need_compact:
-                    messages.insert(1, {"role": "user", "content": mode_notification})
-                    mode_notification = None
 
                 await self._send_stream_event({"type": "turn"})
 
-                # A pending compaction runs with tools disabled so the model
-                # produces a handoff summary instead of calling tools.
-                tools = None if self._need_compact else self._permission.filter_definitions(
+                # Keep the tools list identical on every turn, including the
+                # compaction turn, so the request prefix matches the cached
+                # prefix -- withholding tools would force a full cache miss on
+                # the compaction turn for no real benefit. The compaction
+                # prompt already instructs the model to respond with text only.
+                tools = self._permission.filter_definitions(
                     enable_vl=bool(self.config.get("enable_vl", False))
                 )
                 stream = await self.chat_completion(

@@ -125,6 +125,7 @@ class UserMessage(Message):
         content: str,
         compact_summary: bool = False,
         is_compact_prompt: bool = False,
+        is_mode_notification: bool = False,
         images: list[Image] | None = None,
     ):
         self.content = content
@@ -134,6 +135,12 @@ class UserMessage(Message):
         # turn) but lets _finalize_compaction locate it and collect the real
         # steering messages that arrived after it.
         self.is_compact_prompt = is_compact_prompt
+        # Marks a plan/build mode-change notice. It is persisted in history as
+        # a user message (so the API prefix grows monotonically and stays
+        # cacheable) rather than transiently spliced into the request. It is
+        # not a real user turn: the frontend hides it and it is excluded from
+        # user_seq, like compact summaries.
+        self.is_mode_notification = is_mode_notification
         self.images = images or []
 
     def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
@@ -156,6 +163,8 @@ class UserMessage(Message):
             d["compact_summary"] = True
         if self.is_compact_prompt:
             d["is_compact_prompt"] = True
+        if self.is_mode_notification:
+            d["is_mode_notification"] = True
         return d
 
     def to_frontend_dicts(self) -> list[dict]:
@@ -166,6 +175,8 @@ class UserMessage(Message):
             d["compact_summary"] = True
         if self.is_compact_prompt:
             d["is_compact_prompt"] = True
+        if self.is_mode_notification:
+            d["is_mode_notification"] = True
         return [d]
 
 
@@ -359,6 +370,7 @@ def message_from_storage(d: dict) -> Message:
             d.get("content", ""),
             compact_summary=bool(d.get("compact_summary")),
             is_compact_prompt=bool(d.get("is_compact_prompt")),
+            is_mode_notification=bool(d.get("is_mode_notification")),
             images=images or None,
         )
     if t == "assistant":

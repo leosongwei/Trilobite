@@ -48,6 +48,7 @@ export interface HistoryMessage {
   compact_marker?: boolean
   compact_summary?: boolean
   is_compact_prompt?: boolean
+  is_mode_notification?: boolean
 }
 
 export interface Session {

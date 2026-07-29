@@ -36,7 +36,7 @@ estimated = token_count（上次 API 返回的真实 token 数，仅反映 marke
 压缩完全统一进主循环，没有专门的 compact 方法：
 
 1. **触发**：一轮结束后 token 超阈值 -> `_need_compact=True` + append 压缩指令（`COMPACTION_PROMPT` + todo list）作为带 `is_compact_prompt` 标记的 `UserMessage`。它和未读的 steering 消息一样是 user 消息，由 `combine_new_messages` 合并。`is_compact_prompt` 不改变它的 API 投影（仍是一条普通 user 消息），只供 `_finalize_compaction` 定位，以收集压缩期间到达的 steering。
-2. **压缩 turn**：下一轮续跑判断发现有新 user 消息（压缩指令），照常跑一轮；但 `_need_compact=True` 时 `tools=None`（关闭工具），模型只能产出文本 handoff note。模型在这一轮的 `get_api_messages` 里一次性读到 steering + 压缩指令（合并成一条 user），把未处理的用户请求写进 note。
+2. **压缩 turn**：下一轮续跑判断发现有新 user 消息（压缩指令），照常跑一轮。压缩 turn 仍发送完整的工具定义（与正常轮完全一致，保持请求前缀稳定以命中上下文缓存），由 `COMPACTION_PROMPT` 指示模型只产出文本 handoff note、不调用工具。模型在这一轮的 `get_api_messages` 里一次性读到 steering + 压缩指令（合并成一条 user），把未处理的用户请求写进 note。
 3. **重建**：压缩 turn（纯文本）结束后，`_finalize_compaction` 落盘：
    - 无内容的 `CompactMarker`
    - 重建的 `SystemMessage`（`SYSTEM_PROMPT` + AGENTS.md）
