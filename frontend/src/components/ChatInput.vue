@@ -32,6 +32,7 @@
           ref="textareaRef"
           @keydown.enter.exact.prevent="handleSend"
           @keydown.tab.prevent="tabComplete"
+          @paste="onPaste"
         ></textarea>
         <div v-if="pendingImages.length" class="image-previews">
           <div v-for="(img, idx) in pendingImages" :key="idx" class="image-preview">
@@ -126,21 +127,41 @@ function readFileAsDataURL(file: File): Promise<string> {
   })
 }
 
+async function addImageFile(file: File) {
+  const data_url = await readFileAsDataURL(file)
+  pendingImages.value.push({
+    file,
+    mime_type: file.type,
+    original_name: file.name,
+    preview_url: URL.createObjectURL(file),
+    data_url,
+  })
+}
+
 async function onImageSelect(event: Event) {
   const target = event.target as HTMLInputElement
   const files = Array.from(target.files || [])
-  if (!files.length) return
   for (const file of files) {
-    const data_url = await readFileAsDataURL(file)
-    pendingImages.value.push({
-      file,
-      mime_type: file.type,
-      original_name: file.name,
-      preview_url: URL.createObjectURL(file),
-      data_url,
-    })
+    await addImageFile(file)
   }
   target.value = ''
+}
+
+async function onPaste(event: ClipboardEvent) {
+  if (!state.enableVl || state.isStreaming || state.isSubagent) return
+  const items = event.clipboardData?.items
+  if (!items) return
+  let hasImage = false
+  for (const item of items) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      hasImage = true
+      const file = item.getAsFile()
+      if (file) await addImageFile(file)
+    }
+  }
+  if (hasImage) {
+    event.preventDefault()
+  }
 }
 
 function removeImage(idx: number) {
