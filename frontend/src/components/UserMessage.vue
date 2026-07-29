@@ -123,7 +123,7 @@ async function confirmEdit() {
 .lightbox-close {
   position: absolute;
   top: 16px;
-  left: 16px;
+  right: 16px;
   background: transparent;
   border: none;
   color: #ffffff;
