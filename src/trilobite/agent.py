@@ -546,45 +546,21 @@ class Agent:
             if isinstance(m, UserMessage) and not m.compact_summary
         )
 
-    def _user_seq_at(self, index: int) -> int:
-        """Return the 0-based user_seq of the user message at ``index``."""
-        return (
-            sum(
-                1
-                for m in self.history.raw[: index + 1]
-                if isinstance(m, UserMessage) and not m.compact_summary
-            )
-            - 1
-        )
+    async def _append_image_user_message(self, image: Image) -> None:
+        """Insert a follow-up user message carrying an image read by a tool.
 
-    async def _attach_image_to_last_user(self, image: Image, current_asst: AssistantMessage) -> None:
-        """Attach an image read by a tool to the user message that triggered the turn.
-
-        The image is added to the nearest preceding real user message, then a
-        ``user_images`` stream event is emitted so the frontend can render it.
+        This mirrors opencode: after a tool reads an image, the image is sent as
+        a separate ``user`` message (with empty text) so the next assistant turn
+        sees it as an image input. The ``<image .../>`` marker in the tool result
+        serves as metadata only.
         """
-        try:
-            asst_idx = self.history.raw.index(current_asst)
-        except ValueError:
-            return
-        target_idx = -1
-        for i in range(asst_idx - 1, -1, -1):
-            msg = self.history.raw[i]
-            if isinstance(msg, UserMessage) and not msg.compact_summary:
-                target_idx = i
-                break
-        if target_idx < 0:
-            return
-        user_msg = self.history.raw[target_idx]
-        if any(img.filename == image.filename for img in user_msg.images):
-            return
-        user_msg.images.append(image)
-        self.history.save()
-        user_seq = self._user_seq_at(target_idx)
+        user_seq = self._count_user_messages()
+        self.history.append(UserMessage("", images=[image]))
         await self._send_stream_event({
-            "type": "user_images",
-            "user_seq": user_seq,
+            "type": "user",
+            "text": "",
             "images": [image.to_frontend_dict()],
+            "user_seq": user_seq,
         })
 
     def _has_compactable_content(self) -> bool:
@@ -876,7 +852,7 @@ class Agent:
                                 self.session_dir, self._additional_dirs,
                                 self._register_proc, on_output)
                             if "image" in tool_result and self.config.get("enable_vl", False):
-                                await self._attach_image_to_last_user(tool_result["image"], asst)
+                                await self._append_image_user_message(tool_result["image"])
 
                         # Handle permission request from tool
                         if "permission" in tool_result:
@@ -907,7 +883,7 @@ class Agent:
                                     self.session_dir, self._additional_dirs,
                                     self._register_proc, on_output)
                                 if "image" in tool_result and self.config.get("enable_vl", False):
-                                    await self._attach_image_to_last_user(tool_result["image"], asst)
+                                    await self._append_image_user_message(tool_result["image"])
                             # else: keep original error result
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"], "tool_call_id": tc.id}

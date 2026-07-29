@@ -154,21 +154,6 @@ function handleSSEEvent(event: SSEEvent) {
       break
     }
 
-    case 'user_images': {
-      const item = state.chatItems.find(
-        (it) => it.kind === 'user' && it.userSeq === event.user_seq,
-      )
-      if (item && item.kind === 'user') {
-        item.images = item.images ?? []
-        for (const img of event.images) {
-          if (!item.images.some((existing) => existing.filename === img.filename)) {
-            item.images.push(img)
-          }
-        }
-      }
-      break
-    }
-
     case 'user_edit': {
       const item = state.chatItems.find(
         (it) => it.kind === 'user' && it.userSeq === event.user_seq,

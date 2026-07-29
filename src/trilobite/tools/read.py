@@ -23,8 +23,8 @@ class ReadTool(Tool):
         "limit_lines or limit_chars, or pass start_line to page forward. "
         "If the file is a supported image (PNG, JPEG, GIF, WebP), the tool "
         "stores the image in the session and returns a self-closing "
-        "`<image .../>` marker. The actual image is attached to the user "
-        "message so the model can see it."
+        "`<image .../>` marker. The actual image is then sent as a follow-up "
+        "user message so the model can see it."
     )
 
     def to_openai_tool(self, enable_vl: bool = False) -> dict:
