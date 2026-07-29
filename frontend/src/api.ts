@@ -1,5 +1,11 @@
 import type { Session, SessionInfo, HistoryMessage, SSEEvent } from './types'
 
+export interface ImageAttachment {
+  mime_type: string
+  data_url: string
+  original_name: string
+}
+
 function encode(id: string): string {
   return encodeURIComponent(id)
 }
@@ -47,11 +53,15 @@ export async function deleteSession(id: string): Promise<void> {
   await fetch(`/api/sessions/${encode(id)}`, { method: 'DELETE' })
 }
 
-export async function sendMessage(id: string, message: string): Promise<{ status: string }> {
+export async function sendMessage(
+  id: string,
+  message: string,
+  images: ImageAttachment[] = [],
+): Promise<{ status: string }> {
   const res = await fetch(`/api/sessions/${encode(id)}/message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, images: images.length ? images : undefined }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))

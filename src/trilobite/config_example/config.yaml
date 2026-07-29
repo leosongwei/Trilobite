@@ -6,3 +6,4 @@ max_context_tokens: 1048576
 max_tokens: 65536
 log_level: WARNING
 compaction_trigger_ratio: 0.7
+enable_vl: false

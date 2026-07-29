@@ -19,6 +19,7 @@ interface State {
   sealed: boolean
   subagentType: string | null
   subagentDescription: string
+  enableVl: boolean
   subagentPermissionRequest: {
     childSession: string
     childType: string
@@ -46,6 +47,7 @@ const state = reactive<State>({
   sealed: false,
   subagentType: null,
   subagentDescription: '',
+  enableVl: false,
   subagentPermissionRequest: null,
 })
 
@@ -137,12 +139,18 @@ function handleSSEEvent(event: SSEEvent) {
       state.sealed = event.sealed ?? false
       state.subagentType = event.subagent_type ?? null
       state.subagentDescription = event.description ?? ''
+      state.enableVl = event.enable_vl ?? false
       closeTurn()
       break
     }
 
     case 'user': {
-      state.chatItems.push({ kind: 'user', content: event.text, userSeq: event.user_seq })
+      state.chatItems.push({
+        kind: 'user',
+        content: event.text,
+        images: event.images,
+        userSeq: event.user_seq,
+      })
       break
     }
 
@@ -363,7 +371,12 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
         i++
         continue
       }
-      items.push({ kind: 'user', content: msg.content || '', userSeq: userSeq++ })
+      items.push({
+        kind: 'user',
+        content: msg.content || '',
+        images: msg.images,
+        userSeq: userSeq++,
+      })
       i++
       continue
     }
@@ -534,13 +547,13 @@ export function useStore() {
     await loadSessions()
   }
 
-  async function sendMessage(message: string) {
+  async function sendMessage(message: string, images: api.ImageAttachment[] = []) {
     if (!state.currentSession) return
     // The user message is rendered from the "user" stream event (emitted by
     // the agent on start/steer), not pushed here, so reconnects stay
     // consistent with server-side history.
     try {
-      await api.sendMessage(state.currentSession, message)
+      await api.sendMessage(state.currentSession, message, images)
     } catch (e) {
       state.chatItems.push({
         kind: 'error',

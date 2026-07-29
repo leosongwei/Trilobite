@@ -1,6 +1,13 @@
+export interface ImageMeta {
+  filename: string
+  mime_type: string
+  original_name: string
+  date?: string
+}
+
 export type SSEEvent =
-  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; sealed?: boolean; subagent_type?: string | null; description?: string }
-  | { type: 'user'; text: string; user_seq: number }
+  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
+  | { type: 'user'; text: string; user_seq: number; images?: ImageMeta[] }
   | { type: 'user_edit'; user_seq: number; text: string }
   | { type: 'turn' }
   | { type: 'compact' }
@@ -34,6 +41,7 @@ export interface ToolCall {
 export interface HistoryMessage {
   role: 'user' | 'assistant' | 'tool' | 'system'
   content?: string
+  images?: ImageMeta[]
   reasoning_content?: string
   tool_calls?: ToolCall[]
   tool_call_id?: string
@@ -102,6 +110,7 @@ export interface ToolDisplay {
 export interface UserItem {
   kind: 'user'
   content: string
+  images?: ImageMeta[]
   userSeq?: number
 }
 

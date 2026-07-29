@@ -18,13 +18,15 @@ assistant turn, never between an ``assistant(tool_calls)`` and its tool
 results -- which keeps the API message sequence valid.
 """
 
+import base64
+from pathlib import Path
 from typing import Any
 
 
 class Message:
     """Base class for typed conversation messages."""
 
-    def to_api_dicts(self) -> list[dict]:
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         raise NotImplementedError
 
     def to_storage_dict(self) -> dict:
@@ -40,7 +42,7 @@ class SystemMessage(Message):
     def __init__(self, content: str):
         self.content = content
 
-    def to_api_dicts(self) -> list[dict]:
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         return [{"role": "system", "content": self.content}]
 
     def to_storage_dict(self) -> dict:
@@ -59,7 +61,7 @@ class CompactMarker(Message):
     persisted history (the frontend renders it as a divider).
     """
 
-    def to_api_dicts(self) -> list[dict]:
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         return []
 
     def to_storage_dict(self) -> dict:
@@ -69,8 +71,62 @@ class CompactMarker(Message):
         return [{"role": "system", "compact_marker": True}]
 
 
+class Image:
+    """An image attached to a user message.
+
+    The actual bytes are stored in the session's ``images/`` directory under a
+    hash-style filename; the message object only keeps the metadata needed to
+    rebuild the API payload and to render the reference in the frontend.
+    """
+
+    def __init__(self, filename: str, mime_type: str, original_name: str = "", date: str = ""):
+        self.filename = filename
+        self.mime_type = mime_type
+        self.original_name = original_name or filename
+        self.date = date
+
+    def to_storage_dict(self) -> dict:
+        d = {
+            "filename": self.filename,
+            "mime_type": self.mime_type,
+            "original_name": self.original_name,
+        }
+        if self.date:
+            d["date"] = self.date
+        return d
+
+    def to_frontend_dict(self) -> dict:
+        d = {
+            "filename": self.filename,
+            "mime_type": self.mime_type,
+            "original_name": self.original_name,
+        }
+        if self.date:
+            d["date"] = self.date
+        return d
+
+    def to_api_part(self, image_dir: Path) -> dict:
+        """Build an OpenAI-compatible image_url content part from the stored file."""
+        path = image_dir / self.filename
+        data = path.read_bytes()
+        b64 = base64.b64encode(data).decode()
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{self.mime_type};base64,{b64}",
+                "detail": "auto",
+            },
+        }
+
+
 class UserMessage(Message):
-    def __init__(self, content: str, compact_summary: bool = False, is_compact_prompt: bool = False):
+    def __init__(
+        self,
+        content: str,
+        compact_summary: bool = False,
+        is_compact_prompt: bool = False,
+        images: list[Image] | None = None,
+    ):
         self.content = content
         self.compact_summary = compact_summary
         # Marks the user message that requests a handoff summary. It still
@@ -78,12 +134,24 @@ class UserMessage(Message):
         # turn) but lets _finalize_compaction locate it and collect the real
         # steering messages that arrived after it.
         self.is_compact_prompt = is_compact_prompt
+        self.images = images or []
 
-    def to_api_dicts(self) -> list[dict]:
-        return [{"role": "user", "content": self.content}]
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
+        if not self.images or not enable_vl:
+            return [{"role": "user", "content": self.content}]
+        if image_dir is None:
+            raise ValueError("UserMessage with images requires an image_dir to build API payload")
+        parts: list[dict] = []
+        if self.content:
+            parts.append({"type": "text", "text": self.content})
+        for img in self.images:
+            parts.append(img.to_api_part(image_dir))
+        return [{"role": "user", "content": parts}]
 
     def to_storage_dict(self) -> dict:
         d: dict = {"type": "user", "content": self.content}
+        if self.images:
+            d["images"] = [img.to_storage_dict() for img in self.images]
         if self.compact_summary:
             d["compact_summary"] = True
         if self.is_compact_prompt:
@@ -92,6 +160,8 @@ class UserMessage(Message):
 
     def to_frontend_dicts(self) -> list[dict]:
         d: dict = {"role": "user", "content": self.content}
+        if self.images:
+            d["images"] = [img.to_frontend_dict() for img in self.images]
         if self.compact_summary:
             d["compact_summary"] = True
         if self.is_compact_prompt:
@@ -176,7 +246,7 @@ class AssistantMessage(Message):
                 d["reasoning_content"] = self.thinking
         return d
 
-    def to_api_dicts(self) -> list[dict]:
+    def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
         result: list[dict] = [self._assistant_dict(for_api=True)]
         for tr in self.tool_results:
             # diff is frontend-only; never sent to the API.
@@ -276,10 +346,20 @@ def message_from_storage(d: dict) -> Message:
     if t == "compact_marker":
         return CompactMarker()
     if t == "user":
+        images = [
+            Image(
+                img.get("filename", ""),
+                img.get("mime_type", ""),
+                img.get("original_name", ""),
+                img.get("date", ""),
+            )
+            for img in d.get("images", [])
+        ]
         return UserMessage(
             d.get("content", ""),
             compact_summary=bool(d.get("compact_summary")),
             is_compact_prompt=bool(d.get("is_compact_prompt")),
+            images=images or None,
         )
     if t == "assistant":
         return AssistantMessage(
@@ -302,7 +382,7 @@ def message_from_storage(d: dict) -> Message:
     return SystemMessage(str(d))
 
 
-def combine_new_messages(messages: list[UserMessage]) -> dict:
+def combine_new_messages(messages: list[UserMessage], image_dir: Path | None = None, enable_vl: bool = True) -> dict:
     """Combine consecutive user messages into one API user dict.
 
     A single message is passed through unchanged. Multiple messages are joined
@@ -310,8 +390,32 @@ def combine_new_messages(messages: list[UserMessage]) -> dict:
     tell these are several distinct user inputs (e.g. steering messages, or a
     steering message followed by a compact prompt) rather than one typed
     message. The system prompt explains the marker.
+
+    When any message carries images and ``enable_vl`` is true, ``content``
+    becomes a list of OpenAI-style parts (text + image_url). ``image_dir`` is
+    required in that case so the stored image files can be read and
+    base64-encoded. When ``enable_vl`` is false, image parts are dropped but
+    the text is kept, so the same history can be reused on a non-vision model
+    without deleting the image metadata from the persisted history.
     """
-    if len(messages) == 1:
-        return {"role": "user", "content": messages[0].content}
-    parts = [f"<multi_message/>\n{m.content}" for m in messages]
-    return {"role": "user", "content": "\n".join(parts)}
+    has_images = enable_vl and any(m.images for m in messages)
+    if not has_images:
+        if len(messages) == 1:
+            return {"role": "user", "content": messages[0].content}
+        parts = [f"<multi_message/>\n{m.content}" for m in messages]
+        return {"role": "user", "content": "\n".join(parts)}
+
+    if image_dir is None:
+        raise ValueError("combine_new_messages with images requires image_dir")
+    parts: list[dict] = []
+    for i, m in enumerate(messages):
+        prefix = "<multi_message/>\n" if i > 0 else ""
+        if m.content:
+            parts.append({"type": "text", "text": prefix + m.content})
+        elif i > 0:
+            parts.append({"type": "text", "text": prefix})
+        for img in m.images:
+            parts.append(img.to_api_part(image_dir))
+    if not parts:
+        return {"role": "user", "content": ""}
+    return {"role": "user", "content": parts}

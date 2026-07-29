@@ -13,7 +13,8 @@
 ```
 SystemMessage(content)                      # system 消息（初始 prompt 或压缩后重建的 prompt）
 CompactMarker()                             # 压缩边界：纯标记，不带内容；其后跟一条重建的 SystemMessage
-UserMessage(content, compact_summary=False, is_compact_prompt=False) # 用户输入（compact_summary 标记压缩摘要；is_compact_prompt 标记压缩指令，供 _finalize_compaction 定位以 re-append 压缩期间到达的 steering）
+UserMessage(content, compact_summary=False, is_compact_prompt=False, images=[]) # 用户输入（compact_summary 标记压缩摘要；is_compact_prompt 标记压缩指令，images 为图片附件列表）
+  └─ Image(filename, mime_type, original_name)  # 图片附件：文件存于 sessions/<id>/images/，历史里只存元数据
 AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一轮
   ├─ ToolCall(id, name, arguments)          # arguments 流式追加
   └─ ToolResult(tool_call_id, content, diff) # diff 仅 edit 工具，仅供前端
@@ -51,6 +52,10 @@ AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一
 
 **v1 兼容**：旧 session 的 `history.json` 是裸 dict 数组（无版本号）。`History._load` 检测顶层类型--是 list 即按 v1 加载：`from_v1()` 遍历扁平数组，把 `assistant(tool_calls)` + 紧跟的连续 `tool` 消息**合并**成一个自包含 `AssistantMessage`（`reasoning_content` 映射为 `thinking`）。加载失败会记录日志而非静默吞掉。
 
+**图片附件**：`UserMessage.images` 里的 `Image` 对象只保存元数据（`filename`、`mime_type`、`original_name`），实际图片文件放在 `sessions/<name>/images/<hash>.ext`。`filename` 是文件内容的 12 位十六进制哈希加扩展名，例如 `aaa000bbbfff.png`。这种存储方式避免 `history.json` 被 base64 图片撑爆，同时让前端可以通过 `/api/sessions/<name>/images/<filename>` 直接显示原图。
+
+当 `enable_vl` 关闭时，`get_api_messages(enable_vl=false)` 会去掉图片 part，只保留文字发给 LLM，但历史文件里的 `images` 元数据和 `images/` 目录下的文件不会被删除。
+
 **惰性升级**：任何 `save()` 都写 v2 格式。所以一个 v1 session 一旦被新代码读写就自动转成 v2，不需要批量迁移脚本。
 
 ## History 类
@@ -64,7 +69,7 @@ AssistantMessage(thinking, content, tool_calls, tool_results)  # 自包含的一
 | `pop()` | 弹出末尾消息（中断丢弃空 asst 时用） |
 | `truncate(index)` | 丢弃从 `index` 开始的所有消息（revert 用） |
 | `save()` | 显式全量写盘（mutate 消息对象后调用） |
-| `get_api_messages()` | 返回 API 投影：从最后一个 `CompactMarker` 之后开始，连续 user 用 `combine_new_messages` 合并 |
+| `get_api_messages(image_dir, enable_vl)` | 返回 API 投影：从最后一个 `CompactMarker` 之后开始，连续 user 用 `combine_new_messages` 合并；`image_dir` 用于把存储的图片编码，`enable_vl` 控制是否带上图片 part |
 | `to_flat_dicts()` | 展开成扁平 v1 兼容 dict 列表（前端 `init` 快照用） |
 | `raw` | 原始对象列表（compaction、revert 等遍历用） |
 

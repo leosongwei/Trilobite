@@ -22,8 +22,19 @@ def estimate_tokens_for_message(msg: dict) -> int:
         total += estimate_tokens(content)
     elif isinstance(content, list):
         for part in content:
-            if isinstance(part, dict):
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
                 total += estimate_tokens(part.get("text", ""))
+            elif part.get("type") == "image_url":
+                # Rough estimate: base64 data is ~4 chars per 3 bytes; treat
+                # the payload as ~1 token per 3 encoded characters.
+                url = part.get("image_url", {}).get("url", "")
+                if "," in url:
+                    b64 = url.split(",", 1)[1]
+                    total += max(1, len(b64) // 3)
+                else:
+                    total += 85  # low-detail fallback
     reasoning = msg.get("reasoning_content") or ""
     if reasoning:
         total += estimate_tokens(reasoning)

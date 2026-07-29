@@ -156,3 +156,14 @@ def subagent_system_prompt(subagent_type: str) -> str:
         + SUBAGENT_ROLE_PREFIX + "\n\n"
         + SUBAGENT_ROLE_PROMPTS.get(subagent_type, "")
     )
+
+
+IMAGE_READ_PROMPT = """# Image read marker
+
+When the `read` tool reads a supported image file (PNG, JPEG, GIF, WebP), the
+tool result contains a self-closing `<image .../>` marker such as
+`<image filename="abc123.png" original_name="Screenshot.png" mime="image/png"
+modified="2026-07-29 08:38:00" />`. The actual image is then sent as a follow-up
+user message and is visible to you as an image input. Use the marker only as
+metadata; the image content itself is in the follow-up user message.
+"""

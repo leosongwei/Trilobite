@@ -20,12 +20,13 @@ from src.trilobite.history import History
 from src.trilobite.messages import (
     AssistantMessage,
     CompactMarker,
+    Image,
     SystemMessage,
     ToolCall,
     ToolResult,
     UserMessage,
 )
-from src.trilobite.prompts import SYSTEM_PROMPT, subagent_system_prompt
+from src.trilobite.prompts import IMAGE_READ_PROMPT, SYSTEM_PROMPT, subagent_system_prompt
 from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
 from src.trilobite.tools.bash import kill_process_group, truncate_output
 from src.trilobite.tool_call import execute_tool
@@ -247,6 +248,8 @@ class Agent:
         # guessed absolute paths that drift outside the workspace.
         self._is_git_repo = self._detect_git_repo()
         self.system_prompt = self._build_env_block() + "\n\n" + self.system_prompt
+        if self.config.get("enable_vl", False):
+            self.system_prompt += "\n\n" + IMAGE_READ_PROMPT
         self.working_context = self._load_working_context()
         self.history = History(session_dir / "history.json")
         self._broker = StreamBroker(len(self.history.raw))
@@ -543,6 +546,23 @@ class Agent:
             if isinstance(m, UserMessage) and not m.compact_summary
         )
 
+    async def _append_image_user_message(self, image: Image) -> None:
+        """Insert a follow-up user message carrying an image read by a tool.
+
+        This mirrors opencode: after a tool reads an image, the image is sent as
+        a separate ``user`` message (with empty text) so the next assistant turn
+        sees it as an image input. The ``<image .../>`` marker in the tool result
+        serves as metadata only.
+        """
+        user_seq = self._count_user_messages()
+        self.history.append(UserMessage("", images=[image]))
+        await self._send_stream_event({
+            "type": "user",
+            "text": "",
+            "images": [image.to_frontend_dict()],
+            "user_seq": user_seq,
+        })
+
     def _has_compactable_content(self) -> bool:
         """Whether there is real conversation after the last compact marker."""
         start = 0
@@ -651,7 +671,10 @@ class Agent:
                     self._final_result = f"max_steps ({self._max_steps}) exceeded"
                     await self._send_stream_event({"type": "error", "text": self._final_result})
                     break
-                messages = self.history.get_api_messages()
+                messages = self.history.get_api_messages(
+                    image_dir=self.session_dir / "images",
+                    enable_vl=bool(self.config.get("enable_vl", False)),
+                )
                 # Record how many user messages the model is reading this turn
                 # (at get_api_messages time, before the stream drains). A steer
                 # arriving mid-drain lands after this cursor and drives the
@@ -665,7 +688,9 @@ class Agent:
 
                 # A pending compaction runs with tools disabled so the model
                 # produces a handoff summary instead of calling tools.
-                tools = None if self._need_compact else self._permission.filter_definitions()
+                tools = None if self._need_compact else self._permission.filter_definitions(
+                    enable_vl=bool(self.config.get("enable_vl", False))
+                )
                 stream = await self.chat_completion(
                     messages=messages,
                     stream=True,
@@ -826,6 +851,8 @@ class Agent:
                                 execute_tool, tool_name, args, self.working_dir,
                                 self.session_dir, self._additional_dirs,
                                 self._register_proc, on_output)
+                            if "image" in tool_result and self.config.get("enable_vl", False):
+                                await self._append_image_user_message(tool_result["image"])
 
                         # Handle permission request from tool
                         if "permission" in tool_result:
@@ -855,6 +882,8 @@ class Agent:
                                     execute_tool, tool_name, args, self.working_dir,
                                     self.session_dir, self._additional_dirs,
                                     self._register_proc, on_output)
+                                if "image" in tool_result and self.config.get("enable_vl", False):
+                                    await self._append_image_user_message(tool_result["image"])
                             # else: keep original error result
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"], "tool_call_id": tc.id}
@@ -1028,13 +1057,13 @@ class Agent:
         self.history.append(UserMessage(message))
         await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
 
-    def add_user_message(self, message: str):
-        self.history.append(UserMessage(message))
+    def add_user_message(self, message: str, images: list[Image] | None = None):
+        self.history.append(UserMessage(message, images=images))
 
     def is_running(self) -> bool:
         return self._broker.is_running
 
-    async def start(self, message: str) -> None:
+    async def start(self, message: str, images: list[Image] | None = None) -> None:
         """Begin a run independently of any HTTP request lifecycle.
 
         Closing a browser only drops SSE subscribers; the agent keeps running
@@ -1047,9 +1076,14 @@ class Agent:
         # Subagents carry a description instead and are never auto-titled.
         if user_seq == 0 and self._subagent_type is None:
             self._maybe_auto_title(message)
-        self.add_user_message(message)
+        self.add_user_message(message, images=images)
         self._broker.set_running(True)
-        await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
+        await self._send_stream_event({
+            "type": "user",
+            "text": message,
+            "images": [img.to_frontend_dict() for img in (images or [])] or None,
+            "user_seq": user_seq,
+        })
         self._task = asyncio.create_task(self.run())
 
     async def attach_subscriber(self) -> tuple[asyncio.Queue, dict]:
@@ -1071,6 +1105,7 @@ class Agent:
         snapshot["sealed"] = self._sealed
         snapshot["subagent_type"] = self._subagent_type
         snapshot["description"] = self._description
+        snapshot["enable_vl"] = bool(self.config.get("enable_vl", False))
         return q, snapshot
 
     def detach_subscriber(self, q: asyncio.Queue) -> None:
@@ -1315,7 +1350,10 @@ class Agent:
         self.history.append(UserMessage(summary_prompt))
         await self._send_stream_event({"type": "user", "text": summary_prompt, "user_seq": self._count_user_messages() - 1})
         await self._send_stream_event({"type": "turn"})
-        messages = self.history.get_api_messages()
+        messages = self.history.get_api_messages(
+            image_dir=self.session_dir / "images",
+            enable_vl=bool(self.config.get("enable_vl", False)),
+        )
         stream = await self.chat_completion(messages=messages, stream=True, tools=None)
         asst = AssistantMessage()
         self.history.append(asst, persist=False)

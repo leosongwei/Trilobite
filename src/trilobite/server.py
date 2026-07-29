@@ -1,17 +1,21 @@
 import asyncio
+import base64
 import importlib.metadata
 import json
+import re
 import time
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
 from src.trilobite.config import init_config, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
+from src.trilobite.image_storage import ext_to_mime, save_image
+from src.trilobite.messages import Image
 
 app = FastAPI(title="Trilobite")
 
@@ -25,8 +29,16 @@ class SessionCreate(BaseModel):
 class RenameRequest(BaseModel):
     name: str
 
+class ImageAttachment(BaseModel):
+    mime_type: str
+    data_url: str
+    original_name: str | None = None
+
+
 class MessageRequest(BaseModel):
     message: str
+    images: list[ImageAttachment] | None = None
+
 
 class ModeRequest(BaseModel):
     mode: str
@@ -42,6 +54,13 @@ class SessionInfo(BaseModel):
     working_dir: str
     is_running: bool
     history_length: int
+
+
+def _decode_data_url(data_url: str) -> bytes:
+    m = re.match(r"^data:([^;]+);base64,(.+)$", data_url)
+    if not m:
+        raise ValueError("invalid data URL")
+    return base64.b64decode(m.group(2))
 
 
 @app.on_event("startup")
@@ -62,6 +81,11 @@ async def get_version():
     except importlib.metadata.PackageNotFoundError:
         version = "unknown"
     return {"version": version}
+
+
+@app.get("/api/config")
+async def get_config():
+    return {"enable_vl": bool(config.get("enable_vl", False))}
 
 
 @app.get("/api/sessions")
@@ -204,12 +228,26 @@ async def send_message(name: str, req: MessageRequest):
         await agent.compact_now()
         return {"status": "compacted"}
     if agent.is_running():
+        # Steering only carries text; attached images are ignored mid-run.
         await agent.steer(req.message)
         return {"status": "steered"}
     # The agent runs as an independent task; the HTTP response returns
     # immediately. Output is delivered through the /stream subscription
     # endpoint, so closing the browser never cancels an in-progress run.
-    await agent.start(req.message)
+    if not config.get("enable_vl", False):
+        # Image support is disabled: do not save new attachments, but keep any
+        # images already stored in the session history.
+        req.images = None
+    images: list[Image] = []
+    for att in req.images or []:
+        data = _decode_data_url(att.data_url)
+        images.append(save_image(
+            agent.session_dir,
+            data,
+            att.mime_type,
+            original_name=att.original_name or "",
+        ))
+    await agent.start(req.message, images=images or None)
     return {"status": "started"}
 
 
@@ -387,6 +425,21 @@ async def get_history(name: str):
         from src.trilobite.history import History
         return History(history_path).to_flat_dicts()
     return []
+
+
+@app.get("/api/sessions/{name}/images/{filename}")
+async def get_image(name: str, filename: str):
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    # Only serve hash-style filenames under the session's images directory.
+    if not re.fullmatch(r"[a-f0-9]{12}\.[a-z0-9]+", filename):
+        raise HTTPException(400, "invalid image filename")
+    path = session_dir / "images" / filename
+    if not path.is_file():
+        raise HTTPException(404, "image not found")
+    mime = ext_to_mime(path.suffix)
+    return Response(path.read_bytes(), media_type=mime)
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")

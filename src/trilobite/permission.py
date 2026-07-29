@@ -58,10 +58,10 @@ class AgentPermission(ABC):
     #: what enforces the single-layer nesting limit.
     exposes_task: bool = False
 
-    def filter_definitions(self) -> list[dict]:
+    def filter_definitions(self, enable_vl: bool = False) -> list[dict]:
         """Tool definitions to send to the LLM for this policy."""
         allowed = set(self.tool_names)
-        defs = [t.to_openai_tool() for t in ALL_TOOLS if t.name in allowed]
+        defs = [t.to_openai_tool(enable_vl) for t in ALL_TOOLS if t.name in allowed]
         if self.exposes_exit_plan_mode:
             defs.append(EXIT_PLAN_MODE_DEF)
         if self.exposes_task:
