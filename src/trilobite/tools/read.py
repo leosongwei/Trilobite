@@ -1,7 +1,10 @@
+import mimetypes
 from pathlib import Path
 from typing import Any
 
 from src.trilobite.file_access import resolve_file_path
+from src.trilobite.image_storage import format_mtime, save_image
+from src.trilobite.messages import Image
 from src.trilobite.tools.tool import Tool
 
 
@@ -13,6 +16,23 @@ class ReadTool(Tool):
         "longer a trailing marker says so and how to continue -- increase "
         "limit_lines or limit_chars, or pass start_line to page forward."
     )
+    image_description = (
+        "Read content from a file in the working directory. Only the first "
+        "50 lines / 10000 chars are returned by default; if the file is "
+        "longer a trailing marker says so and how to continue -- increase "
+        "limit_lines or limit_chars, or pass start_line to page forward. "
+        "If the file is a supported image (PNG, JPEG, GIF, WebP), the tool "
+        "stores the image in the session and returns a self-closing "
+        "`<image .../>` marker. The actual image is attached to the user "
+        "message so the model can see it."
+    )
+
+    def to_openai_tool(self, enable_vl: bool = False) -> dict:
+        d = super().to_openai_tool(enable_vl)
+        if enable_vl:
+            d["function"]["description"] = self.image_description
+        return d
+
     parameters = {
         "type": "object",
         "properties": {
@@ -68,6 +88,29 @@ class ReadTool(Tool):
             return f"Error: File not found: {filename}"
         if filepath.is_dir():
             return f"Error: {filename} is a directory"
+
+        mime, _ = mimetypes.guess_type(str(filepath))
+        if mime and mime.startswith("image/"):
+            try:
+                data = filepath.read_bytes()
+            except Exception as e:
+                return f"Error reading image: {e}"
+            date = format_mtime(filepath.stat().st_mtime)
+            image: Image = save_image(
+                session_dir,
+                data,
+                mime,
+                original_name=filepath.name,
+                date=date,
+            )
+            marker = (
+                f'<image filename="{image.filename}" '
+                f'original_name="{image.original_name}" '
+                f'mime="{image.mime_type}" '
+                f'modified="{image.date}" />'
+            )
+            return {"result": marker, "image": image}
+
         try:
             content = filepath.read_text(encoding="utf-8", errors="replace")
         except Exception as e:

@@ -27,6 +27,8 @@ enable_vl: true
 - `UserMessage` 保存 `Image` 元数据，历史文件只引用文件名，不内嵌 base64。
 - `History.get_api_messages(image_dir=..., enable_vl=...)` 在构造 LLM 请求时把图片编码为 OpenAI 兼容的 `image_url` content part。
 - 当 `enable_vl` 被关闭后，新的图片附件不会被保存，已存在历史中的图片元数据和文件也**不会被删除**，但它们不会出现在发给 LLM 的请求里，从而可以在非视觉模型上继续对话。
+- `read` 工具读到支持的图片文件（PNG / JPEG / GIF / WebP）时，会把图片存入 `sessions/<id>/images/<hash>.ext`，并返回 `<image filename="..." original_name="..." mime="..." modified="..." />` 标记。该图片会被挂到触发这次工具调用的 user 消息上，下轮 LLM 请求时模型就能看到这张图。
+- 只有 `enable_vl: true` 时，系统提示词和 `read` 工具定义才会包含图片相关的说明。`enable_vl: false` 时 `read` 只 advertised 为文本读取工具，避免纯文本模型幻觉自己能读图。
 - 图片通过 `/api/sessions/{id}/images/{filename}` 读取。
 
 ## 相关代码

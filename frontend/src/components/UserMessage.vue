@@ -10,7 +10,7 @@
             :key="img.filename"
             class="user-image"
             :src="imageUrl(img.filename)"
-            :title="img.original_name"
+            :title="img.original_name + (img.date ? ' · ' + img.date : '')"
             @click="openLightbox(imageUrl(img.filename))"
           />
         </div>

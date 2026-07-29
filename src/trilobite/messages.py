@@ -79,24 +79,31 @@ class Image:
     rebuild the API payload and to render the reference in the frontend.
     """
 
-    def __init__(self, filename: str, mime_type: str, original_name: str = ""):
+    def __init__(self, filename: str, mime_type: str, original_name: str = "", date: str = ""):
         self.filename = filename
         self.mime_type = mime_type
         self.original_name = original_name or filename
+        self.date = date
 
     def to_storage_dict(self) -> dict:
-        return {
+        d = {
             "filename": self.filename,
             "mime_type": self.mime_type,
             "original_name": self.original_name,
         }
+        if self.date:
+            d["date"] = self.date
+        return d
 
     def to_frontend_dict(self) -> dict:
-        return {
+        d = {
             "filename": self.filename,
             "mime_type": self.mime_type,
             "original_name": self.original_name,
         }
+        if self.date:
+            d["date"] = self.date
+        return d
 
     def to_api_part(self, image_dir: Path) -> dict:
         """Build an OpenAI-compatible image_url content part from the stored file."""
@@ -340,7 +347,12 @@ def message_from_storage(d: dict) -> Message:
         return CompactMarker()
     if t == "user":
         images = [
-            Image(img.get("filename", ""), img.get("mime_type", ""), img.get("original_name", ""))
+            Image(
+                img.get("filename", ""),
+                img.get("mime_type", ""),
+                img.get("original_name", ""),
+                img.get("date", ""),
+            )
             for img in d.get("images", [])
         ]
         return UserMessage(

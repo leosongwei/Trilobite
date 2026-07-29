@@ -12,7 +12,7 @@ class Tool(ABC):
     def execute(self, working_dir: Path, session_dir: Path, **kwargs: Any) -> str:
         ...
 
-    def to_openai_tool(self) -> dict:
+    def to_openai_tool(self, enable_vl: bool = False) -> dict:
         return {
             "type": "function",
             "function": {

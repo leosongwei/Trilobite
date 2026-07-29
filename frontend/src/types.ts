@@ -2,11 +2,13 @@ export interface ImageMeta {
   filename: string
   mime_type: string
   original_name: string
+  date?: string
 }
 
 export type SSEEvent =
   | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
   | { type: 'user'; text: string; user_seq: number; images?: ImageMeta[] }
+  | { type: 'user_images'; user_seq: number; images: ImageMeta[] }
   | { type: 'user_edit'; user_seq: number; text: string }
   | { type: 'turn' }
   | { type: 'compact' }

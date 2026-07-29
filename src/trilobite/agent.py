@@ -26,7 +26,7 @@ from src.trilobite.messages import (
     ToolResult,
     UserMessage,
 )
-from src.trilobite.prompts import SYSTEM_PROMPT, subagent_system_prompt
+from src.trilobite.prompts import IMAGE_READ_PROMPT, SYSTEM_PROMPT, subagent_system_prompt
 from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
 from src.trilobite.tools.bash import kill_process_group, truncate_output
 from src.trilobite.tool_call import execute_tool
@@ -248,6 +248,8 @@ class Agent:
         # guessed absolute paths that drift outside the workspace.
         self._is_git_repo = self._detect_git_repo()
         self.system_prompt = self._build_env_block() + "\n\n" + self.system_prompt
+        if self.config.get("enable_vl", False):
+            self.system_prompt += "\n\n" + IMAGE_READ_PROMPT
         self.working_context = self._load_working_context()
         self.history = History(session_dir / "history.json")
         self._broker = StreamBroker(len(self.history.raw))
@@ -544,6 +546,47 @@ class Agent:
             if isinstance(m, UserMessage) and not m.compact_summary
         )
 
+    def _user_seq_at(self, index: int) -> int:
+        """Return the 0-based user_seq of the user message at ``index``."""
+        return (
+            sum(
+                1
+                for m in self.history.raw[: index + 1]
+                if isinstance(m, UserMessage) and not m.compact_summary
+            )
+            - 1
+        )
+
+    async def _attach_image_to_last_user(self, image: Image, current_asst: AssistantMessage) -> None:
+        """Attach an image read by a tool to the user message that triggered the turn.
+
+        The image is added to the nearest preceding real user message, then a
+        ``user_images`` stream event is emitted so the frontend can render it.
+        """
+        try:
+            asst_idx = self.history.raw.index(current_asst)
+        except ValueError:
+            return
+        target_idx = -1
+        for i in range(asst_idx - 1, -1, -1):
+            msg = self.history.raw[i]
+            if isinstance(msg, UserMessage) and not msg.compact_summary:
+                target_idx = i
+                break
+        if target_idx < 0:
+            return
+        user_msg = self.history.raw[target_idx]
+        if any(img.filename == image.filename for img in user_msg.images):
+            return
+        user_msg.images.append(image)
+        self.history.save()
+        user_seq = self._user_seq_at(target_idx)
+        await self._send_stream_event({
+            "type": "user_images",
+            "user_seq": user_seq,
+            "images": [image.to_frontend_dict()],
+        })
+
     def _has_compactable_content(self) -> bool:
         """Whether there is real conversation after the last compact marker."""
         start = 0
@@ -669,7 +712,9 @@ class Agent:
 
                 # A pending compaction runs with tools disabled so the model
                 # produces a handoff summary instead of calling tools.
-                tools = None if self._need_compact else self._permission.filter_definitions()
+                tools = None if self._need_compact else self._permission.filter_definitions(
+                    enable_vl=bool(self.config.get("enable_vl", False))
+                )
                 stream = await self.chat_completion(
                     messages=messages,
                     stream=True,
@@ -830,6 +875,8 @@ class Agent:
                                 execute_tool, tool_name, args, self.working_dir,
                                 self.session_dir, self._additional_dirs,
                                 self._register_proc, on_output)
+                            if "image" in tool_result and self.config.get("enable_vl", False):
+                                await self._attach_image_to_last_user(tool_result["image"], asst)
 
                         # Handle permission request from tool
                         if "permission" in tool_result:
@@ -859,6 +906,8 @@ class Agent:
                                     execute_tool, tool_name, args, self.working_dir,
                                     self.session_dir, self._additional_dirs,
                                     self._register_proc, on_output)
+                                if "image" in tool_result and self.config.get("enable_vl", False):
+                                    await self._attach_image_to_last_user(tool_result["image"], asst)
                             # else: keep original error result
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"], "tool_call_id": tc.id}

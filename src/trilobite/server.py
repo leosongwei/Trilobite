@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import hashlib
 import importlib.metadata
 import json
 import re
@@ -15,6 +14,7 @@ from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
 from src.trilobite.config import init_config, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
+from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
 
 app = FastAPI(title="Trilobite")
@@ -56,50 +56,11 @@ class SessionInfo(BaseModel):
     history_length: int
 
 
-def _mime_to_ext(mime_type: str) -> str:
-    return {
-        "image/png": ".png",
-        "image/jpeg": ".jpg",
-        "image/jpg": ".jpg",
-        "image/gif": ".gif",
-        "image/webp": ".webp",
-        "image/svg+xml": ".svg",
-    }.get(mime_type.lower(), ".bin")
-
-
-def _ext_to_mime(ext: str) -> str:
-    return {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".svg": "image/svg+xml",
-    }.get(ext.lower(), "application/octet-stream")
-
-
 def _decode_data_url(data_url: str) -> bytes:
     m = re.match(r"^data:([^;]+);base64,(.+)$", data_url)
     if not m:
         raise ValueError("invalid data URL")
     return base64.b64decode(m.group(2))
-
-
-def _save_images(session_dir: Path, attachments: list[ImageAttachment]) -> list[Image]:
-    images_dir = session_dir / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
-    images: list[Image] = []
-    for att in attachments:
-        data = _decode_data_url(att.data_url)
-        ext = _mime_to_ext(att.mime_type)
-        filename = f"{hashlib.sha256(data).hexdigest()[:12]}{ext}"
-        (images_dir / filename).write_bytes(data)
-        images.append(Image(
-            filename=filename,
-            mime_type=att.mime_type,
-            original_name=att.original_name or filename,
-        ))
-    return images
 
 
 @app.on_event("startup")
@@ -277,7 +238,15 @@ async def send_message(name: str, req: MessageRequest):
         # Image support is disabled: do not save new attachments, but keep any
         # images already stored in the session history.
         req.images = None
-    images = _save_images(agent.session_dir, req.images) if req.images else []
+    images: list[Image] = []
+    for att in req.images or []:
+        data = _decode_data_url(att.data_url)
+        images.append(save_image(
+            agent.session_dir,
+            data,
+            att.mime_type,
+            original_name=att.original_name or "",
+        ))
     await agent.start(req.message, images=images or None)
     return {"status": "started"}
 
@@ -469,7 +438,7 @@ async def get_image(name: str, filename: str):
     path = session_dir / "images" / filename
     if not path.is_file():
         raise HTTPException(404, "image not found")
-    mime = _ext_to_mime(path.suffix)
+    mime = ext_to_mime(path.suffix)
     return Response(path.read_bytes(), media_type=mime)
 
 

@@ -18,7 +18,7 @@ def should_compact(agent: Agent) -> bool:
     the messages added since that call. Together they approximate what the
     next request would cost, so pre-marker messages never skew the estimate.
     """
-    tools = agent._permission.filter_definitions()
+    tools = agent._permission.filter_definitions(enable_vl=bool(agent.config.get("enable_vl", False)))
     pending = agent.history.raw[agent._token_covered:]
     # Pending entries are typed Message objects; expand to API dicts for the
     # token estimate (an AssistantMessage unfolds into assistant + tool msgs).
