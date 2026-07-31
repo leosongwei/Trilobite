@@ -49,9 +49,9 @@ const windowStart = computed(() => state.chatItems.length - effectiveRender.valu
 const visibleItems = computed(() => state.chatItems.slice(windowStart.value))
 const hasMoreAbove = computed(() => effectiveRender.value < state.chatItems.length)
 // "活的" thinking 泡泡：当前位于对话最底部、且其下方还没有任何正文/工具/
-// 后续内容的那个 thinking。一旦下方出现任何内容（同 turn 的 text/tool，或
-// 下一个 turn、用户消息），它就变成老泡泡，只渲染最后 3 行预览，避免长对话
-// 越来越多全文 thinking 堆在 DOM 里造成卡顿。
+// 后续内容的那个 thinking。泡泡默认展开全文（见 ThinkingBlock）；live 状态
+// 用于两处：手动折叠时 tail-follow 对齐最新几行，以及下方 maybeScrollThinking
+// 在限额内流式增长时滚动钉底。
 const liveIdx = computed(() => {
   const items = visibleItems.value
   if (items.length === 0) return -1
@@ -138,7 +138,10 @@ function scheduleTypeset() {
 }
 
 // 切 session 时重置窗口。
-watch(() => state.currentSession, () => resetWindow())
+watch(() => state.currentSession, () => {
+  resetWindow()
+  lastThinkingScrollHeight = 0
+})
 
 // chatItems is replaced on session switch; streamTick bumps during streaming.
 // 窗口扩大（loadMore / fillViewport）会引入新的 DOM 节点，也需要 typeset。
@@ -167,4 +170,37 @@ const bubbleCount = computed(() => {
   return n
 })
 watch(bubbleCount, () => nextTick(scrollToBottom))
+
+// thinking 泡泡流式增长：行数未超过折叠限额（约 3 行）前，每次实际渲染
+// 高度增高都滚到底——一两行的短泡泡始终完整可见；一旦超过限额就不再滚动，
+// 长思考不打扰用户翻看历史（泡泡默认展开全文，可随时手动滚到底查看）。
+const THINKING_SCROLL_LIMIT_LINES = 3
+let lastThinkingScrollHeight = 0
+
+// 新 thinking 泡泡出现时重置高度记录，避免与上一个泡泡残留高度比较。
+watch(liveIdx, (v) => {
+  if (v !== -1) lastThinkingScrollHeight = 0
+})
+
+function maybeScrollThinking() {
+  const el = chatRef.value
+  const items = visibleItems.value
+  if (!el || items.length === 0) return
+  const last = items[items.length - 1]
+  // 只处理底部"活的" thinking 泡泡（下方无正文/工具）。
+  if (last.kind !== 'turn' || !last.thinking || last.text || last.tools.length > 0) return
+  const bodies = el.querySelectorAll<HTMLElement>('.thinking-body')
+  const body = bodies.length ? bodies[bodies.length - 1] : null
+  const content = body ? body.querySelector<HTMLElement>('.thinking-content') : null
+  if (!content) return
+  const h = content.scrollHeight
+  const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 18
+  if (h > lineHeight * THINKING_SCROLL_LIMIT_LINES) return // 超过限额，不再滚动
+  if (h === lastThinkingScrollHeight) return // 同一行内增长不重复滚动
+  lastThinkingScrollHeight = h
+  scrollToBottom()
+}
+
+// 每个流式 delta 后检查一次（nextTick 等 DOM 更新后再测量）。
+watch(() => state.streamTick, () => nextTick(maybeScrollThinking))
 </script>

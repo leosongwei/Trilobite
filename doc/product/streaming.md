@@ -86,7 +86,7 @@ per-session 事件总线，维护：
 * 只渲染靠近底部的 `INITIAL_VISIBLE`（10）条消息；`visibleItems = chatItems.slice(windowStart)`，`windowStart = length - effectiveRender`。
 * 用户滚到顶部（`scrollTop <= TOP_THRESHOLD`）时向上扩窗 `LOAD_MORE`（10）条，扩窗前后用 `scrollHeight` 差值恢复 `scrollTop`，保持视觉位置不跳。顶部有"滚动到顶部加载更早的消息…"提示。
 * 若可见内容比视口还短却仍有更早消息（极短消息场景），`fillViewport` 自动扩窗直到填满视口，避免出现无法滚动加载的空白死区；仅在非流式时运行。
-* 流式输出持续向底部追加，窗口始终包含末尾。滚动钉底只在**新泡泡出现**时触发：顶层 item（turn / user / compact / error）追加由 `chatItems.length` watcher 处理，turn 内部的 thinking / 正文 / 工具调用首次出现由 `bubbleCount` watcher 处理；而泡泡内部的流式内容增长（`streamTick`）**不再**强制钉底，方便用户往上翻看历史。
+* 流式输出持续向底部追加，窗口始终包含末尾。滚动钉底只在**新泡泡出现**时触发：顶层 item（turn / user / compact / error）追加由 `chatItems.length` watcher 处理，turn 内部的 thinking / 正文 / 工具调用首次出现由 `bubbleCount` watcher 处理；泡泡内部的流式内容增长（`streamTick`）不强制钉底，方便用户往上翻看历史。唯一例外：**thinking 泡泡在约 3 行限额内**每次实际高度增高滚一次底（见下节思考展示），保证一两行的短泡泡完整可见，超过限额即停止。
 * 切 session 时 `renderCount` 重置回 `INITIAL_VISIBLE`；窗口扩大引入新 DOM 节点后同样触发 MathJax typeset。
 
 ### Markdown 与公式渲染（`TurnBlock.vue` / `mathjax.ts`）
@@ -105,8 +105,8 @@ per-session 事件总线，维护：
 
 ### 思考展示（`ThinkingBlock.vue`）
 
-### 思考展示（`ThinkingBlock.vue`）
-
-* 默认折叠只显示约 3 行高度，`overflow: hidden` 不可手动滚动；点击展开显示全部内容，默认不展开。切换按钮 `▾/▸` 置于块顶部（内容向下展开）；早期为"流式滚动时按钮始终可见"置于底部，现泡泡内部增长不再强钉底（见上节滚动行为），故回到常规的顶部布局。
-* **"活的" thinking 泡泡**（`ChatView` 的 `liveIdx`：最后一个 chatItem 是 turn、`thinking` 非空、`text` 与 `tools` 均空）保留全文，流式输出时通过 `transform` 把内容尾部对齐到窗口底部，始终显示最新的几行（类似 `tail -f`）。
-* 一旦某个 thinking 泡泡下方出现任何内容（同 turn 的正文/工具调用，或下一个 turn、用户消息），它就从 live 变成"老"泡泡：自动折叠、清掉 transform，折叠时**只把最后 3 行（超长单行按字符兜底截取）写进 DOM**（`displayContent` 截取尾部预览），不渲染整段思考；展开后才渲染全文。这样长对话里已完成的 thinking 不再各自携带全文 DOM，避免越堆越卡；切 tab 由历史重建时也只有最底部那个（若仍在思考）带全文。
+* 默认**完整展开**显示全部思考内容（`open` 初始为 `true`），thinking 泡泡随流式输出自然增高，不折叠不截断；切换按钮 `▾/▸` 置于块顶部（内容向下展开），点击可手动折叠/展开。
+* **滚动钉底**：thinking 泡泡首次出现由 `bubbleCount` watcher 滚动一次；流式增长期间，`ChatView` 的 `streamTick` watcher（`maybeScrollThinking`）测量底部泡泡 `.thinking-content` 的实际渲染高度，**约 3 行限额内**每次高度增高都滚到底（同一行内增长不重复滚），超过限额后不再自动滚动——一两行的短泡泡始终完整可见，长思考不打扰用户翻看历史（内容默认展开，可手动滚到底查看全文）。
+* 手动折叠时：老泡泡只把最后 3 行（超长单行按字符兜底截取）写进 DOM（`displayContent` 截取尾部预览），不渲染整段思考；**"活的"泡泡**（`ChatView` 的 `liveIdx`：最后一个 chatItem 是 turn、`thinking` 非空、`text` 与 `tools` 均空）仍保留全文，通过 `transform` 把内容尾部对齐到窗口底部，始终显示最新的几行（类似 `tail -f`）。
+* 泡泡从 live 变成"老"（下方出现同 turn 的正文/工具调用，或下一个 turn、用户消息）时**保持当前展开状态**，只清掉手动折叠可能残留的 transform。
+* 早期版本默认折叠只显示约 3 行高度（`overflow: hidden` 不可手动滚动），live 泡泡用 transform 尾部对齐模拟 `tail -f`。因默认折叠导致 thinking 期间看不到完整思维链、泡泡高度也不随流式增长，现改为默认展开全文；代价是长对话里已完成的 thinking 会各自携带全文 DOM，渲染压力略增（可点击顶部按钮手动折叠）。
