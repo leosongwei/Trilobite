@@ -171,10 +171,11 @@ const bubbleCount = computed(() => {
 })
 watch(bubbleCount, () => nextTick(scrollToBottom))
 
-// thinking 泡泡流式增长：行数未超过折叠限额（约 3 行）前，每次实际渲染
-// 高度增高都滚到底——一两行的短泡泡始终完整可见；一旦超过限额就不再滚动，
-// 长思考不打扰用户翻看历史（泡泡默认展开全文，可随时手动滚到底查看）。
-const THINKING_SCROLL_LIMIT_LINES = 3
+// thinking 泡泡流式增长：折叠框高度随内容渐进增高（内容 1 行框 1 行高、2 行
+// 框 2 行高，……封顶于 CSS max-height 后不再变高）。每次框高度增长都滚到底
+// ——一两行的短泡泡始终完整可见；封顶后高度不再变化，也就不再滚动，长思考
+// 不打扰用户翻看历史（框内超出部分由 ThinkingBlock 的 transform 尾部对齐，
+// 最新内容始终可见）。用户手动展开（.expanded）后不自动滚动。
 let lastThinkingScrollHeight = 0
 
 // 新 thinking 泡泡出现时重置高度记录，避免与上一个泡泡残留高度比较。
@@ -191,12 +192,9 @@ function maybeScrollThinking() {
   if (last.kind !== 'turn' || !last.thinking || last.text || last.tools.length > 0) return
   const bodies = el.querySelectorAll<HTMLElement>('.thinking-body')
   const body = bodies.length ? bodies[bodies.length - 1] : null
-  const content = body ? body.querySelector<HTMLElement>('.thinking-content') : null
-  if (!content) return
-  const h = content.scrollHeight
-  const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 18
-  if (h > lineHeight * THINKING_SCROLL_LIMIT_LINES) return // 超过限额，不再滚动
-  if (h === lastThinkingScrollHeight) return // 同一行内增长不重复滚动
+  if (!body || body.classList.contains('expanded')) return
+  const h = body.clientHeight
+  if (h === lastThinkingScrollHeight) return // 高度未变（同一行内增长或已达 max-height 封顶）
   lastThinkingScrollHeight = h
   scrollToBottom()
 }

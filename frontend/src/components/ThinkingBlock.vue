@@ -15,19 +15,21 @@ import { ref, computed, watch, nextTick, onMounted } from 'vue'
 
 const props = defineProps<{ content: string; live?: boolean }>()
 
-// 默认完整展开显示全文（thinking 时泡泡随流式输出自然增高；ChatView 只在
-// 约 3 行限额内随高度增高滚动钉底，超过后不强行锁定底部）。只有用户手动
-// 折叠时才进入预览模式：老泡泡只把最后几行写进 DOM，避免整段思考塞进 DOM
-// 造成渲染压力；"活的"泡泡（当前位于最底部、下方还没有任何正文/工具/后续
-// 内容）则保留全文并用 transform 把尾部对齐到窗口底部，实时跟随流式输出
-// （类似 tail -f）。
-const open = ref(true)
+// 默认折叠：body 有 max-height 上限（overflow: hidden），但高度随内容渐进
+// 增长——内容 1 行时框只有 1 行高，2 行时 2 行高，……直到封顶于 max-height
+// 后不再变高（超出部分靠 transform 把尾部对齐到框底，类似 tail -f，见
+// stickToBottom）。ChatView 配合在框高度每次增长（封顶前）滚动钉底，封顶后
+// 不再滚动。用户手动展开后显示全文。
+const open = ref(false)
 const bodyRef = ref<HTMLElement | null>(null)
 const contentRef = ref<HTMLElement | null>(null)
 
 const PREVIEW_LINES = 3
 const PREVIEW_MAX_CHARS = 300 // 超长单行兜底，约 3 行
 
+// 老泡泡（下方已有正文/工具/后续内容）折叠时只把最后几行写进 DOM，避免整段
+// 思考塞进 DOM 造成渲染压力；"活的"泡泡（当前位于最底部、下方还没有任何
+// 正文/工具/后续内容）保留全文，配合 transform 尾部对齐实时跟随流式输出。
 const displayContent = computed(() => {
   if (props.live || open.value) return props.content
   const lines = props.content.split('\n')
