@@ -86,8 +86,13 @@ per-session 事件总线，维护：
 * 只渲染靠近底部的 `INITIAL_VISIBLE`（10）条消息；`visibleItems = chatItems.slice(windowStart)`，`windowStart = length - effectiveRender`。
 * 用户滚到顶部（`scrollTop <= TOP_THRESHOLD`）时向上扩窗 `LOAD_MORE`（10）条，扩窗前后用 `scrollHeight` 差值恢复 `scrollTop`，保持视觉位置不跳。顶部有"滚动到顶部加载更早的消息…"提示。
 * 若可见内容比视口还短却仍有更早消息（极短消息场景），`fillViewport` 自动扩窗直到填满视口，避免出现无法滚动加载的空白死区；仅在非流式时运行。
-* 流式输出持续向底部追加，窗口始终包含末尾。滚动钉底只在**新泡泡出现**与 **run 结束**时触发：顶层 item（turn / user / compact / error）追加由 `chatItems.length` watcher 处理，turn 内部的 thinking / 正文 / 工具调用首次出现由 `bubbleCount` watcher 处理；泡泡内部的流式内容增长（`streamTick`）不强制钉底，方便用户往上翻看历史；run 结束（`isStreaming` 翻回 `false`，content 输出完毕）时由 `isStreaming` watcher 滚一次底，展示完整结果。例外：**thinking 泡泡折叠框在封顶（max-height）前**每次高度增长滚一次底（见下节思考展示），保证一两行的短泡泡完整可见，封顶后即停止。
-* 切 session 时 `renderCount` 重置回 `INITIAL_VISIBLE`；窗口扩大引入新 DOM 节点后同样触发 MathJax typeset。
+* 流式输出持续向底部追加，窗口始终包含末尾。滚动钉底（`scrollToBottom`）的触发时机：
+  * **顶层 item 追加**（turn / user / compact / error）：`chatItems.length` watcher，`nextTick` 后滚到底并调用 `fillViewport` 补齐视口。
+  * **turn 内部新泡泡首次出现**（thinking 从空变非空、正文从空变非空、新增工具调用）：`bubbleCount` watcher 滚一次底。
+  * **thinking 折叠框增高（封顶前）**：`streamTick` watcher（`maybeScrollThinking`）测量底部 live 泡泡 `.thinking-body` 的 `clientHeight`，每次高度增长滚一次底，封顶（max-height）后不再滚动（详见下节思考展示）。
+  * **run 结束**：`isStreaming` 翻回 `false`（done / cancelled / interrupted / error，content 输出完毕）时滚一次底，展示完整输出。
+  * **流式增长不触发滚动**：thinking / text / tool_output 的每个 delta（`streamTick`）不钉底，用户可自由往上翻看历史。
+* 切 session 时重置窗口状态（`renderCount` 回 `INITIAL_VISIBLE`、thinking 滚动高度记录清零）；窗口扩大引入新 DOM 节点后同样触发 MathJax typeset。
 
 ### Markdown 与公式渲染（`TurnBlock.vue` / `mathjax.ts`）
 
@@ -106,6 +111,6 @@ per-session 事件总线，维护：
 ### 思考展示（`ThinkingBlock.vue`）
 
 * 默认折叠：body 有 `max-height: 4.5em`（`overflow: hidden`）上限，但框高度随内容**渐进增长**——内容 1 行时框 1 行高、2 行时 2 行高，……直到封顶于 max-height 后不再变高。切换按钮 `▾/▸` 置于块顶部（内容向下展开），点击展开显示全文。
-* **滚动钉底**：thinking 泡泡首次出现由 `bubbleCount` watcher 滚动一次；流式增长期间，`ChatView` 的 `streamTick` watcher（`maybeScrollThinking`）测量底部泡泡 `.thinking-body` 的 `clientHeight`，**框高度每次增长（封顶前）都滚到底**（同一行内增长不重复滚），封顶后高度不再变化、停止滚动——一两行的短泡泡始终完整可见，长思考不打扰用户翻看历史。用户手动展开（`.expanded`）后不自动滚动。
+* **滚动钉底**（触发时机总纲见上节自适应加载）：thinking 泡泡首次出现由 `bubbleCount` watcher 滚动一次；流式增长期间，`ChatView` 的 `streamTick` watcher（`maybeScrollThinking`）测量底部泡泡 `.thinking-body` 的 `clientHeight`，**框高度每次增长（封顶前）都滚到底**（同一行内增长不重复滚），封顶后高度不再变化、停止滚动——一两行的短泡泡始终完整可见，长思考不打扰用户翻看历史。用户手动展开（`.expanded`）后不自动滚动。
 * 内容超出折叠高度后：**"活的"泡泡**（`ChatView` 的 `liveIdx`：最后一个 chatItem 是 turn、`thinking` 非空、`text` 与 `tools` 均空）保留全文，用 `transform` 把内容尾部对齐到框底（类似 `tail -f`），最新几行始终可见；**"老"泡泡**（下方已出现正文/工具/后续内容）折叠时只把最后 3 行（超长单行按字符兜底截取）写进 DOM（`displayContent` 截取尾部预览），不渲染整段思考，避免长对话里已完成的 thinking 各自携带全文 DOM。
 * 泡泡从 live 变成"老"（下方出现同 turn 的正文/工具调用，或下一个 turn、用户消息）时**保持当前展开/折叠状态**，只清掉手动折叠可能残留的 transform。
