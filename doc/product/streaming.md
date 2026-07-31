@@ -86,7 +86,7 @@ per-session 事件总线，维护：
 * 窗口始终包含末尾：`visibleItems = chatItems.slice(windowStart)`，`windowStart` 指向窗口最早的条目，流式输出向底部追加时窗口跟着增长，最新内容永远可见。v-for 以条目对象为 key，扩窗/卸载只挂载/卸载变化的条目，不复用整窗重挂载。
 * 初始只渲染底部 `INITIAL_VISIBLE`（2）条；`fillViewport` 以 `FILL_STEP`（2）条为步长向上增量扩窗，每步钉底并检查视口，直到内容溢出视口（只加载足够填满页面的数量）；短 session 则一直扩到全部加载。run 结束（`isStreaming` 翻回 false）时若内容仍不足一屏也会补齐。
 * 用户滚到顶部（`scrollTop <= TOP_THRESHOLD`）时向上扩窗 `LOAD_MORE`（10）条，扩窗前后用 `scrollHeight` 差值恢复 `scrollTop`，保持视觉位置不跳。顶部有"滚动到顶部加载更早的消息…"提示。
-* 窗口有上限 `MAX_VISIBLE`（40）条：流式追加或向上扩窗导致超限后从顶部卸载条目（`trimExcess`，每批最多 `LOAD_MORE` 条）。卸载只针对已完全滚出视口上方的条目——按 `[data-chat-item]` 测量被卸条目的高度（含安全余量）限制每批卸载量，保证不把当前视口内容拽走；卸载后用 `scrollHeight` 差值精确补偿滚动位置。用户停留在顶部阅读历史时不会卸载正在看的条目，随向下滚动逐批卸完。
+* 窗口有上限 `MAX_VISIBLE`（20）条：流式追加或向上扩窗导致超限后从顶部卸载条目（`trimExcess`，每批最多 `LOAD_MORE` 条）。上限取保守的固定条数——单条泡泡高度不可控（超长 thinking / 大量工具条目），无法按视口大小推算，固定条数才保证 DOM 有界。卸载只针对已完全滚出视口上方的条目——按 `[data-chat-item]` 测量被卸条目的高度（含安全余量）限制每批卸载量，保证不把当前视口内容拽走；卸载后用 `scrollHeight` 差值精确补偿滚动位置。用户停留在顶部阅读历史时不会卸载正在看的条目，随向下滚动逐批卸完。
 * 流式输出持续向底部追加，窗口始终包含末尾。滚动钉底（`scrollToBottom`）的触发时机：
   * **顶层 item 追加**（turn / user / compact / error）：`chatItems.length` watcher，`nextTick` 后滚到底并调用 `fillViewport` 补齐视口。
   * **turn 内部新泡泡首次出现**（thinking 从空变非空、正文从空变非空、新增工具调用）：`bubbleCount` watcher 滚一次底。
