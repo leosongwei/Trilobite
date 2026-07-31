@@ -201,4 +201,13 @@ function maybeScrollThinking() {
 
 // 每个流式 delta 后检查一次（nextTick 等 DOM 更新后再测量）。
 watch(() => state.streamTick, () => nextTick(maybeScrollThinking))
+
+// 纯文字输出结束（run 完成，isStreaming 翻回 false）时滚一次底：流式期间
+// 每个 delta 都不钉底（见上），只在输出全部结束后滚到底展示完整结果。
+watch(
+  () => state.isStreaming,
+  (v, prev) => {
+    if (prev && !v) nextTick(scrollToBottom)
+  },
+)
 </script>
