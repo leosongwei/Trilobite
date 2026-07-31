@@ -41,9 +41,9 @@ const chatRef = ref<HTMLElement>()
 const INITIAL_VISIBLE = 2 // 初始从底部渲染的条数（fillViewport 会快速补齐到填满视口）
 const FILL_STEP = 2       // fillViewport 每次向上扩窗的条数
 const LOAD_MORE = 10      // 滚到顶部时向上扩窗的条数
-const MAX_VISIBLE = 20    // 窗口上限：超过后从顶部卸载。取保守值——单条泡泡
-                          // 高度不可控（超长 thinking / 大量工具条目），无法按
-                          // 视口大小推算，固定条数上限才保证 DOM 有界。
+const MAX_VISIBLE = 10    // 窗口上限：超过后从顶部卸载。取保守值——单条泡泡
+                          // 高度不可控（超长 thinking / 大量工具条目），一屏
+                          // 往往装不下 5 个泡泡，固定条数上限才保证 DOM 有界。
 const TOP_THRESHOLD = 64  // 距顶部多少 px 内触发加载更多
 const TRIM_SAFE_MARGIN = 48 // 卸载单条的安全余量（覆盖 margin 等测量误差），
                             // 保证卸载后不会拽动当前视口内容
