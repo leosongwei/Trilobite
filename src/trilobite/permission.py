@@ -26,85 +26,127 @@ A permission has two responsibilities:
    advertised to the LLM.
 2. :meth:`AgentPermission.intercept` -- gate a tool call before execution,
    returning an error message to block it or ``None`` to allow.
+
+:attr:`AgentPermission.tool_names` is the single source of truth for the
+intercept gate: a policy declares the tools it *allows*, and the generic
+:meth:`AgentPermission.intercept` blocks anything outside that set. What
+gets advertised to the model defaults to the same set
+(:attr:`AgentPermission.advertised_tool_names`); the primary modes override
+it with the full set for cache stability, and the mode difference is
+enforced by :meth:`intercept`.
 """
 
-from __future__ import annotations
-
-from abc import ABC, abstractmethod
+from abc import ABC
 
 from src.trilobite.tool_call import ALL_TOOLS, EXIT_PLAN_MODE_DEF, TASK_TOOL_DEF
+
+#: every concrete tool name, in :data:`~src.trilobite.tool_call.ALL_TOOLS`
+#: order. The primary modes advertise this full set (see
+#: :attr:`AgentPermission.advertised_tool_names`) so the tools prefix is
+#: byte-identical across plan/build switches (cache stability).
+ALL_TOOL_NAMES: tuple[str, ...] = tuple(t.name for t in ALL_TOOLS)
 
 
 class AgentPermission(ABC):
     """Policy over the tool set that an agent run operates under.
 
-    Subclasses declare :attr:`tool_names` (a subset of the global
-    :data:`~src.trilobite.tool_call.ALL_TOOLS` names) and implement
-    :meth:`intercept`. :meth:`filter_definitions` derives the advertised
-    tool list from :attr:`tool_names` plus, optionally, the
-    ``exit_plan_mode`` virtual tool.
+    Subclasses declare :attr:`tool_names` (the concrete tools this policy
+    allows) plus the virtual-tool flags; the generic :meth:`intercept`
+    derives its decision from those declarations.
+    :meth:`filter_definitions` advertises :attr:`advertised_tool_names`,
+    whose default is :attr:`tool_names`.
     """
 
-    #: concrete tool names this policy exposes to the model.
+    #: concrete tool names this policy ALLOWS at execution time. The generic
+    #: :meth:`intercept` gate blocks any tool outside this set.
     tool_names: tuple[str, ...] = ()
 
-    #: whether the ``exit_plan_mode`` virtual tool is offered. Only the plan
-    #: mode offers it -- it is the in-place transition back to build mode,
-    #: so it is a mode concern, not a role concern.
+    #: tool names advertised to the LLM. The default is :attr:`tool_names`
+    #: (advertise what you allow). The primary modes override this with
+    #: :data:`ALL_TOOL_NAMES` so the tools prefix is identical across
+    #: plan/build switches (cache stability); the mode difference is
+    #: enforced by :meth:`intercept`.
+    advertised_tool_names: tuple[str, ...] | None = None
+
+    #: message template for blocked tools; ``{tool}`` is replaced with the
+    #: tool name. Subclasses override to tailor the hint.
+    block_message: str = "Error: {tool} tool is not available in the current mode."
+
+    #: whether the ``exit_plan_mode`` virtual tool is offered. Both primary
+    #: modes advertise it (for tool-prefix cache stability across mode
+    #: switches); subagent roles keep it out of the tool set. In build mode
+    #: calls to it receive a no-op result at dispatch time.
     exposes_exit_plan_mode: bool = False
 
     #: whether the ``task`` (subagent spawn) tool is offered. Only primary
-    #: agents (build/plan modes) offer it; subagent roles never do, which is
-    #: what enforces the single-layer nesting limit.
+    #: agents (build/plan modes) offer it; subagent roles keep it out of the
+    #: tool set, which enforces the single-layer nesting limit.
     exposes_task: bool = False
 
     def filter_definitions(self, enable_vl: bool = False) -> list[dict]:
         """Tool definitions to send to the LLM for this policy."""
-        allowed = set(self.tool_names)
-        defs = [t.to_openai_tool(enable_vl) for t in ALL_TOOLS if t.name in allowed]
+        advertised = set(self.advertised_tool_names or self.tool_names)
+        defs = [t.to_openai_tool(enable_vl) for t in ALL_TOOLS if t.name in advertised]
         if self.exposes_exit_plan_mode:
             defs.append(EXIT_PLAN_MODE_DEF)
         if self.exposes_task:
             defs.append(TASK_TOOL_DEF)
         return defs
 
-    @abstractmethod
     def intercept(self, tool_name: str) -> str | None:
         """Return an error message if ``tool_name`` is blocked, else ``None``.
 
-        This is a defensive gate: tools absent from :attr:`tool_names` are
-        never advertised to the model, but a hallucinated call is still
-        rejected here with an instructive message rather than a bare
-        "unknown tool".
+        The decision is read from :attr:`tool_names` and the virtual-tool
+        flags -- a policy declares what it allows and this gate enforces
+        exactly that. In plan mode it is the *primary* gate: ``edit``/``write``
+        stay advertised for cache stability and are blocked here. In subagent
+        roles the advertised set equals the allowed set, so this gate is a
+        defensive backstop.
         """
-        ...
+        if tool_name in self.tool_names:
+            return None
+        if tool_name == "exit_plan_mode" and self.exposes_exit_plan_mode:
+            return None
+        if tool_name == "task" and self.exposes_task:
+            return None
+        return self.block_message.format(tool=tool_name)
 
 
 class BuildModePermission(AgentPermission):
-    """Primary agent, build mode: full tool access, can spawn subagents."""
+    """Primary agent, build mode: full tool access, can spawn subagents.
 
-    tool_names = ("read", "glob", "grep", "edit", "write", "bash", "TodoList")
+    Advertises the same full tool set as :class:`PlanModePermission` so the
+    tools prefix is byte-identical across mode switches (cache-stable). The
+    allowed set is the full set, so the generic :meth:`intercept` passes
+    every tool. ``exit_plan_mode`` is advertised; calls to it receive a
+    no-op result at dispatch time (see :class:`Agent`).
+    """
+
+    tool_names = ALL_TOOL_NAMES
+    exposes_exit_plan_mode = True
     exposes_task = True
-
-    def intercept(self, tool_name: str) -> str | None:
-        return None
 
 
 class PlanModePermission(AgentPermission):
     """Primary agent, plan mode: read-only, may request an exit to build,
-    may spawn read-only (explore) subagents."""
+    may spawn read-only (explore) subagents.
+
+    Advertises the same full tool set as :class:`BuildModePermission` so the
+    tools prefix is byte-identical across mode switches (cache-stable). The
+    allowed set (:attr:`tool_names`) is the read-only subset; the generic
+    :meth:`intercept` rejects ``edit``/``write``, and the ``<modeswitch>``
+    notice tells the model they are blocked.
+    """
 
     tool_names = ("read", "glob", "grep", "bash", "TodoList")
+    advertised_tool_names = ALL_TOOL_NAMES
     exposes_exit_plan_mode = True
     exposes_task = True
 
-    def intercept(self, tool_name: str) -> str | None:
-        if tool_name in ("edit", "write"):
-            return (
-                f"Error: {tool_name} tool is not available in plan mode. "
-                "Call exit_plan_mode to request switching to build mode."
-            )
-        return None
+    block_message = (
+        "Error: {tool} tool is blocked in plan mode. "
+        "Call exit_plan_mode to request switching to build mode."
+    )
 
 
 class ExploreSubagentPermission(AgentPermission):
@@ -117,12 +159,7 @@ class ExploreSubagentPermission(AgentPermission):
 
     tool_names = ("read", "glob", "grep", "bash")
 
-    def intercept(self, tool_name: str) -> str | None:
-        if tool_name in ("edit", "write"):
-            return f"Error: {tool_name} tool is not available to the explore subagent."
-        if tool_name == "TodoList":
-            return "Error: TodoList is not available to subagents."
-        return None
+    block_message = "Error: {tool} tool is not available to the explore subagent."
 
 
 class GeneralSubagentPermission(AgentPermission):
@@ -137,7 +174,4 @@ class GeneralSubagentPermission(AgentPermission):
 
     tool_names = ("read", "glob", "grep", "edit", "write", "bash")
 
-    def intercept(self, tool_name: str) -> str | None:
-        if tool_name == "TodoList":
-            return "Error: TodoList is not available to subagents."
-        return None
+    block_message = "Error: {tool} tool is not available to subagents."
