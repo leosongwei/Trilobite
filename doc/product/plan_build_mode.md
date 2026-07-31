@@ -11,7 +11,7 @@ Trilobite 有两种工作模式，由前端切换按钮控制：
 
 模式是 Agent 上的一个布尔标记，**只能由用户通过前端切换**。LLM 可以通过 `exit_plan_mode` 工具请求用户切换到 Build 模式，但最终决定权在用户。
 
-> **工具列表跨模式一致。** 两种模式向 LLM 暴露**完全相同的工具集**（`read` `glob` `grep` `edit` `write` `bash` `TodoList` `exit_plan_mode` `task`），模式差异通过 `<modeswitch>` 提示词消息告知 LLM，并在执行层由 `permission.intercept` 拦截。这样模式切换时 tools 前缀不变，避免上下文缓存全量失效。
+> **工具列表跨模式一致。** 两种模式向 LLM 暴露**完全相同的工具集**（`read` `glob` `grep` `edit` `write` `bash` `TodoList` `exit_plan_mode` `task`），模式差异通过 `<modeswitch>` 提示词消息告知 LLM，并在执行层由 `permission.intercept` 拦截。模式切换时 tools 前缀不变，上下文缓存持续命中。
 
 ## 切换方式
 
@@ -36,7 +36,7 @@ if self._last_notified_mode is None or self._plan_mode != self._last_notified_mo
     self.history.append(UserMessage(notif, is_mode_notification=True))
 ```
 
-与旧设计的区别：**首次调用（`_last_notified_mode is None`）也注入通知**。因为工具列表不再反映模式，新 session 的首轮和 session 恢复后的首轮都需要告知 LLM 当前模式，否则 LLM 无法知道自己处于 plan 还是 build。
+**首次调用（`_last_notified_mode is None`）也注入通知**：新 session 的首轮和 session 恢复后的首轮都携带当前模式，LLM 据此知道处于 plan 还是 build。
 
 通知作为普通 user 消息进入 history，`get_api_messages()` 自然会把它投影进 API 请求（与相邻 user 消息合并）。因为它 append 在末尾，已有前缀不变；持久化后后续每轮前缀一致。
 
@@ -94,15 +94,22 @@ Plan/Build 双模式由 **permission 策略**（`permission.py`）实现。两�
 | Build（`BuildModePermission`） | 全量（含 `exit_plan_mode` `task`） | 无 |
 | Plan（`PlanModePermission`） | 全量（含 `exit_plan_mode` `task`） | `edit` `write` |
 
-Plan 模式下 `edit`/`write` **仍然出现在工具列表里**（LLM 看得到它们的定义），但被 `<modeswitch>` 通知告知不可用。若模型仍调用它们，`intercept` 兜底拦截并返回引导消息：
+**实现上 `tool_names` 是"允许集"，基类通用 `intercept` 以它为唯一依据做拦截。** 基类 `AgentPermission` 两个可声明字段：
+
+* `tool_names` —— 该策略**允许**的具名工具集（执行层拦截的单一事实来源）。基类通用 `intercept` 检查 `tool_name` 是否在 `tool_names`（外加 `exit_plan_mode`/`task` 两个虚拟工具 flag），被拦时返回 `block_message` 模板（`{tool}` 占位，子类可覆盖文案）。
+* `advertised_tool_names` —— **暴露**给 LLM 的工具集，缺省值为 `tool_names`（暴露即允许）。主 agent 两种模式覆盖为 `ALL_TOOL_NAMES`（从 `tool_call.ALL_TOOLS` 派生的全量常量，自动跟随工具注册），跨模式切换 tools 前缀一致；模式差异由 `intercept` 执行。
+
+Plan 模式的声明为三行：`tool_names = (read, glob, grep, bash, TodoList)`、`advertised_tool_names = ALL_TOOL_NAMES`、`block_message = ...`。subagent 角色保持缺省暴露集（暴露集 == 允许集），`intercept` 兜底拦截。
+
+Plan 模式下 `edit`/`write` **仍然出现在工具列表里**（LLM 看得到它们的定义），同时被 `<modeswitch>` 通知告知不可用。若模型仍调用它们，`intercept` 兜底拦截并返回引导消息：
 
 ```
 Error: edit tool is blocked in plan mode. Call exit_plan_mode to request switching to build mode.
 ```
 
-> 这是"提示词引导 + 执行层拦截"的设计：用不变的 tools 换取缓存命中，用 intercept 保证安全。LLM 偶尔误调被禁工具会被拦截，浪费一轮但无副作用。相比之下，旧设计按模式过滤工具列表，模式切换会导致整个对话的 tools 前缀变化、缓存全量失效。
+> 设计为"提示词引导 + 执行层拦截"：tools 前缀跨模式不变、上下文缓存持续命中，被禁工具由 `intercept` 在执行层拦截（LLM 偶尔误调被禁工具会被拦下，浪费一轮，无副作用）。
 
-> 这里刻意区分两类东西：plan/build 是主 agent 的**运行时模式**（在同一个会话里热切换，靠换 permission 实现）；而 explore/general 是 subagent 的**声明式角色**（派生时固化，不切换）。subagent 是独立会话，不涉及模式切换，仍用定义层过滤工具（角色固定，工具列表不变，缓存正常）。
+> 这里区分两类东西：plan/build 是主 agent 的**运行时模式**（同一会话内热切换，换 permission 实现）；explore/general 是 subagent 的**声明式角色**（派生时固化）。subagent 是独立会话，用定义层过滤工具（角色固定，工具列表不变，缓存正常）。
 
 ### 模式切换
 
