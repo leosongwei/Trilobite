@@ -1,5 +1,7 @@
 # Trilobite
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 A coding agent with a web UI, powered by DeepSeek.
 
 ## Install
@@ -134,3 +136,7 @@ Each user message triggers an agentic loop that runs until the model produces a 
 **Steering**: while the loop is running, the user can type new messages. These are queued and injected into history between tool-call rounds, so the next API call sees the new input without interrupting the current stream.
 
 **Cancellation**: the stop button cancels the current task. Partial thinking and text are saved to history before exiting.
+
+## License
+
+Released under the [MIT License](LICENSE).
