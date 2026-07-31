@@ -48,9 +48,10 @@ class AgentPermission(ABC):
     #: concrete tool names this policy exposes to the model.
     tool_names: tuple[str, ...] = ()
 
-    #: whether the ``exit_plan_mode`` virtual tool is offered. Only the plan
-    #: mode offers it -- it is the in-place transition back to build mode,
-    #: so it is a mode concern, not a role concern.
+    #: whether the ``exit_plan_mode`` virtual tool is offered. Both primary
+    #: modes advertise it (for tool-prefix cache stability across mode
+    #: switches); subagent roles never do. In build mode it is advertised
+    #: but rejected at dispatch time.
     exposes_exit_plan_mode: bool = False
 
     #: whether the ``task`` (subagent spawn) tool is offered. Only primary
@@ -72,18 +73,27 @@ class AgentPermission(ABC):
     def intercept(self, tool_name: str) -> str | None:
         """Return an error message if ``tool_name`` is blocked, else ``None``.
 
-        This is a defensive gate: tools absent from :attr:`tool_names` are
-        never advertised to the model, but a hallucinated call is still
-        rejected here with an instructive message rather than a bare
-        "unknown tool".
+        This is the enforcement gate. For subagent roles it is a defensive
+        backstop (tools absent from :attr:`tool_names` are never advertised).
+        For primary modes it is the *primary* gate: both modes advertise the
+        full tool set for cache stability, so disallowed tools (e.g. edit in
+        plan mode) are rejected here rather than hidden from the model.
         """
         ...
 
 
 class BuildModePermission(AgentPermission):
-    """Primary agent, build mode: full tool access, can spawn subagents."""
+    """Primary agent, build mode: full tool access, can spawn subagents.
+
+    Advertises the same full tool set as :class:`PlanModePermission` so the
+    tools prefix is byte-identical across mode switches (cache-stable). The
+    only difference from plan mode is :meth:`intercept`: build mode blocks
+    nothing. ``exit_plan_mode`` is advertised but rejected at dispatch time
+    when not in plan mode (see :class:`Agent`).
+    """
 
     tool_names = ("read", "glob", "grep", "edit", "write", "bash", "TodoList")
+    exposes_exit_plan_mode = True
     exposes_task = True
 
     def intercept(self, tool_name: str) -> str | None:
@@ -92,16 +102,22 @@ class BuildModePermission(AgentPermission):
 
 class PlanModePermission(AgentPermission):
     """Primary agent, plan mode: read-only, may request an exit to build,
-    may spawn read-only (explore) subagents."""
+    may spawn read-only (explore) subagents.
 
-    tool_names = ("read", "glob", "grep", "bash", "TodoList")
+    Advertises the same full tool set as :class:`BuildModePermission` so the
+    tools prefix is byte-identical across mode switches (cache-stable).
+    ``edit``/``write`` are advertised but intercepted at execution time; the
+    ``<modeswitch>`` notice tells the model they are blocked.
+    """
+
+    tool_names = ("read", "glob", "grep", "edit", "write", "bash", "TodoList")
     exposes_exit_plan_mode = True
     exposes_task = True
 
     def intercept(self, tool_name: str) -> str | None:
         if tool_name in ("edit", "write"):
             return (
-                f"Error: {tool_name} tool is not available in plan mode. "
+                f"Error: {tool_name} tool is blocked in plan mode. "
                 "Call exit_plan_mode to request switching to build mode."
             )
         return None

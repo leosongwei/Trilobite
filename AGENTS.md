@@ -13,7 +13,7 @@ Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 
 * `broker.py` - 流式事件总线（StreamBroker）。解耦 agent 运行与 HTTP 请求：事件广播到所有订阅者，维护当前 run 的回放缓冲和已提交历史长度（`persisted_len`），支持浏览器多开、关闭重开、切 tab 恢复。终态事件 `done`/`cancelled`/`error`/`interrupted` 推进 `persisted_len` 并清空缓冲。详见 `doc/product/streaming.md`。
 * `tool_call.py` - 工具注册与分发。维护全局工具列表，两个**虚拟工具**定义（仅 LLM 可见，执行逻辑在 Agent 中）：`EXIT_PLAN_MODE_DEF`（`exit_plan_mode`，请求退出 plan 模式）和 `TASK_TOOL_DEF`（`task`，派生并行 subagent）；`execute_tool` 执行具体工具。
 * `tools/tool.py` -- `Tool` 抽象基类（ABC），声明 `name`/`description`/`parameters` + 抽象 `execute` + `to_openai_tool`，所有具体工具继承它。
-* `permission.py` - Agent 权限策略抽象。`AgentPermission` 基类承担两个职责：过滤工具列表（`filter_definitions`）+ 拦截调用（`intercept`）。子类区分两类生命周期：**模式**（`BuildModePermission`/`PlanModePermission`，主 agent 运行时热切换）vs **角色**（`ExploreSubagentPermission`/`GeneralSubagentPermission`，subagent 派生时固化）。`task` 工具仅主 agent 暴露（硬性限一层嵌套）。详见 `doc/product/plan_build_mode.md`。
+* `permission.py` - Agent 权限策略抽象。`AgentPermission` 基类承担两个职责：声明工具列表（`filter_definitions`）+ 拦截调用（`intercept`）。主 agent 的两种模式暴露**完全相同的全量工具集**（跨模式切换保持 tools 前缀一致命中缓存），模式差异靠 `intercept` + `<modeswitch>` 提示词实现；subagent 角色仍用定义层过滤。子类区分两类生命周期：**模式**（`BuildModePermission`/`PlanModePermission`，主 agent 运行时热切换）vs **角色**（`ExploreSubagentPermission`/`GeneralSubagentPermission`，subagent 派生时固化）。`task` 工具仅主 agent 暴露（硬性限一层嵌套）。详见 `doc/product/plan_build_mode.md`。
 * `compaction.py` -- 上下文压缩。`should_compact` 用上次 API 返回的真实 token 用量 + pending 消息估算，超 `max_context_tokens * compaction_trigger_ratio` 阈值时触发；`build_compact_prompt` 构建 kimi 风格第一人称 handoff 请求，自动附带 TODO 列表（不转录）。详见 `doc/product/compact.md`。
 * `image_storage.py` -- 图片存储。`save_image` 把图片字节存到 `session_dir/images/<sha256前12位>.<ext>`，返回 `Image` 元数据；提供 MIME↔扩展名映射。供 `read` 工具读图片和用户上传图片复用。详见 `doc/product/vlm.md`。
 * `config.py` -- 配置管理。首次运行自动从包内 `config_example/` 复制默认配置（仅 `config.yaml`）。
@@ -46,10 +46,10 @@ Vue 3 + TypeScript，构建后输出到 `src/trilobite/static/`，由 FastAPI �
 ## Plan/Build 双模式
 
 Agent 有两种运行模式：
-* **Plan 模式**（只读）：只能使用 read、glob、grep、bash、TodoList 等非破坏性工具。`edit`/`write` 被拦截。可经 `exit_plan_mode` 请求切换；只能派生 `explore`（只读）subagent。
+* **Plan 模式**（只读）：`edit`/`write` 被拦截（工具仍暴露但不执行）。可经 `exit_plan_mode` 请求切换；只能派生 `explore`（只读）subagent。
 * **Build 模式**（全权限）：所有工具可用，可派生 `explore`/`general` subagent。
 
-Agent 调用 `exit_plan_mode` 时前端展示审批横幅，用户批准后切换。按 **Tab** 可在两种模式间切换。模式变更作为 `is_mode_notification` 的 user 消息追加到历史末尾（仅 run 时检查追加，保持 API 前缀单调增长命中缓存）。详见 `doc/product/plan_build_mode.md`。
+两种模式向 LLM 暴露**完全相同的工具集**，模式差异通过 `<modeswitch>` 提示词消息 + `permission.intercept` 执行层拦截实现，这样模式切换时 tools 前缀不变、缓存不全量失效。Agent 调用 `exit_plan_mode` 时前端展示审批横幅，用户批准后切换。按 **Tab** 可在两种模式间切换。模式通知作为 `is_mode_notification` 的 user 消息追加到历史末尾（run 时检查追加，保持 API 前缀单调增长命中缓存；首次 run 和 compaction 后也会注入）。详见 `doc/product/plan_build_mode.md`。
 
 ## Subagent
 

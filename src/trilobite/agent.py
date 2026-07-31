@@ -78,15 +78,22 @@ class _StreamChunk:
     usage: _Usage | None = None
 
 PLAN_MODE_NOTIFICATION = (
-    "Your operational mode has changed from build to plan.\n"
-    "You are now in read-only mode.\n"
-    "You are not permitted to make file changes. Focus on exploring, analyzing, and planning."
+    '<modeswitch mode="plan">\n'
+    "You are now in plan mode (read-only analysis).\n"
+    "The following tools are blocked and will be rejected if called: edit, write.\n"
+    "All other tools remain available: read, glob, grep, bash, TodoList, exit_plan_mode, task.\n"
+    "Note: in plan mode the task tool may only spawn explore (read-only) subagents.\n"
+    "Focus on exploring, analyzing, and planning. To make file changes, call exit_plan_mode to request switching to build mode.\n"
+    "</modeswitch>"
 )
 
 BUILD_MODE_NOTIFICATION = (
-    "Your operational mode has changed from plan to build.\n"
-    "You are no longer in read-only mode.\n"
-    "You are permitted to make file changes, run shell commands, and utilize your arsenal of tools as needed."
+    '<modeswitch mode="build">\n'
+    "You are now in build mode (full access).\n"
+    "All tools are available: read, glob, grep, edit, write, bash, TodoList, task.\n"
+    "(exit_plan_mode is a no-op in build mode and will be rejected if called.)\n"
+    "You may make file changes, run shell commands, and use your full arsenal of tools.\n"
+    "</modeswitch>"
 )
 
 
@@ -626,6 +633,12 @@ class Agent:
         self.history.append(CompactMarker())
         self.history.append(SystemMessage(rebuilt_system))
         self.history.append(UserMessage(f"<compact>\n{summary}</compact>", compact_summary=True))
+        # The pre-marker <modeswitch> notice is now behind the compact marker
+        # and dropped from the API context, so re-assert the current mode.
+        # Syncing _last_notified_mode prevents a duplicate notice on next run.
+        notif = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
+        self.history.append(UserMessage(notif, is_mode_notification=True))
+        self._last_notified_mode = self._plan_mode
         self._need_compact = False
         self._force_run = True
         self._token_count = 0
@@ -640,16 +653,16 @@ class Agent:
         # behind by a crashed/interrupted run -- the API would reject it.
         self._patch_dangling_tool_calls()
 
-        # A plan/build mode change is recorded once per run (when the user
-        # sends a message) as a persisted user message at the end of history
-        # -- after the user's new message -- instead of being transiently
-        # spliced into the request. Persisting it keeps the API prefix growing
-        # monotonically so the turn stays cacheable, and later turns reuse the
-        # same prefix. The notice is hidden from the frontend and excluded from
+        # The current mode is conveyed to the model via a <modeswitch> user
+        # message (the tool set is identical across modes for cache stability,
+        # so mode awareness cannot come from which tools are listed). On the
+        # first run of a session (new or restored) _last_notified_mode is None
+        # and the model has not been told its mode yet, so we inject the
+        # notice; afterwards we only inject on an actual change. Persisting it
+        # keeps the API prefix growing monotonically so the turn stays
+        # cacheable. The notice is hidden from the frontend and excluded from
         # user_seq via is_mode_notification.
-        if self._last_notified_mode is None:
-            self._last_notified_mode = self._plan_mode
-        elif self._plan_mode != self._last_notified_mode:
+        if self._last_notified_mode is None or self._plan_mode != self._last_notified_mode:
             notif = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
             self._last_notified_mode = self._plan_mode
             self.history.append(UserMessage(notif, is_mode_notification=True))
@@ -693,13 +706,14 @@ class Agent:
 
                 await self._send_stream_event({"type": "turn"})
 
-                # Keep the tools list identical on every turn, including the
-                # compaction turn, so the request prefix matches the cached
-                # prefix -- withholding tools would force a full cache miss on
-                # the compaction turn. The compaction prompt tells the model to
-                # respond with text only, and any tool call it makes anyway is
-                # intercepted below (see the _need_compact branch in the tool
-                # dispatch), so the tools never actually execute.
+                # The tools list is identical on every turn and across plan/build
+                # mode switches (both modes advertise the full set), so the
+                # request prefix stays cache-stable. Mode differences are
+                # conveyed via the <modeswitch> notice and enforced by
+                # permission.intercept at execution time, not by withholding
+                # tool definitions. The compaction turn keeps the same tools too;
+                # any tool call it makes is intercepted (see the _need_compact
+                # branch below) so the tools never actually execute.
                 tools = self._permission.filter_definitions(
                     enable_vl=bool(self.config.get("enable_vl", False))
                 )
@@ -847,7 +861,7 @@ class Agent:
                             tool_result = {"result": "Compaction in progress: tool calls are not executed during the compaction turn. Respond with the handoff summary as text only, do not call any tools."}
                         elif tool_name == "exit_plan_mode":
                             if not self._plan_mode:
-                                tool_result = {"result": "Not in plan mode."}
+                                tool_result = {"result": "exit_plan_mode is a no-op in build mode; you are already in build mode."}
                             else:
                                 await self._send_stream_event({"type": "plan_exit_request"})
                                 await self._plan_exit_event.wait()
@@ -855,7 +869,7 @@ class Agent:
                                 if self._plan_exit_approved:
                                     self._permission = BuildModePermission()
                                     self._last_notified_mode = False
-                                    tool_result = {"result": "Plan mode exited. All tools are now available."}
+                                    tool_result = {"result": "Plan mode exited. You are now in build mode and may make file changes."}
                                 else:
                                     tool_result = {"result": "User declined. Continue planning in plan mode."}
                         elif tool_name == "task":
