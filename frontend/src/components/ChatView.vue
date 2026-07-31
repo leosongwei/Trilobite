@@ -49,9 +49,9 @@ const windowStart = computed(() => state.chatItems.length - effectiveRender.valu
 const visibleItems = computed(() => state.chatItems.slice(windowStart.value))
 const hasMoreAbove = computed(() => effectiveRender.value < state.chatItems.length)
 // "活的" thinking 泡泡：当前位于对话最底部、且其下方还没有任何正文/工具/
-// 后续内容的那个 thinking。一旦下方出现任何内容（同 turn 的 text/tool，或
-// 下一个 turn、用户消息），它就变成老泡泡，只渲染最后 3 行预览，避免长对话
-// 越来越多全文 thinking 堆在 DOM 里造成卡顿。
+// 后续内容的那个 thinking。泡泡默认展开全文（见 ThinkingBlock）；live 状态
+// 用于两处：手动折叠时 tail-follow 对齐最新几行，以及下方 maybeScrollThinking
+// 在限额内流式增长时滚动钉底。
 const liveIdx = computed(() => {
   const items = visibleItems.value
   if (items.length === 0) return -1
@@ -138,7 +138,10 @@ function scheduleTypeset() {
 }
 
 // 切 session 时重置窗口。
-watch(() => state.currentSession, () => resetWindow())
+watch(() => state.currentSession, () => {
+  resetWindow()
+  lastThinkingScrollHeight = 0
+})
 
 // chatItems is replaced on session switch; streamTick bumps during streaming.
 // 窗口扩大（loadMore / fillViewport）会引入新的 DOM 节点，也需要 typeset。
@@ -167,4 +170,44 @@ const bubbleCount = computed(() => {
   return n
 })
 watch(bubbleCount, () => nextTick(scrollToBottom))
+
+// thinking 泡泡流式增长：折叠框高度随内容渐进增高（内容 1 行框 1 行高、2 行
+// 框 2 行高，……封顶于 CSS max-height 后不再变高）。每次框高度增长都滚到底
+// ——一两行的短泡泡始终完整可见；封顶后高度不再变化，也就不再滚动，长思考
+// 不打扰用户翻看历史（框内超出部分由 ThinkingBlock 的 transform 尾部对齐，
+// 最新内容始终可见）。用户手动展开（.expanded）后不自动滚动。
+let lastThinkingScrollHeight = 0
+
+// 新 thinking 泡泡出现时重置高度记录，避免与上一个泡泡残留高度比较。
+watch(liveIdx, (v) => {
+  if (v !== -1) lastThinkingScrollHeight = 0
+})
+
+function maybeScrollThinking() {
+  const el = chatRef.value
+  const items = visibleItems.value
+  if (!el || items.length === 0) return
+  const last = items[items.length - 1]
+  // 只处理底部"活的" thinking 泡泡（下方无正文/工具）。
+  if (last.kind !== 'turn' || !last.thinking || last.text || last.tools.length > 0) return
+  const bodies = el.querySelectorAll<HTMLElement>('.thinking-body')
+  const body = bodies.length ? bodies[bodies.length - 1] : null
+  if (!body || body.classList.contains('expanded')) return
+  const h = body.clientHeight
+  if (h === lastThinkingScrollHeight) return // 高度未变（同一行内增长或已达 max-height 封顶）
+  lastThinkingScrollHeight = h
+  scrollToBottom()
+}
+
+// 每个流式 delta 后检查一次（nextTick 等 DOM 更新后再测量）。
+watch(() => state.streamTick, () => nextTick(maybeScrollThinking))
+
+// 纯文字输出结束（run 完成，isStreaming 翻回 false）时滚一次底：流式期间
+// 每个 delta 都不钉底（见上），只在输出全部结束后滚到底展示完整结果。
+watch(
+  () => state.isStreaming,
+  (v, prev) => {
+    if (prev && !v) nextTick(scrollToBottom)
+  },
+)
 </script>
