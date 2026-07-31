@@ -131,6 +131,8 @@ function loadMore() {
 // 滚出视口上方的条目：按被卸条目的测量高度（含安全余量）限制卸载量，卸载后
 // 用 scrollHeight 差值精确补偿 scrollTop，当前视口内容不跳动。卸载分批进行
 // （每批最多 LOAD_MORE 条），用户继续下滚时逐批卸完。
+// 窗口始终包含末尾，卸载只发生在窗口顶部——正在流式输出的泡泡位于末尾，
+// 往上滚动（loadMore）或卸载都不会把它刷掉。
 function trimExcess() {
   if (loadingMore || trimming) return
   const el = chatRef.value
