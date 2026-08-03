@@ -16,7 +16,70 @@
 * sidebar 中 session 列表与下方面板（会话信息 + 文件树）之间有一条**可上下拖拽的分划线**，调整两部分高度。
 * 切换会话时自动关闭文件视图回到对话，文件树随之重建。
 * 文件视图布局：顶栏（Back、文件路径、base 分支下拉（仅 diff 模式）、View/Diff/Edit 切换（segmented tabs）、Save/Cancel 按钮）+ 内容区（只读高亮视图、`DiffView`、编辑 textarea 或 markdown 预览）。
-* **Markdown 预览**：打开 `.md` 文件时顶栏额外出现 Preview tab，用与模型输出一致的方式渲染整个文件（`renderMarkdown` + MathJax 公式）。MathJax 只作用于预览元素本身，不触碰文件管理器其它 UI 文本（其中的 `$` 会被误判为公式分隔符）。
+* **Markdown 预览**：打开 `.md` 文件时顶栏额外出现 Preview tab，用与模型输出一致的方式渲染整个文件（`renderMarkdown` + MathJax 公式）。MathJax 只作用于预览元素本身，不触碰文件管理器其它 UI 文本（其中的 `$` 会被误判为公式分隔符）；代码块/行内代码中的 `$` 保持字面量（`renderMarkdown` 的 LaTeX 保护跳过代码区域，且 MathJax 原生跳过 `<pre>`/`<code>`）。
+
+### Markdown 预览测试样例
+
+以下内容（与 `preview_demo.md` 相同）用于回归检查预览渲染：行内/块级公式、表格/引用/列表混排，以及代码块与行内代码中的 `$` 保持字面量。
+
+````markdown
+# Markdown 预览测试
+
+这是一个用来测试文件管理器 **Preview** 功能的示例文档，包含行内公式、块级公式和代码块。
+
+## 行内公式
+
+欧拉公式 $e^{i\pi} + 1 = 0$ 被称为数学中最美的公式；勾股定理 $a^2 + b^2 = c^2$ 则是几何的基石。
+
+二次方程求根公式：$x = \dfrac{-b \pm \sqrt{b^2 - 4ac}}{2a}$
+
+## 块级公式
+
+高斯积分：
+
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+$$
+
+泰勒展开：
+
+$$
+e^x = \sum_{n=0}^{\infty} \frac{x^n}{n!}
+= 1 + x + \frac{x^2}{2!} + \frac{x^3}{3!} + \cdots
+$$
+
+矩阵：
+
+$$
+A = \begin{pmatrix}
+1 & 2 & 3 \\
+4 & 5 & 6 \\
+7 & 8 & 9
+\end{pmatrix}, \quad
+\det(A) = 0
+$$
+
+## 代码块里的 `$`（不应被当作公式渲染）
+
+```bash
+echo "PATH=$HOME/bin:$PATH"
+grep -E "^def .*\(self\):$" app.py
+```
+
+上面的 `$HOME` 和行尾的 `$` 应该保持原样，不会被 MathJax 误判为行内公式。
+
+## 列表与引用
+
+- 行内公式混排：当 $n \to \infty$ 时，$\left(1 + \frac{1}{n}\right)^n \to e$
+- 微积分基本定理：$\frac{d}{dx}\int_a^x f(t)\,dt = f(x)$
+
+> 引用块里也可以有公式：$E = mc^2$
+
+| 符号 | 含义 | 公式 |
+|---|---|---|
+| $\pi$ | 圆周率 | $C = 2\pi r$ |
+| $\sigma$ | 标准差 | $\sigma = \sqrt{\frac{1}{N}\sum_{i=1}^{N}(x_i - \mu)^2}$ |
+````
 
 ## 后端
 
