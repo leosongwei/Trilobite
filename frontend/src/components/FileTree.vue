@@ -14,6 +14,7 @@
             v-if="node.subdirs.length"
             :nodes="node.subdirs"
             :session-id="sessionId"
+            :base="base"
             @open-file="(f) => emit('open-file', f)"
             @root-info="(info) => emit('root-info', info)"
           />
