@@ -1,7 +1,7 @@
 <template>
   <div class="fm">
     <div class="fm-topbar">
-      <button class="fm-back" @click="tryClose">&#8592; 对话</button>
+      <button class="fm-back" @click="tryClose">&#8592; Back</button>
       <span class="fm-filepath" :title="selectedFile?.path">{{ selectedFile ? selectedFile.path : '未选择文件' }}</span>
       <span v-if="savedTick" class="fm-saved">已保存</span>
       <div class="fm-actions">
@@ -18,13 +18,14 @@
           </select>
         </template>
         <div class="fm-tabs">
-          <button :class="{ active: view === 'view' }" @click="switchView('view')">查看</button>
+          <button :class="{ active: view === 'view' }" @click="switchView('view')">View</button>
           <button :class="{ active: view === 'diff' }" :disabled="!rootIsGit || deleted" @click="switchView('diff')">Diff</button>
-          <button :class="{ active: view === 'edit' }" :disabled="deleted" @click="switchView('edit')">编辑</button>
+          <button :class="{ active: view === 'edit' }" :disabled="deleted" @click="switchView('edit')">Edit</button>
+          <button v-if="isMarkdown" :class="{ active: view === 'preview' }" :disabled="deleted" @click="switchView('preview')">Preview</button>
         </div>
         <template v-if="view === 'edit' && selectedFile && !deleted">
-          <button class="fm-primary" :disabled="saving || !dirty" @click="save">保存</button>
-          <button class="fm-cancel" @click="cancelEdit">取消</button>
+          <button class="fm-primary" :disabled="saving || !dirty" @click="save">Save</button>
+          <button class="fm-cancel" @click="cancelEdit">Cancel</button>
         </template>
       </div>
     </div>
@@ -42,6 +43,10 @@
         <template v-else-if="view === 'diff'">
           <div v-if="diffLoading" class="fm-empty">loading&#8230;</div>
           <DiffView v-else :rows="diffRows" />
+        </template>
+        <template v-else-if="view === 'preview'">
+          <div v-if="loading" class="fm-empty">loading&#8230;</div>
+          <div v-else ref="previewRef" class="markdown-body fm-preview" v-html="renderedPreview"></div>
         </template>
         <template v-else>
           <textarea
@@ -67,6 +72,8 @@ import { getFileContent, getFileDiff, saveFile } from '../api'
 import type { DiffRow } from '../types'
 import DiffView from './DiffView.vue'
 import type { OpenFilePayload } from './FileTree.vue'
+import { renderMarkdown } from '../utils/markdown'
+import { typesetMath } from '../utils/mathjax'
 
 export interface RootInfo {
   isGit: boolean
@@ -93,7 +100,7 @@ const emit = defineEmits<{
 const editorRef = ref<HTMLTextAreaElement | null>(null)
 const selectedFile = ref<OpenFilePayload | null>(null)
 // Diff is the default view: changed files are highlighted vs the base branch.
-const view = ref<'view' | 'diff' | 'edit'>('diff')
+const view = ref<'view' | 'diff' | 'edit' | 'preview'>('diff')
 const content = ref('')
 const editContent = ref('')
 const diffRows = ref<DiffRow[]>([])
@@ -107,6 +114,20 @@ const savedTick = ref(false)
 
 const deleted = computed(() => selectedFile.value?.status === 'deleted')
 const dirty = computed(() => view.value === 'edit' && editContent.value !== content.value)
+
+// ── markdown preview ──
+
+const previewRef = ref<HTMLElement | null>(null)
+const isMarkdown = computed(() => (selectedFile.value?.name ?? '').toLowerCase().endsWith('.md'))
+const renderedPreview = computed(() => renderMarkdown(content.value))
+
+// MathJax 只作用于预览元素本身，绝不传入更大的容器——容器里的其它文本（文件
+// 路径、tab、错误提示等）中的 `$` 会被误判为公式分隔符而错乱渲染（与 chat
+// 只 typeset .markdown-body 同理）。
+function typesetPreview() {
+  if (view.value !== 'preview' || !previewRef.value) return
+  void typesetMath(previewRef.value)
+}
 
 // Open whatever file the sidebar tree hands over; switching files keeps the
 // current view mode.
@@ -184,6 +205,8 @@ async function openFile(f: OpenFilePayload) {
     if (view.value !== 'view') view.value = 'view'
     return
   }
+  // Preview only supports markdown files; fall back when switching to another.
+  if (view.value === 'preview' && !isMarkdown.value) view.value = 'view'
   // Keep the current view mode across file switches; only fall back when the
   // new file cannot support it.
   const prevBase = props.base
@@ -198,6 +221,8 @@ async function openFile(f: OpenFilePayload) {
   } else {
     await loadContent(f.path)
   }
+  // Content re-rendered (v-html) with the new file; re-typeset when previewing.
+  if (view.value === 'preview') nextTick(() => typesetPreview())
 }
 
 async function loadContent(path: string) {
@@ -213,7 +238,7 @@ async function loadContent(path: string) {
   }
 }
 
-function switchView(v: 'view' | 'diff' | 'edit') {
+function switchView(v: 'view' | 'diff' | 'edit' | 'preview') {
   if (v === view.value) return
   if (view.value === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
   view.value = v
@@ -221,6 +246,10 @@ function switchView(v: 'view' | 'diff' | 'edit') {
     nextTick(() => editorRef.value?.focus())
   } else if (v === 'diff') {
     loadDiff()
+  } else if (v === 'preview') {
+    // 等 v-html 把渲染后的 markdown 写入 DOM 再 typeset，且只 typeset 预览
+    // 元素本身（见 typesetPreview 注释）。
+    nextTick(() => typesetPreview())
   }
 }
 
@@ -441,6 +470,10 @@ function tryClose() {
 .fm-code code {
   font-family: ui-monospace, 'Cascadia Code', monospace;
   background: transparent;
+}
+.fm-preview {
+  padding: 12px 16px;
+  font-size: 14px;
 }
 .fm-editor {
   width: 100%;

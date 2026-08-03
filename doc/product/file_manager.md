@@ -15,7 +15,8 @@
 * 文件树**内嵌在 sidebar**（`SessionSidebar` 底部，"Session files" 区域，仅主 session），默认展开工作区根目录——无需单独打开文件管理器即可浏览文件、查看 vs 分支的改动高亮。点击文件在 main 区域打开文件内容视图（顶栏提供"返回对话"按钮）。
 * sidebar 中 session 列表与下方面板（会话信息 + 文件树）之间有一条**可上下拖拽的分划线**，调整两部分高度。
 * 切换会话时自动关闭文件视图回到对话，文件树随之重建。
-* 文件视图布局：顶栏（返回对话、文件路径、base 分支下拉（仅 diff 模式）、查看/Diff 切换（segmented tabs）、编辑/保存/取消按钮）+ 内容区（只读高亮视图或 `DiffView` 或编辑 textarea）。
+* 文件视图布局：顶栏（Back、文件路径、base 分支下拉（仅 diff 模式）、View/Diff/Edit 切换（segmented tabs）、Save/Cancel 按钮）+ 内容区（只读高亮视图、`DiffView`、编辑 textarea 或 markdown 预览）。
+* **Markdown 预览**：打开 `.md` 文件时顶栏额外出现 Preview tab，用与模型输出一致的方式渲染整个文件（`renderMarkdown` + MathJax 公式）。MathJax 只作用于预览元素本身，不触碰文件管理器其它 UI 文本（其中的 `$` 会被误判为公式分隔符）。
 
 ## 后端
 
