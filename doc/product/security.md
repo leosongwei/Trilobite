@@ -18,13 +18,13 @@ Access key saved to ~/.config/trilobite/access_token.txt
 1. **直接打开链接**：页面加载后前端检测到 URL 中的 `?token=`，立即 POST `/api/auth/login` 换取 HttpOnly 会话 cookie，并用 `history.replaceState` 把 token 从地址栏移除。之后所有请求带 cookie。
 2. **无链接打开**：`GET /api/auth/status` 返回未认证，前端展示 key 输入弹框；输入正确后同一 login 端点换 cookie。
 
-`POST /api/auth/login` 校验通过后设置 `trilobite_token` cookie（HttpOnly + SameSite=strict，会话级过期）。token 校验失败返回 401。
+`POST /api/auth/login` 校验通过后设置 `trilobite_token` cookie（HttpOnly + SameSite=strict，**365 天长期有效**，配合持久化 token 免频繁重登）。token 校验失败返回 401。
 
 ## 保护范围
 
 - 除 `/api/auth/status`、`/api/auth/login` 外的所有 `/api/*` 请求（含 SSE `/stream`、图片 serve）由 HTTP 中间件校验 cookie，未认证返回 401。
 - 静态资源（编译后的前端 bundle）不设防：登录弹框本身需要能渲染，前端代码不含敏感数据。
-- 前端收到任意 API 401 时触发 `trilobite:unauthorized` 事件，重新显示 key 弹框（例如服务器重启后 cookie 失效）。
+- 前端收到任意 API 401 时触发 `trilobite:unauthorized` 事件，重新显示 key 弹框（例如删除了 `access_token.txt` 重置 token 后，旧 cookie 失效）。
 
 ## 其他
 

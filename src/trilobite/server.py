@@ -80,7 +80,13 @@ async def auth_login(request: Request, req: AuthRequest):
     if not secrets.compare_digest(req.key, ensure_auth_token()):
         raise HTTPException(status_code=401, detail="invalid key")
     response = Response(json.dumps({"status": "ok"}), media_type="application/json")
-    response.set_cookie(AUTH_COOKIE, ensure_auth_token(), httponly=True, samesite="strict")
+    response.set_cookie(
+        AUTH_COOKIE,
+        ensure_auth_token(),
+        httponly=True,
+        samesite="strict",
+        max_age=365 * 24 * 3600,  # 长期有效：token 持久化，cookie 无需频繁重登
+    )
     return response
 
 class SessionCreate(BaseModel):
