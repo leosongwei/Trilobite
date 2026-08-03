@@ -1,7 +1,7 @@
 <template>
   <div class="file-tree">
-    <div v-for="node in displayNodes" :key="node.path" class="tree-node">
-      <div class="tree-row" :class="{ dir: true }" @click="toggle(node)">
+    <template v-for="node in displayNodes" :key="node.path">
+      <div class="tree-row dir" @click="toggle(node)">
         <span class="tree-arrow" :class="{ open: node.expanded }">&#9656;</span>
         <span class="tree-icon">&#128193;</span>
         <span class="tree-name" :title="node.path">{{ node.name }}</span>
@@ -38,7 +38,7 @@
           <div v-if="node.truncated" class="tree-hint">directory too large, truncated</div>
         </template>
       </div>
-    </div>
+    </template>
   </div>
 </template>
 
@@ -181,9 +181,6 @@ defineExpose({ reloadDir, findNode })
   font-size: 13px;
   user-select: none;
 }
-.tree-node {
-  padding-left: 14px;
-}
 .tree-row {
   display: flex;
   align-items: center;
@@ -219,9 +216,10 @@ defineExpose({ reloadDir, findNode })
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Each nesting level indents by 16px; directory and file rows share the same
+   level inside tree-children so their names align. */
 .tree-children {
-  margin-left: 4px;
-  border-left: 1px solid #2d2d2d;
+  padding-left: 16px;
 }
 .tree-row.file {
   color: #cccccc;

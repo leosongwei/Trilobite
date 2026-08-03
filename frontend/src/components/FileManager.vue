@@ -5,15 +5,20 @@
       <span class="fm-filepath" :title="selectedFile?.path">{{ selectedFile ? selectedFile.path : '未选择文件' }}</span>
       <span v-if="savedTick" class="fm-saved">已保存</span>
       <div v-if="selectedFile && !deleted" class="fm-actions">
-        <select v-if="rootIsGit" v-model="base" class="fm-base" title="对比分支">
-          <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
-        </select>
-        <button :class="{ active: view === 'view' }" @click="switchView('view')">查看</button>
-        <button :class="{ active: view === 'diff' }" :disabled="!rootIsGit" @click="switchView('diff')">Diff</button>
-        <button v-if="view !== 'edit'" @click="switchView('edit')">编辑</button>
+        <template v-if="view === 'diff'">
+          <span class="fm-vs">HEAD vs</span>
+          <select v-if="rootIsGit" v-model="base" class="fm-base" title="对比分支">
+            <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
+          </select>
+        </template>
+        <div class="fm-tabs">
+          <button :class="{ active: view === 'view' }" @click="switchView('view')">查看</button>
+          <button :class="{ active: view === 'diff' }" :disabled="!rootIsGit" @click="switchView('diff')">Diff</button>
+          <button :class="{ active: view === 'edit' }" @click="switchView('edit')">编辑</button>
+        </div>
         <template v-if="view === 'edit'">
           <button class="fm-primary" :disabled="saving || !dirty" @click="save">保存</button>
-          <button @click="cancelEdit">取消</button>
+          <button class="fm-cancel" @click="cancelEdit">取消</button>
         </template>
       </div>
     </div>
@@ -303,11 +308,16 @@ function tryClose() {
 }
 .fm-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
   margin-left: auto;
   flex-shrink: 0;
 }
-.fm-actions button,
+.fm-vs {
+  font-size: 12px;
+  color: #858585;
+  white-space: nowrap;
+}
 .fm-base {
   background: #3a3d3e;
   color: #cccccc;
@@ -318,26 +328,70 @@ function tryClose() {
   font-size: 12px;
   font-family: inherit;
 }
-.fm-actions button:hover:not(:disabled),
 .fm-base:hover {
   background: #4a4d4e;
 }
-.fm-actions button.active {
-  background: #0e639c;
-  border-color: #0e639c;
-  color: #ffffff;
+/* View tabs: a joined segmented control, the active view stands out. */
+.fm-tabs {
+  display: flex;
+  border: 1px solid #4a4d4e;
+  border-radius: 3px;
+  overflow: hidden;
 }
-.fm-actions button:disabled {
+.fm-tabs button {
+  background: #2d2d2d;
+  color: #cccccc;
+  border: none;
+  border-left: 1px solid #4a4d4e;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+.fm-tabs button:first-child {
+  border-left: none;
+}
+.fm-tabs button:hover:not(:disabled):not(.active) {
+  background: #3a3d3e;
+}
+.fm-tabs button.active {
+  background: #0e639c;
+  color: #ffffff;
+  font-weight: 600;
+}
+.fm-tabs button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 .fm-actions .fm-primary {
   background: #0e639c;
-  border-color: #0e639c;
+  border: 1px solid #0e639c;
   color: #ffffff;
+  border-radius: 3px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
 }
 .fm-actions .fm-primary:hover:not(:disabled) {
   background: #1177bb;
+}
+.fm-actions .fm-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.fm-actions .fm-cancel {
+  background: #3a3d3e;
+  color: #cccccc;
+  border: 1px solid #4a4d4e;
+  border-radius: 3px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+.fm-actions .fm-cancel:hover {
+  background: #4a4d4e;
 }
 .fm-body {
   flex: 1;
