@@ -116,7 +116,10 @@ body {
   letter-spacing: 0.5px;
 }
 
-.sessions { flex: 1; overflow-y: auto; padding: 6px; }
+/* Fixed height driven by the resizer's inline style; flex: 1 would make
+   flex-basis: 0% override the height and the divider would appear to drag
+   but do nothing. 0 1 auto = respect the height, shrink if space is tight. */
+.sessions { flex: 0 1 auto; overflow-y: auto; padding: 6px; }
 .session-item {
   padding: 7px 10px;
   border-radius: 3px;
