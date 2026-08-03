@@ -14,14 +14,21 @@ from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
 from src.trilobite.config import init_config, get_config_dir, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
+from src.trilobite.file_access import resolve_file_path
+from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
+from src.trilobite.tools.edit import detect_line_ending, materialize
 from src.trilobite.version import get_version as get_pkg_version
 
 app = FastAPI(title="Trilobite")
 
 agents: dict[str, Agent] = {}
 config: dict = {}
+
+#: Max file size the file manager will read/diff/save (bytes). Larger files
+#: are refused and the agent's read tool (paged) is the suggested fallback.
+MAX_FILE_SIZE = 512 * 1024
 
 # ── token auth ──────────────────────────────────────────────────────────────
 # The web server is guarded by an access token (like Jupyter Notebook). The
@@ -112,6 +119,10 @@ class ModeRequest(BaseModel):
 
 class AddDirRequest(BaseModel):
     path: str
+
+class FsWriteRequest(BaseModel):
+    path: str
+    content: str
 
 class PlanExitRequest(BaseModel):
     approved: bool
@@ -488,6 +499,104 @@ async def get_history(name: str):
         from src.trilobite.history import History
         return History(history_path).to_flat_dicts()
     return []
+
+
+# ── file manager ────────────────────────────────────────────────────────────
+# The file manager (issue #49) lets the user browse, diff and edit files in
+# the session's workspace directly. It is a user-operated IDE surface, fully
+# decoupled from the agent: no history, no permission prompts (paths outside
+# the workspace are refused outright), no plan-mode restriction. Every path
+# goes through resolve_file_path so the workspace boundary and the sensitive
+# file filter are enforced exactly like the agent's file tools.
+
+def _fs_roots(agent: Agent) -> list[Path]:
+    return [Path(agent.working_dir)] + [Path(d) for d in agent._additional_dirs]
+
+
+def _fs_resolve(agent: Agent, path: str) -> Path:
+    """Resolve a file-manager path, enforcing the workspace boundary."""
+    filepath, error, perm_path = resolve_file_path(path, Path(agent.working_dir), [Path(d) for d in agent._additional_dirs])
+    if perm_path or error:
+        raise HTTPException(status_code=400, detail=error or "path outside workspace")
+    return filepath
+
+
+def _fs_root_for(agent: Agent, path: Path) -> Path:
+    """The workspace root (working_dir or an additional_dir) containing path."""
+    for root in _fs_roots(agent):
+        try:
+            path.relative_to(root)
+            return root
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail="path outside workspace")
+
+
+def _fs_read_text(filepath: Path) -> str:
+    """Read a text file for the file manager; binary and oversized files are refused."""
+    if not filepath.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    raw = filepath.read_bytes()
+    if b"\x00" in raw:
+        raise HTTPException(status_code=400, detail="binary file")
+    if len(raw) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="file too large (use the agent's read tool for paging)")
+    return raw.decode("utf-8", errors="replace")
+
+
+@app.get("/api/sessions/{name}/fs/list")
+async def fs_list(name: str, path: str):
+    agent = _get_or_create_agent(name)
+    dir_path = _fs_resolve(agent, path)
+    if not dir_path.is_dir():
+        raise HTTPException(status_code=400, detail="not a directory")
+    root = _fs_root_for(agent, dir_path)
+    relpath = str(dir_path.relative_to(root)) if dir_path != root else ""
+    listing = list_dir(root, relpath)
+    return {
+        "path": str(dir_path),
+        "name": dir_path.name or str(dir_path),
+        **listing,
+    }
+
+
+@app.get("/api/sessions/{name}/fs/file")
+async def fs_read(name: str, path: str):
+    agent = _get_or_create_agent(name)
+    filepath = _fs_resolve(agent, path)
+    return {"path": str(filepath), "content": _fs_read_text(filepath)}
+
+
+@app.get("/api/sessions/{name}/fs/diff")
+async def fs_diff(name: str, path: str, base: str = "master"):
+    agent = _get_or_create_agent(name)
+    filepath = _fs_resolve(agent, path)
+    current = _fs_read_text(filepath)
+    root = _fs_root_for(agent, filepath)
+    relpath = str(filepath.relative_to(root))
+    base_content, error = show_base_content(root, base, relpath)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    rows = build_diff_rows(base_content, current)
+    if len(rows) > MAX_DIFF_ROWS:
+        raise HTTPException(status_code=413, detail="diff too large")
+    return {"rows": rows, "base": base, "untracked": base_content is None}
+
+
+@app.put("/api/sessions/{name}/fs/file")
+async def fs_write(name: str, req: FsWriteRequest):
+    agent = _get_or_create_agent(name)
+    filepath = _fs_resolve(agent, req.path)
+    if not filepath.parent.is_dir():
+        raise HTTPException(status_code=400, detail="parent directory not found")
+    style = "lf"
+    if filepath.is_file():
+        style = detect_line_ending(_fs_read_text(filepath))
+    # Normalize whatever the textarea sent to LF, then restore the original
+    # line-ending style (same as the edit tool).
+    content = req.content.replace("\r\n", "\n").replace("\r", "\n")
+    filepath.write_bytes(materialize(content, style).encode("utf-8"))
+    return {"ok": True}
 
 
 @app.get("/api/sessions/{name}/images/{filename}")

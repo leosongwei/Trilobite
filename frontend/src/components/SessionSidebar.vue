@@ -6,6 +6,7 @@
       <label>Working directory:</label>
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
       <button @click="handleCreate">+ New Session</button>
+      <button v-if="!state.isSubagent" class="files-btn" @click="emit('open-files')">&#128193; 文件管理器</button>
     </div>
     <div class="sessions">
       <template v-for="s in sessionTree" :key="s.id">
@@ -85,7 +86,7 @@ import { useStore } from '../store'
 import { getCwd, getVersion } from '../api'
 import type { Session } from '../types'
 
-const emit = defineEmits<{ select: [] }>()
+const emit = defineEmits<{ select: []; 'open-files': [] }>()
 
 const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession } = useStore()
 const name = ref('')
