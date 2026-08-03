@@ -698,3 +698,66 @@ button[title="Stop"]:not(:disabled):hover { background: #d73a3a; }
 }
 .markdown-body strong { color: #dcdcaa; }
 .markdown-body em { font-style: italic; }
+
+/* ── Access-key gate ── */
+.auth-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: #1e1e1e;
+}
+.auth-card {
+  width: 340px;
+  padding: 28px 24px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  text-align: center;
+}
+.auth-card h1 {
+  font-size: 18px;
+  color: #569cd6;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+.auth-card .auth-hint {
+  font-size: 12px;
+  color: #858585;
+  margin-bottom: 14px;
+}
+.auth-card input {
+  width: 100%;
+  padding: 8px 10px;
+  background: #3c3c3c;
+  border: 1px solid #5a5a5a;
+  color: #cccccc;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.auth-card input:focus {
+  outline: none;
+  border-color: #007acc;
+}
+.auth-card input::placeholder { color: #858585; }
+.auth-card button {
+  width: 100%;
+  padding: 8px;
+  background: #0e639c;
+  color: #ffffff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: 600;
+  font-family: inherit;
+}
+.auth-card button:hover { background: #1177bb; }
+.auth-card button:disabled { opacity: 0.6; cursor: default; }
+.auth-card .auth-error {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #f48771;
+}
