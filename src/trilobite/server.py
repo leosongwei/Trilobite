@@ -14,11 +14,10 @@ from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
 from src.trilobite.config import init_config, get_config_dir, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
-from src.trilobite.file_access import resolve_file_path
+from src.trilobite.file_access import detect_line_ending, materialize, resolve_file_path
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
-from src.trilobite.tools.edit import detect_line_ending, materialize
 from src.trilobite.version import get_version as get_pkg_version
 
 app = FastAPI(title="Trilobite")
