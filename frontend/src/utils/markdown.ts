@@ -31,8 +31,12 @@ marked.setOptions({
 // then restore them after. This prevents marked from mangling LaTeX.
 let mathBlocks: string[] = []
 
-function protectLatex(text: string): string {
-  mathBlocks = []
+// Code fences and inline code spans are excluded from math protection: `$`
+// inside code is literal, and MathJax skips <pre>/<code> natively, so a
+// mangled \(...\) there would be displayed verbatim.
+const CODE_RE = /(`{3,})[^\n`]*\n[\s\S]*?\n\1[ \t]*|`{2,}[^`\n]*`{2,}|`[^`\n]*`/g
+
+function protectMathIn(text: string): string {
   // Block math: $$...$$
   text = text.replace(/\$\$([\s\S]*?)\$\$/g, (_: string, math: string) => {
     mathBlocks.push(`\\[${math.trim()}\\]`)
@@ -44,6 +48,18 @@ function protectLatex(text: string): string {
     return `@@MATHBLOCK${mathBlocks.length - 1}@@`
   })
   return text
+}
+
+function protectLatex(text: string): string {
+  mathBlocks = []
+  let out = ''
+  let last = 0
+  for (const m of text.matchAll(CODE_RE)) {
+    out += protectMathIn(text.slice(last, m.index))
+    out += m[0] // code region: $ stays literal
+    last = m.index + m[0].length
+  }
+  return out + protectMathIn(text.slice(last))
 }
 
 function restoreLatex(html: string): string {
