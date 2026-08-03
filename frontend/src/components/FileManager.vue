@@ -7,15 +7,16 @@
       <div class="fm-actions">
         <template v-if="view === 'diff' && selectedFile && !deleted">
           <span class="fm-vs">HEAD vs</span>
-          <select v-if="rootIsGit" v-model="base" class="fm-base" title="对比分支">
+          <select
+            v-if="rootIsGit"
+            :value="base"
+            class="fm-base"
+            title="对比分支"
+            @change="emit('update:base', ($event.target as HTMLSelectElement).value)"
+          >
             <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
           </select>
         </template>
-        <div class="fm-tabs">
-          <button :class="{ active: view === 'view' }" @click="switchView('view')">查看</button>
-          <button :class="{ active: view === 'diff' }" :disabled="!rootIsGit || deleted" @click="switchView('diff')">Diff</button>
-          <button :class="{ active: view === 'edit' }" :disabled="deleted" @click="switchView('edit')">编辑</button>
-        </div>
         <template v-if="view === 'edit' && selectedFile && !deleted">
           <button class="fm-primary" :disabled="saving || !dirty" @click="save">保存</button>
           <button class="fm-cancel" @click="cancelEdit">取消</button>
@@ -69,23 +70,28 @@ export interface RootInfo {
 }
 
 // The file to open is handed in from the sidebar tree; root info (branches,
-// git-ness) is collected there too and passed down for the diff UI.
+// git-ness) is collected there too and passed down for the diff UI. The view
+// mode (view/diff/edit) lives in App and is switched from the sidebar tree
+// header; the file manager only reacts to it and reports forced fallbacks.
 const props = defineProps<{
   sessionId: string
   file: OpenFilePayload | null
   rootInfo: Record<string, RootInfo>
+  view: 'view' | 'diff' | 'edit'
+  base: string
 }>()
-const emit = defineEmits<{ close: []; 'file-saved': [dir: string] }>()
+const emit = defineEmits<{
+  close: []
+  'file-saved': [dir: string]
+  'update:view': [v: 'view' | 'diff' | 'edit']
+  'update:base': [b: string]
+}>()
 
 const editorRef = ref<HTMLTextAreaElement | null>(null)
 const selectedFile = ref<OpenFilePayload | null>(null)
-// Diff is the default mode: changed files are highlighted vs the base branch,
-// which is the primary reason to open the file manager.
-const view = ref<'view' | 'diff' | 'edit'>('diff')
 const content = ref('')
 const editContent = ref('')
 const diffRows = ref<DiffRow[]>([])
-const base = ref('master')
 const branches = ref<string[]>([])
 const rootIsGit = ref(false)
 const loading = ref(false)
@@ -95,7 +101,26 @@ const error = ref('')
 const savedTick = ref(false)
 
 const deleted = computed(() => selectedFile.value?.status === 'deleted')
-const dirty = computed(() => view.value === 'edit' && editContent.value !== content.value)
+const dirty = computed(() => props.view === 'edit' && editContent.value !== content.value)
+
+// React to view switches (from the sidebar tree header): guard dirty edits,
+// then run the per-view side effects.
+watch(
+  () => props.view,
+  (nv, ov) => {
+    if (ov === 'edit' && nv !== 'edit' && dirty.value) {
+      if (!confirm('放弃未保存的修改？')) {
+        emit('update:view', 'edit')
+        return
+      }
+    }
+    if (nv === 'edit') {
+      nextTick(() => editorRef.value?.focus())
+    } else if (nv === 'diff' && selectedFile.value && !deleted.value) {
+      loadDiff()
+    }
+  },
+)
 
 // Open whatever file the sidebar tree hands over; switching files keeps the
 // current view mode.
@@ -152,33 +177,33 @@ function refreshGitState() {
   if (!info) return
   rootIsGit.value = info.isGit
   branches.value = info.branches
-  if (rootIsGit.value && !branches.value.includes(base.value)) {
-    base.value = info.currentBranch || branches.value[0] || 'master'
+  if (rootIsGit.value && !branches.value.includes(props.base)) {
+    emit('update:base', info.currentBranch || branches.value[0] || 'master')
   }
-  if (!rootIsGit.value && view.value === 'diff') {
-    view.value = 'view'
+  if (!rootIsGit.value && props.view === 'diff') {
+    emit('update:view', 'view')
   }
 }
 
 watch(() => props.rootInfo, refreshGitState, { deep: true })
 
 async function openFile(f: OpenFilePayload) {
-  if (view.value === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
+  if (props.view === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
   selectedFile.value = f
   error.value = ''
   diffRows.value = []
   savedTick.value = false
   if (f.status === 'deleted') {
     // A deleted file has no content or diff to show.
-    view.value = 'view'
+    if (props.view !== 'view') emit('update:view', 'view')
     return
   }
   // Keep the current view mode across file switches; only fall back when the
   // new file cannot support it.
-  const prevBase = base.value
+  const prevBase = props.base
   refreshGitState()
-  const baseChanged = base.value !== prevBase
-  if (view.value === 'diff') {
+  const baseChanged = props.base !== prevBase
+  if (props.view === 'diff') {
     // Load the content too so switching to view/edit later shows it
     // instantly; when the base changed, the base watcher reloads the diff.
     const tasks: Promise<void>[] = [loadContent(f.path)]
@@ -202,23 +227,12 @@ async function loadContent(path: string) {
   }
 }
 
-function switchView(v: 'view' | 'diff' | 'edit') {
-  if (v === view.value) return
-  if (view.value === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
-  view.value = v
-  if (v === 'edit') {
-    nextTick(() => editorRef.value?.focus())
-  } else if (v === 'diff') {
-    loadDiff()
-  }
-}
-
 async function loadDiff() {
   if (!selectedFile.value) return
   diffLoading.value = true
   error.value = ''
   try {
-    const res = await getFileDiff(props.sessionId, selectedFile.value.path, base.value)
+    const res = await getFileDiff(props.sessionId, selectedFile.value.path, props.base)
     diffRows.value = res.rows
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -228,8 +242,8 @@ async function loadDiff() {
   }
 }
 
-watch(base, () => {
-  if (view.value === 'diff') loadDiff()
+watch(() => props.base, () => {
+  if (props.view === 'diff') loadDiff()
 })
 
 async function save() {
@@ -240,10 +254,10 @@ async function save() {
     await saveFile(props.sessionId, selectedFile.value.path, editContent.value)
     content.value = editContent.value
     diffRows.value = []
-    view.value = 'view'
     savedTick.value = true
     setTimeout(() => { savedTick.value = false }, 2500)
     emit('file-saved', dirname(selectedFile.value.path))
+    emit('update:view', 'view')
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -254,7 +268,7 @@ async function save() {
 function cancelEdit() {
   if (dirty.value && !confirm('放弃未保存的修改？')) return
   editContent.value = content.value
-  view.value = 'view'
+  emit('update:view', 'view')
 }
 
 function dirname(path: string): string {
@@ -263,7 +277,7 @@ function dirname(path: string): string {
 }
 
 function tryClose() {
-  if (view.value === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
+  if (props.view === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
   emit('close')
 }
 </script>
@@ -335,38 +349,6 @@ function tryClose() {
 }
 .fm-base:hover {
   background: #4a4d4e;
-}
-/* View tabs: a joined segmented control, the active view stands out. */
-.fm-tabs {
-  display: flex;
-  border: 1px solid #4a4d4e;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.fm-tabs button {
-  background: #2d2d2d;
-  color: #cccccc;
-  border: none;
-  border-left: 1px solid #4a4d4e;
-  padding: 3px 12px;
-  cursor: pointer;
-  font-size: 12px;
-  font-family: inherit;
-}
-.fm-tabs button:first-child {
-  border-left: none;
-}
-.fm-tabs button:hover:not(:disabled):not(.active) {
-  background: #3a3d3e;
-}
-.fm-tabs button.active {
-  background: #0e639c;
-  color: #ffffff;
-  font-weight: 600;
-}
-.fm-tabs button:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 .fm-actions .fm-primary {
   background: #0e639c;

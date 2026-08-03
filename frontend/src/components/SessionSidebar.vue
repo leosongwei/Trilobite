@@ -79,13 +79,21 @@
         </details>
       </div>
       <div v-if="!state.isSubagent && state.currentSession" class="sidebar-tree">
-        <div class="sidebar-tree-title">Session files</div>
+        <div class="sidebar-tree-header">
+          <span class="sidebar-tree-title">Session files</span>
+          <div class="tree-tabs">
+            <button :class="{ active: view === 'view' }" @click="emit('view-click', 'view')">查看</button>
+            <button :class="{ active: view === 'diff' }" :disabled="treeGit === false" @click="emit('view-click', 'diff')">Diff</button>
+            <button :class="{ active: view === 'edit' }" @click="emit('view-click', 'edit')">编辑</button>
+          </div>
+        </div>
         <FileTree
           ref="treeRef"
           :session-id="state.currentSession"
           :roots="fsRoots"
+          :base="view === 'diff' ? 'master' : null"
           @open-file="(f) => emit('open-file', f)"
-          @root-info="(info) => emit('root-info', info)"
+          @root-info="onRootInfo"
         />
       </div>
     </div>
@@ -104,6 +112,12 @@ const emit = defineEmits<{
   select: []
   'open-file': [file: { path: string; name: string; status?: string }]
   'root-info': [info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }]
+  'view-click': [v: 'view' | 'diff' | 'edit']
+}>()
+
+const props = defineProps<{
+  view: 'view' | 'diff' | 'edit'
+  base: string
 }>()
 
 const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession } = useStore()
@@ -115,6 +129,14 @@ const editingName = ref(false)
 const editName = ref('')
 const sessionsHeight = ref(300)
 const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
+// Whether the workspace is a git repo (first loaded root); drives the Diff
+// tab's disabled state.
+const treeGit = ref<boolean | null>(null)
+
+function onRootInfo(info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }) {
+  if (treeGit.value === null) treeGit.value = info.isGit
+  emit('root-info', info)
+}
 
 const currentSessionObj = computed(() =>
   state.sessions.find((s) => s.id === state.currentSession),
@@ -138,6 +160,7 @@ watch(rootsKey, (key) => {
     fsRoots.value = []
     return
   }
+  treeGit.value = null
   const parts = key.split('\n')
   fsRoots.value = parts.map((p) => ({ path: p, name: basename(p) }))
 }, { immediate: true })
