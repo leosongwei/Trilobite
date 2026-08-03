@@ -545,14 +545,14 @@ def _fs_read_text(filepath: Path) -> str:
 
 
 @app.get("/api/sessions/{name}/fs/list")
-async def fs_list(name: str, path: str):
+async def fs_list(name: str, path: str, base: str | None = None):
     agent = _get_or_create_agent(name)
     dir_path = _fs_resolve(agent, path)
     if not dir_path.is_dir():
         raise HTTPException(status_code=400, detail="not a directory")
     root = _fs_root_for(agent, dir_path)
     relpath = str(dir_path.relative_to(root)) if dir_path != root else ""
-    listing = list_dir(root, relpath)
+    listing = list_dir(root, relpath, base)
     return {
         "path": str(dir_path),
         "name": dir_path.name or str(dir_path),

@@ -240,8 +240,10 @@ async function fsRequest<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json()
 }
 
-export function getFileList(id: string, path: string): Promise<FsListing> {
-  return fsRequest(`/api/sessions/${encode(id)}/fs/list?path=${encodeURIComponent(path)}`)
+export function getFileList(id: string, path: string, base?: string | null): Promise<FsListing> {
+  const params = new URLSearchParams({ path })
+  if (base) params.set('base', base)
+  return fsRequest(`/api/sessions/${encode(id)}/fs/list?${params}`)
 }
 
 export function getFileContent(id: string, path: string): Promise<{ path: string; content: string }> {

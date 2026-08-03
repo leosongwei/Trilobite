@@ -1,7 +1,7 @@
 <template>
   <div class="file-tree">
     <template v-for="node in displayNodes" :key="node.path">
-      <div class="tree-row dir" @click="toggle(node)">
+      <div class="tree-row dir" :class="{ changed: node.changed }" @click="toggle(node)">
         <span class="tree-arrow" :class="{ open: node.expanded }">&#9656;</span>
         <span class="tree-icon">&#128193;</span>
         <span class="tree-name" :title="node.path">{{ node.name }}</span>
@@ -21,7 +21,7 @@
             v-for="f in node.files"
             :key="node.path + '/' + f.name"
             class="tree-row file"
-            :class="{ deleted: f.status === 'deleted' }"
+            :class="{ deleted: f.status === 'deleted', changed: f.status && f.status !== 'clean' }"
             @click="openFile(node, f)"
           >
             <!-- Empty arrow keeps file names aligned with directory names. -->
@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { getFileList } from '../api'
 import type { FsEntry, FsListing } from '../api'
 
@@ -62,6 +62,7 @@ export interface DirNode {
   files: FsEntry[]
   subdirs: DirNode[]
   truncated: boolean
+  changed: boolean
   isGit: boolean
   branches: string[]
   currentBranch: string
@@ -77,6 +78,9 @@ const props = defineProps<{
   sessionId: string
   roots?: FsRoot[]
   nodes?: DirNode[]
+  // Diff mode: when set, listings report change status vs this base branch
+  // instead of vs HEAD, and changed entries are highlighted in the tree.
+  base?: string | null
 }>()
 const emit = defineEmits<{
   'open-file': [file: OpenFilePayload]
@@ -104,6 +108,7 @@ function makeNode(path: string, name: string): DirNode {
     files: [],
     subdirs: [],
     truncated: false,
+    changed: false,
     isGit: false,
     branches: [],
     currentBranch: '',
@@ -114,11 +119,15 @@ async function loadNode(node: DirNode) {
   node.loading = true
   node.error = null
   try {
-    const listing: FsListing = await getFileList(props.sessionId, node.path)
+    const listing: FsListing = await getFileList(props.sessionId, node.path, props.base)
     node.isGit = listing.is_git_repo
     node.branches = listing.branches
     node.currentBranch = listing.current_branch
     node.truncated = listing.truncated
+    // In diff mode the directory's own entry carries a status (any change in
+    // its subtree marks it); otherwise directories are always clean.
+    const self = listing.entries.find((e) => e.is_dir && e.name === node.name)
+    node.changed = self?.status != null && self.status !== 'clean'
     node.files = listing.entries.filter((e) => !e.is_dir)
     node.subdirs = listing.entries
       .filter((e) => e.is_dir)
@@ -134,6 +143,20 @@ async function loadNode(node: DirNode) {
     node.error = err instanceof Error ? err.message : String(err)
   } finally {
     node.loading = false
+  }
+}
+
+// Diff-mode base switch: reload every loaded directory so the highlighting
+// follows the selected branch.
+watch(
+  () => props.base,
+  () => reloadAll(rootNodes.value),
+)
+
+function reloadAll(nodes: DirNode[]) {
+  for (const n of nodes) {
+    if (n.loaded) loadNode(n)
+    reloadAll(n.subdirs)
   }
 }
 
@@ -224,8 +247,14 @@ defineExpose({ reloadDir, findNode })
 .tree-row.file {
   color: #cccccc;
 }
-.tree-row.file.deleted {
-  color: #6e7681;
+/* Diff mode: entries with changes vs the base branch get a yellow name;
+   directories whose subtree contains a change are marked the same way. */
+.tree-row.changed .tree-name {
+  color: #d29922;
+}
+/* Deleted files (in the base branch, gone from the worktree): red + strike. */
+.tree-row.file.deleted .tree-name {
+  color: #f14c4c;
   text-decoration: line-through;
 }
 .tree-hint {

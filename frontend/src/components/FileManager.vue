@@ -28,6 +28,7 @@
           ref="treeRef"
           :session-id="sessionId"
           :roots="roots"
+          :base="view === 'diff' ? base : null"
           @open-file="openFile"
           @root-info="onRootInfo"
         />

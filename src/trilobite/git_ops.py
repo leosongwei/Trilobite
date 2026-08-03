@@ -62,30 +62,46 @@ def _map_status(xy: str) -> str:
     return "modified"
 
 
-def list_dir(root: Path, relpath: str = "") -> dict[str, Any]:
-    """List one directory's direct entries with git change status.
+def _diff_status(xy: str) -> str:
+    """Map a single-letter diff --name-status code to the UI vocabulary."""
+    return {"A": "added", "M": "modified", "D": "deleted"}.get(xy, "modified")
+
+
+def list_dir(root: Path, relpath: str = "", base: str | None = None) -> dict[str, Any]:
+    """List one directory's direct entries with change status.
 
     Returns ``{"entries", "is_git_repo", "current_branch", "branches",
     "truncated"}``. In a git worktree the listing is built from ``git
     ls-files`` (tracked + untracked non-ignored), so ignored directories
     (e.g. ``.venv``, ``node_modules``) never appear; change status comes from
-    ``git status --porcelain``. Outside git we fall back to ``os.listdir``
-    with noise-directory pruning and every file is marked ``untracked``.
+    ``git status --porcelain``. When ``base`` is given, the status reflects
+    the working tree vs that branch instead (``git diff --name-status``) --
+    used by the file manager's diff mode; directories whose subtree contains
+    any changed file are themselves marked. Outside git we fall back to
+    ``os.listdir`` with noise-directory pruning and every file is marked
+    ``untracked``.
     """
     if is_git_repo(root):
-        return _list_dir_git(root, relpath)
+        return _list_dir_git(root, relpath, base)
     return _list_dir_plain(root, relpath)
 
 
-def _list_dir_git(root: Path, relpath: str) -> dict[str, Any]:
+def _list_dir_git(root: Path, relpath: str, base: str | None) -> dict[str, Any]:
     dirpath = relpath if relpath else "."
     prefix = f"{relpath}/" if relpath else ""
 
     # Tracked + untracked non-ignored files under the directory (recursive).
     files: set[str] = set()
-    for args in (("ls-files", "--cached"), ("ls-files", "-o", "--exclude-standard")):
+    untracked: set[str] = set()
+    for args, is_untracked in (
+        (("ls-files", "--cached"), False),
+        (("ls-files", "-o", "--exclude-standard"), True),
+    ):
         proc = _git(root, *args, "--", dirpath)
-        files.update(proc.stdout.splitlines())
+        lines = proc.stdout.splitlines()
+        files.update(lines)
+        if is_untracked:
+            untracked.update(lines)
 
     entries: dict[str, dict[str, Any]] = {}
     for f in files:
@@ -112,6 +128,46 @@ def _list_dir_git(root: Path, relpath: str) -> dict[str, Any]:
         elif rest:
             entries.setdefault(rest, {"name": rest, "is_dir": False})
             status_map[rest] = _map_status(rec[:2])
+
+    # Diff mode: status vs a base branch instead of vs HEAD. Changed files are
+    # marked by `git diff --name-status`; directories whose subtree contains a
+    # change are marked too (so unexpanded folders still show up). Untracked
+    # files have no baseline in the branch: treat them as added.
+    if base:
+        base_status: dict[str, str] = {}
+        changed_dirs: set[str] = set()
+        proc = _git(root, "diff", "--name-status", "-z", "--no-renames", base, "--", dirpath)
+        if proc.returncode == 0:
+            recs = proc.stdout.split("\0")
+            i = 0
+            while i + 1 < len(recs):
+                xy = recs[i]
+                path = recs[i + 1]
+                i += 2
+                if not xy or not path.startswith(prefix):
+                    continue
+                rest = path[len(prefix):]
+                if "/" in rest:
+                    changed_dirs.add(rest.split("/", 1)[0])
+                elif rest:
+                    entries.setdefault(rest, {"name": rest, "is_dir": False})
+                    base_status[rest] = _diff_status(xy)
+            for f in untracked:
+                if f.startswith(prefix) and "/" not in f[len(prefix):]:
+                    base_status[f[len(prefix):]] = "added"
+        for name, entry in entries.items():
+            if entry["is_dir"]:
+                entry["status"] = "modified" if name in changed_dirs else "clean"
+                continue
+            p = root / relpath / name
+            try:
+                st = p.stat()
+                entry["size"] = st.st_size
+                entry["mtime"] = int(st.st_mtime)
+            except OSError:
+                pass  # deleted file: no stat available
+            entry["status"] = base_status.get(name, "clean")
+        return _finalize_listing(root, entries)
 
     for name, entry in entries.items():
         if entry["is_dir"]:
