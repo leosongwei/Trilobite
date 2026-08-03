@@ -90,11 +90,25 @@
 ### 新组件
 
 * `FileManager.vue` — main 区域的**文件内容视图**（无自己的树）：顶栏（返回对话、base 分支下拉、查看/Diff/编辑 tabs、保存/取消）+ 内容区（highlight.js 只读高亮 / `DiffView` / textarea 编辑）。打开的文件由 props 从 sidebar 树传入；切换文件保持当前视图模式，diff 模式打开文件时预加载内容。保存后 emit `file-saved` 通知 sidebar 刷新树。数据用组件内 ref 管理，**不进全局 store**。
-* `FileTree.vue` — 递归渲染目录树：**懒加载**（展开目录时请求该目录内容并缓存，已加载目录内容缓存在组件内避免重复请求）、文件按 git 状态显示徽章（M/A/[U]/D）并按状态高亮文件名（modified 黄、added 绿、untracked 蓝、deleted 红删除线）、**diff 模式**（props `base`）下相对所选分支有改动的文件按同样规则着色（目录标黄，递归标记，未展开也能看到）；`roots` 变化（切 session/增删目录）时重建。会改文件的工具（edit/write/bash/task）调用返回时，以及 subagent 更新、run 结束，自动重新加载所有已展开目录（保留展开状态，防抖合并），agent 创建/修改的文件即时出现在树中；read/glob/grep/todo 等只读工具返回与仅出新助手消息时不刷新。
+* `FileTree.vue` — 递归渲染目录树：**懒加载**（展开目录时请求该目录内容并缓存，已加载目录内容缓存在组件内避免重复请求）、文件按 git 状态显示徽章（M/A/[U]/D）并按状态高亮文件名（modified 黄、added 绿、untracked 蓝、deleted 红删除线）、**diff 模式**（props `base`）下相对所选分支有改动的文件按同样规则着色（目录标黄，递归标记，未展开也能看到）；`roots` 变化（切 session/增删目录）时重建。刷新时机见下文。
 * diff 复用现有 `DiffView.vue`（props `rows: DiffRow[]`，含 split/unified 响应式切换）。
 * 编辑模式：原生 textarea（全文件、等宽字体），Ctrl+S 保存、Esc 取消，未保存切换文件/视图时确认提示；保存成功后刷新 sidebar 树并回到查看模式。
 * 查看模式：只读渲染 + highlight.js 高亮（语言按扩展名推断；未识别语言回落为纯文本）。
 * 默认模式：git 工作区打开文件即 **diff 模式**（vs 默认 `master` 分支），非 git 工作区自动落查看模式。
+
+### 文件树刷新时机
+
+sidebar 的 "Session files" 树在以下时机重新加载所有已展开目录（保留展开状态，防抖 1s 合并密集事件）：
+
+* **会改文件的工具调用返回**：`edit` / `write` / `bash` / `task`（subagent 共享工作区，可能写文件）的 `tool_result`。
+* **subagent 状态更新**（`subagent_state`）：subagent 完成/中断后其写入的文件能尽早出现。
+* **run 结束**（`done` / `cancelled` / `interrupted` / `error`）：终态兜底，每次 run 仅一次。
+
+不触发刷新：
+
+* `read` / `glob` / `grep` / `todo` 等只读工具返回（不修改工作区文件；`read` 的 VLM 图片仅存 session 目录，不在树范围内）。
+* 仅出新助手消息（`turn`/`text` 流式输出），不调工具。
+* 用户经文件管理器保存文件时仅刷新该文件所在目录（`reloadDir`），不重载整树。
 
 ### `api.ts` 新增
 
