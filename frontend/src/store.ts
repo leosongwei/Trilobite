@@ -11,6 +11,10 @@ interface State {
   maxTokens: number
   statusText: string | null
   streamTick: number
+  // Bumped when new chat content appears (new turn, tool completion, subagent
+  // state change, run end). The sidebar "Session files" tree watches it to
+  // reload so files the agent created/modified show up promptly.
+  fsRefreshTick: number
   planMode: boolean
   additionalDirs: string[]
   planExitRequest: boolean
@@ -39,6 +43,7 @@ const state = reactive<State>({
   maxTokens: 0,
   statusText: null,
   streamTick: 0,
+  fsRefreshTick: 0,
   planMode: false,
   additionalDirs: [],
   planExitRequest: false,
@@ -164,6 +169,7 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'turn':
       state.isStreaming = true
+      state.fsRefreshTick++
       newTurn()
       break
 
@@ -236,6 +242,8 @@ function handleSSEEvent(event: SSEEvent) {
     }
 
     case 'tool_result': {
+      // A tool just completed - most likely place for file changes.
+      state.fsRefreshTick++
       const turn = getCurrentTurn()
       if (!turn) break
       const running = turn.tools.find(
@@ -286,6 +294,8 @@ function handleSSEEvent(event: SSEEvent) {
     }
 
     case 'subagent_state': {
+      // Subagents share the workspace and may have written files.
+      state.fsRefreshTick++
       // Update a child's state on the task tool node, and reflect running
       // state in the session list so the sidebar stays in sync.
       const turn = getCurrentTurn()
@@ -320,6 +330,7 @@ function handleSSEEvent(event: SSEEvent) {
     case 'interrupted':
       state.isStreaming = false
       state.statusText = null
+      state.fsRefreshTick++
       if (event.type === 'interrupted' && state.isSubagent) state.sealed = true
       markRunningSubagentsStopped(event.type)
       closeTurn()
@@ -327,6 +338,7 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'error': {
       state.isStreaming = false
+      state.fsRefreshTick++
       let content = ''
       if (event.status_code) {
         content += `[HTTP ${event.status_code}] `

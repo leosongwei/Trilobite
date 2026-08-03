@@ -214,7 +214,13 @@ watch(
   { immediate: true },
 )
 
-defineExpose({ reloadDir, findNode })
+defineExpose({
+  reloadDir,
+  findNode,
+  // Reload every loaded directory (keeping expansion state) - used when the
+  // agent may have changed files anywhere in the workspace, not just one dir.
+  reloadAll: () => reloadAll(rootNodes.value),
+})
 </script>
 
 <style scoped>
