@@ -148,18 +148,33 @@ function rootFor(path: string): RootInfo | undefined {
 async function openFile(f: OpenFilePayload) {
   if (view.value === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
   selectedFile.value = f
-  view.value = 'view'
   error.value = ''
   diffRows.value = []
   savedTick.value = false
-  if (f.status === 'deleted') return
+  if (f.status === 'deleted') {
+    // A deleted file has no content or diff to show.
+    view.value = 'view'
+    return
+  }
   const info = rootFor(f.path)
   rootIsGit.value = info?.isGit ?? false
   branches.value = info?.branches ?? []
+  let baseChanged = false
   if (rootIsGit.value && !branches.value.includes(base.value)) {
     base.value = info!.currentBranch || branches.value[0] || 'master'
+    baseChanged = true
   }
-  await loadContent(f.path)
+  // Keep the current view mode across file switches; only fall back when the
+  // new file cannot support it.
+  if (!rootIsGit.value && view.value === 'diff') {
+    view.value = 'view'
+  }
+  if (view.value === 'diff') {
+    // When the base changed, the base watcher reloads the diff for us.
+    if (!baseChanged) await loadDiff()
+  } else {
+    await loadContent(f.path)
+  }
 }
 
 async function loadContent(path: string) {
