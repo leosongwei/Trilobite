@@ -22,7 +22,12 @@
             v-for="f in node.files"
             :key="node.path + '/' + f.name"
             class="tree-row file"
-            :class="{ deleted: f.status === 'deleted', changed: f.status === 'modified' || f.status === 'added' }"
+            :class="{
+              modified: f.status === 'modified',
+              added: f.status === 'added',
+              untracked: f.status === 'untracked',
+              deleted: f.status === 'deleted',
+            }"
             @click="openFile(node, f)"
           >
             <!-- Empty arrow keeps file names aligned with directory names. -->
@@ -95,7 +100,7 @@ const rootNodes = ref<DirNode[]>([])
 const displayNodes = computed<DirNode[]>(() => (props.roots ? rootNodes.value : props.nodes ?? []))
 
 function badgeChar(status: string): string {
-  return status === 'untracked' ? 'U' : status[0].toUpperCase()
+  return status === 'untracked' ? '[U]' : status[0].toUpperCase()
 }
 
 function makeNode(path: string, name: string): DirNode {
@@ -276,6 +281,11 @@ defineExpose({
 .tree-row.changed .tree-name {
   color: #d29922;
 }
+/* File name highlight by git status: modified yellow, added green,
+   untracked blue (in diff mode untracked files are mapped to added). */
+.tree-row.file.modified .tree-name { color: #d29922; }
+.tree-row.file.added .tree-name { color: #3fb950; }
+.tree-row.file.untracked .tree-name { color: #9cdcfe; }
 /* Deleted files (in the base branch, gone from the worktree): red + strike. */
 .tree-row.file.deleted .tree-name {
   color: #f14c4c;
