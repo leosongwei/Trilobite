@@ -88,7 +88,9 @@ const editorRef = ref<HTMLTextAreaElement | null>(null)
 const treeWidth = ref(300)
 const resizing = ref(false)
 const selectedFile = ref<OpenFilePayload | null>(null)
-const view = ref<'view' | 'diff' | 'edit'>('view')
+// Diff is the default mode: the tree highlights changed files vs the base
+// branch, which is the primary reason to open the file manager.
+const view = ref<'view' | 'diff' | 'edit'>('diff')
 const content = ref('')
 const editContent = ref('')
 const diffRows = ref<DiffRow[]>([])
@@ -135,6 +137,15 @@ const highlighted = computed(() => {
 
 function onRootInfo(info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }) {
   rootInfo.value[info.path] = info
+  // Before any file is opened, initialize the git state from the first
+  // loaded root so diff mode (the default) is usable right away.
+  if (!selectedFile.value && !rootIsGit.value) {
+    rootIsGit.value = info.isGit
+    branches.value = info.branches
+    if (info.isGit && !branches.value.includes(base.value)) {
+      base.value = info.currentBranch || branches.value[0] || 'master'
+    }
+  }
 }
 
 function rootFor(path: string): RootInfo | undefined {
