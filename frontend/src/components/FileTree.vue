@@ -5,12 +5,18 @@
         <span class="tree-arrow" :class="{ open: node.expanded }">&#9656;</span>
         <span class="tree-icon">&#128193;</span>
         <span class="tree-name" :title="node.path">{{ node.name }}</span>
-        <span v-if="node.path !== node.name" class="tree-dirpath">{{ shortPath(node.path) }}</span>
       </div>
       <div v-if="node.expanded" class="tree-children">
         <div v-if="node.loading" class="tree-hint">loading&#8230;</div>
         <div v-else-if="node.error" class="tree-hint tree-error">{{ node.error }}</div>
         <template v-else>
+          <FileTree
+            v-if="node.subdirs.length"
+            :nodes="node.subdirs"
+            :session-id="sessionId"
+            @open-file="(f) => emit('open-file', f)"
+            @root-info="(info) => emit('root-info', info)"
+          />
           <div
             v-for="f in node.files"
             :key="node.path + '/' + f.name"
@@ -18,6 +24,8 @@
             :class="{ deleted: f.status === 'deleted' }"
             @click="openFile(node, f)"
           >
+            <!-- Empty arrow keeps file names aligned with directory names. -->
+            <span class="tree-arrow"></span>
             <span class="tree-icon">&#128196;</span>
             <span class="tree-name" :title="node.path + '/' + f.name">{{ f.name }}</span>
             <span
@@ -27,13 +35,6 @@
               :title="f.status"
             >{{ badgeChar(f.status) }}</span>
           </div>
-          <FileTree
-            v-if="node.subdirs.length"
-            :nodes="node.subdirs"
-            :session-id="sessionId"
-            @open-file="(f) => emit('open-file', f)"
-            @root-info="(info) => emit('root-info', info)"
-          />
           <div v-if="node.truncated" class="tree-hint">directory too large, truncated</div>
         </template>
       </div>
@@ -87,11 +88,6 @@ const rootNodes = ref<DirNode[]>([])
 // Top-level component receives workspace roots; recursive children receive
 // already-built DirNodes for subdirectories.
 const displayNodes = computed<DirNode[]>(() => (props.roots ? rootNodes.value : props.nodes ?? []))
-
-function shortPath(path: string): string {
-  const parts = path.split('/').filter(Boolean)
-  return parts.slice(0, -1).join('/') || '/'
-}
 
 function badgeChar(status: string): string {
   return status === 'untracked' ? 'U' : status[0].toUpperCase()
@@ -222,14 +218,6 @@ defineExpose({ reloadDir, findNode })
 .tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.tree-dirpath {
-  font-size: 11px;
-  color: #6e7681;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-left: auto;
-  padding-left: 8px;
 }
 .tree-children {
   margin-left: 4px;

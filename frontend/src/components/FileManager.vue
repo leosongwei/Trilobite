@@ -18,7 +18,7 @@
       </div>
     </div>
     <div class="fm-body">
-      <div class="fm-tree">
+      <div class="fm-tree" :style="{ width: treeWidth + 'px' }">
         <FileTree
           ref="treeRef"
           :session-id="sessionId"
@@ -27,6 +27,7 @@
           @root-info="onRootInfo"
         />
       </div>
+      <div class="fm-resizer" :class="{ active: resizing }" @mousedown="startResize"></div>
       <div class="fm-content">
         <div v-if="error" class="fm-error">{{ error }}</div>
         <div v-if="!selectedFile" class="fm-empty">从左侧选择文件查看、对比或编辑</div>
@@ -78,6 +79,8 @@ const emit = defineEmits<{ close: [] }>()
 
 const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const editorRef = ref<HTMLTextAreaElement | null>(null)
+const treeWidth = ref(300)
+const resizing = ref(false)
 const selectedFile = ref<OpenFilePayload | null>(null)
 const view = ref<'view' | 'diff' | 'edit'>('view')
 const content = ref('')
@@ -227,6 +230,28 @@ function dirname(path: string): string {
   return idx > 0 ? path.slice(0, idx) : path
 }
 
+// Drag the resizer to adjust the tree pane width (180-600 px).
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  resizing.value = true
+  const startX = e.clientX
+  const startW = treeWidth.value
+  const onMove = (ev: MouseEvent) => {
+    treeWidth.value = Math.min(600, Math.max(180, startW + ev.clientX - startX))
+  }
+  const onUp = () => {
+    resizing.value = false
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
 function tryClose() {
   if (view.value === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
   emit('close')
@@ -323,10 +348,20 @@ function tryClose() {
   width: 300px;
   min-width: 180px;
   overflow: auto;
-  border-right: 1px solid #3c3c3c;
   background: #252526;
   padding: 8px 0;
   flex-shrink: 0;
+}
+.fm-resizer {
+  width: 5px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  background: transparent;
+  transition: background 0.1s;
+}
+.fm-resizer:hover,
+.fm-resizer.active {
+  background: #0e639c;
 }
 .fm-content {
   flex: 1;
