@@ -115,7 +115,7 @@ function makeNode(path: string, name: string): DirNode {
   }
 }
 
-async function loadNode(node: DirNode) {
+async function loadNode(node: DirNode, recursive = false) {
   node.loading = true
   node.error = null
   try {
@@ -124,14 +124,20 @@ async function loadNode(node: DirNode) {
     node.branches = listing.branches
     node.currentBranch = listing.current_branch
     node.truncated = listing.truncated
-    // In diff mode the directory's own entry carries a status (any change in
-    // its subtree marks it); otherwise directories are always clean.
-    const self = listing.entries.find((e) => e.is_dir && e.name === node.name)
-    node.changed = self?.status != null && self.status !== 'clean'
     node.files = listing.entries.filter((e) => !e.is_dir)
+    // A directory's own diff-mode status lives in its parent's listing: the
+    // parent stamps it on the child node below. Rebuild subdirs but keep
+    // existing nodes so expanded/loaded state survives reloads (e.g. base
+    // switches); brand-new directories are created fresh.
+    const oldSubs = node.subdirs
     node.subdirs = listing.entries
       .filter((e) => e.is_dir)
-      .map((e) => makeNode(`${node.path}/${e.name}`, e.name))
+      .map((e) => {
+        const existing = oldSubs.find((s) => s.path === `${node.path}/${e.name}`)
+        const sub = existing ?? makeNode(`${node.path}/${e.name}`, e.name)
+        sub.changed = e.status != null && e.status !== 'clean'
+        return sub
+      })
     node.loaded = true
     emit('root-info', {
       path: node.path,
@@ -139,6 +145,11 @@ async function loadNode(node: DirNode) {
       branches: node.branches,
       currentBranch: node.currentBranch,
     })
+    if (recursive) {
+      for (const sub of node.subdirs) {
+        if (sub.loaded) loadNode(sub, true)
+      }
+    }
   } catch (err) {
     node.error = err instanceof Error ? err.message : String(err)
   } finally {
@@ -146,8 +157,8 @@ async function loadNode(node: DirNode) {
   }
 }
 
-// Diff-mode base switch: reload every loaded directory so the highlighting
-// follows the selected branch.
+// Diff-mode base switch: reload every loaded directory (keeping expansion
+// state) so the highlighting follows the selected branch.
 watch(
   () => props.base,
   () => reloadAll(rootNodes.value),
@@ -155,8 +166,7 @@ watch(
 
 function reloadAll(nodes: DirNode[]) {
   for (const n of nodes) {
-    if (n.loaded) loadNode(n)
-    reloadAll(n.subdirs)
+    if (n.loaded) loadNode(n, true)
   }
 }
 
