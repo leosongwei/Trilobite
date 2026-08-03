@@ -186,8 +186,11 @@ async function openFile(f: OpenFilePayload) {
     view.value = 'view'
   }
   if (view.value === 'diff') {
-    // When the base changed, the base watcher reloads the diff for us.
-    if (!baseChanged) await loadDiff()
+    // Load the content too so switching to view/edit later shows it
+    // instantly; when the base changed, the base watcher reloads the diff.
+    const tasks: Promise<void>[] = [loadContent(f.path)]
+    if (!baseChanged) tasks.push(loadDiff())
+    await Promise.all(tasks)
   } else {
     await loadContent(f.path)
   }
