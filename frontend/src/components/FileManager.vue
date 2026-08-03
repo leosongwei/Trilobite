@@ -138,12 +138,17 @@ const highlighted = computed(() => {
 function onRootInfo(info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }) {
   rootInfo.value[info.path] = info
   // Before any file is opened, initialize the git state from the first
-  // loaded root so diff mode (the default) is usable right away.
+  // loaded root so diff mode (the default) is usable right away. A non-git
+  // workspace falls back to view mode since diff needs a base branch.
   if (!selectedFile.value && !rootIsGit.value) {
     rootIsGit.value = info.isGit
     branches.value = info.branches
-    if (info.isGit && !branches.value.includes(base.value)) {
-      base.value = info.currentBranch || branches.value[0] || 'master'
+    if (info.isGit) {
+      if (!branches.value.includes(base.value)) {
+        base.value = info.currentBranch || branches.value[0] || 'master'
+      }
+    } else if (view.value === 'diff') {
+      view.value = 'view'
     }
   }
 }
