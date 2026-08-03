@@ -4,8 +4,8 @@
       <button class="fm-back" @click="tryClose">&#8592; 对话</button>
       <span class="fm-filepath" :title="selectedFile?.path">{{ selectedFile ? selectedFile.path : '未选择文件' }}</span>
       <span v-if="savedTick" class="fm-saved">已保存</span>
-      <div v-if="selectedFile && !deleted" class="fm-actions">
-        <template v-if="view === 'diff'">
+      <div class="fm-actions">
+        <template v-if="view === 'diff' && selectedFile && !deleted">
           <span class="fm-vs">HEAD vs</span>
           <select v-if="rootIsGit" v-model="base" class="fm-base" title="对比分支">
             <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
@@ -13,10 +13,10 @@
         </template>
         <div class="fm-tabs">
           <button :class="{ active: view === 'view' }" @click="switchView('view')">查看</button>
-          <button :class="{ active: view === 'diff' }" :disabled="!rootIsGit" @click="switchView('diff')">Diff</button>
-          <button :class="{ active: view === 'edit' }" @click="switchView('edit')">编辑</button>
+          <button :class="{ active: view === 'diff' }" :disabled="!rootIsGit || deleted" @click="switchView('diff')">Diff</button>
+          <button :class="{ active: view === 'edit' }" :disabled="deleted" @click="switchView('edit')">编辑</button>
         </div>
-        <template v-if="view === 'edit'">
+        <template v-if="view === 'edit' && selectedFile && !deleted">
           <button class="fm-primary" :disabled="saving || !dirty" @click="save">保存</button>
           <button class="fm-cancel" @click="cancelEdit">取消</button>
         </template>
