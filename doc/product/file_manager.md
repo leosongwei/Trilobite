@@ -12,10 +12,10 @@
 
 ## 入口与布局
 
-* 入口：`SessionSidebar` 顶部"文件"按钮（仅主 session 显示）。
+* 入口：`SessionSidebar` 底部信息面板（Session/cwd/Allowed directories 区域）的 "Open Session Directory" 按钮（仅主 session 显示，subagent 隐藏）。
 * 点击后 `App.vue` 的 main 区域切换为文件管理器视图（`showFiles` 局部状态），隐藏 `ChatView`/`ChatInput`/`TokenBar`/审批横幅，保留 sidebar 便于切换会话；文件管理器顶栏提供"返回对话"按钮。
 * 切换会话时自动关闭文件管理器回到对话。
-* 布局：左侧 `FileTree`（可折叠目录树 + git 状态徽章 + 搜索过滤），右侧内容区（顶栏：文件路径、base 分支下拉、查看/Diff 切换、编辑/保存/取消按钮；主体：只读高亮视图或 `DiffView` 或编辑 textarea）。
+* 布局：左侧 `FileTree`（可折叠目录树 + git 状态徽章，树宽可拖拽调整 180-600px），右侧内容区（顶栏：文件路径、base 分支下拉、查看/Diff 切换、编辑/保存/取消按钮；主体：只读高亮视图或 `DiffView` 或编辑 textarea）。
 
 ## 后端
 

@@ -6,7 +6,6 @@
       <label>Working directory:</label>
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
       <button @click="handleCreate">+ New Session</button>
-      <button v-if="!state.isSubagent" class="files-btn" @click="emit('open-files')">&#128193; 文件管理器</button>
     </div>
     <div class="sessions">
       <template v-for="s in sessionTree" :key="s.id">
@@ -76,6 +75,7 @@
           <button @click="handleAddDir">+</button>
         </div>
       </details>
+      <button v-if="!state.isSubagent" class="open-files-btn" @click="emit('open-files')">Open Session Directory</button>
     </div>
   </aside>
 </template>
