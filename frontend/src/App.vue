@@ -18,12 +18,10 @@
     <div class="sidebar-backdrop" @click="sidebarOpen = false"></div>
     <SessionSidebar
       ref="sidebarRef"
-      :view="viewMode"
       :base="diffBase"
       @select="sidebarOpen = false"
       @open-file="handleOpenFile"
       @root-info="(info) => { rootInfoMap[info.path] = info }"
-      @view-click="(v) => { viewMode = v }"
     />
     <main class="main">
       <button class="menu-toggle" @click="sidebarOpen = true">&#9776;</button>
@@ -32,11 +30,9 @@
         :session-id="state.currentSession"
         :file="openedFile"
         :root-info="rootInfoMap"
-        :view="viewMode"
         :base="diffBase"
         @close="showFiles = false"
         @file-saved="(dir) => sidebarRef?.reloadTreeDir(dir)"
-        @update:view="(v) => { viewMode = v }"
         @update:base="(b) => { diffBase = b }"
       />
       <template v-else>
@@ -88,9 +84,8 @@ const sidebarOpen = ref(false)
 const showFiles = ref(false)
 const sidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 const openedFile = ref<OpenFilePayload | null>(null)
-// View mode and diff base branch are shared by the sidebar tree (mode tabs,
-// diff highlighting) and the file manager (content rendering).
-const viewMode = ref<'view' | 'diff' | 'edit'>('diff')
+// Diff base branch, shared by the sidebar tree (change highlighting) and the
+// file manager (diff view + branch selector).
 const diffBase = ref('master')
 // Git info per workspace root, collected from the sidebar tree's root-info
 // events; the file manager needs it for the diff branch selector.
@@ -123,7 +118,6 @@ watch(() => state.currentSession, () => {
   sidebarOpen.value = false
   showFiles.value = false
   openedFile.value = null
-  viewMode.value = 'diff'
   diffBase.value = 'master'
   for (const k of Object.keys(rootInfoMap)) delete rootInfoMap[k]
 })

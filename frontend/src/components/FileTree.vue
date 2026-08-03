@@ -22,7 +22,7 @@
             v-for="f in node.files"
             :key="node.path + '/' + f.name"
             class="tree-row file"
-            :class="{ deleted: f.status === 'deleted', changed: f.status && f.status !== 'clean' }"
+            :class="{ deleted: f.status === 'deleted', changed: f.status === 'modified' || f.status === 'added' }"
             @click="openFile(node, f)"
           >
             <!-- Empty arrow keeps file names aligned with directory names. -->
