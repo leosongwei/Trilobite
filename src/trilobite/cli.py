@@ -26,6 +26,7 @@ except ImportError:  # non-readline platforms (e.g. Windows)
 
 from src.trilobite.agent import Agent
 from src.trilobite.config import get_sessions_dir, init_config
+from src.trilobite.version import get_version
 
 
 # --- ANSI colors -------------------------------------------------------------
@@ -478,6 +479,7 @@ async def _repl(agent: Agent, queue: asyncio.Queue, banner: str) -> None:
     signal.signal(signal.SIGINT, signal.default_int_handler)
 
     renderer = Renderer()
+    sys.stdout.write(f"Trilobite {get_version()}\n")
     sys.stdout.write(_dim(f"{banner} · Ctrl+C 中断 / /exit 退出\n"))
     sys.stdout.flush()
     renderer.at_line_start = True

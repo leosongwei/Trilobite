@@ -1,26 +1,93 @@
 import asyncio
 import base64
-import importlib.metadata
 import json
 import re
+import secrets
 import time
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
-from src.trilobite.config import init_config, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
+from src.trilobite.config import init_config, get_config_dir, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
+from src.trilobite.version import get_version as get_pkg_version
 
 app = FastAPI(title="Trilobite")
 
 agents: dict[str, Agent] = {}
 config: dict = {}
+
+# ── token auth ──────────────────────────────────────────────────────────────
+# The web server is guarded by an access token (like Jupyter Notebook). The
+# token is generated on first start and persisted to the config dir
+# (access_token.txt); later starts reuse the existing token so the access
+# link stays stable. Browsers exchange it once for an HttpOnly session
+# cookie; every /api/* request must carry that cookie. Static assets stay
+# public (they are just the compiled frontend), so the login dialog can
+# render before authentication.
+
+AUTH_COOKIE = "trilobite_token"
+TOKEN_FILE = "access_token.txt"
+auth_token: str | None = None
+
+
+def ensure_auth_token() -> str:
+    """Load the persisted access token, or generate and persist one on first run."""
+    global auth_token
+    if auth_token is None:
+        token_path = get_config_dir() / TOKEN_FILE
+        if token_path.is_file():
+            existing = token_path.read_text().strip()
+            if existing:
+                auth_token = existing
+        if auth_token is None:
+            auth_token = secrets.token_urlsafe(32)
+            get_config_dir().mkdir(parents=True, exist_ok=True)
+            token_path.write_text(auth_token)
+    return auth_token
+
+
+def _is_authenticated(request: Request) -> bool:
+    return secrets.compare_digest(request.cookies.get(AUTH_COOKIE, ""), ensure_auth_token())
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and not path.startswith("/api/auth/"):
+        if not _is_authenticated(request):
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+    return await call_next(request)
+
+
+class AuthRequest(BaseModel):
+    key: str
+
+
+@app.get("/api/auth/status")
+async def auth_status(request: Request):
+    return {"authenticated": _is_authenticated(request)}
+
+
+@app.post("/api/auth/login")
+async def auth_login(request: Request, req: AuthRequest):
+    if not secrets.compare_digest(req.key, ensure_auth_token()):
+        raise HTTPException(status_code=401, detail="invalid key")
+    response = Response(json.dumps({"status": "ok"}), media_type="application/json")
+    response.set_cookie(
+        AUTH_COOKIE,
+        ensure_auth_token(),
+        httponly=True,
+        samesite="strict",
+        max_age=365 * 24 * 3600,  # 长期有效：token 持久化，cookie 无需频繁重登
+    )
+    return response
 
 class SessionCreate(BaseModel):
     name: str
@@ -76,11 +143,7 @@ async def get_cwd():
 
 @app.get("/api/version")
 async def get_version():
-    try:
-        version = importlib.metadata.version("trilobite-code")
-    except importlib.metadata.PackageNotFoundError:
-        version = "unknown"
-    return {"version": version}
+    return {"version": get_pkg_version()}
 
 
 @app.get("/api/config")
@@ -477,7 +540,21 @@ def main():
 
     # default (no args or -s): web server
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=2345)
+
+    cfg = init_config()
+    token = ensure_auth_token()
+    token_path = get_config_dir() / TOKEN_FILE
+    print(f"Trilobite {get_pkg_version()}")
+    print(f"Trilobite web UI: http://127.0.0.1:2345/?token={token}")
+    print(f"Access key: {token}")
+    print(f"Access key saved to {token_path}")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=2345,
+        access_log=False,
+        log_level=str(cfg.get("log_level", "WARNING")).lower(),
+    )
 
 
 if __name__ == "__main__":

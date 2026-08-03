@@ -83,6 +83,8 @@ trilobite -c             # CLI 续接当前目录最新的 session
 
 > 「最新 session」按 `history.json` 的 mtime（最后一次存盘时间）排序，回退 `created_at`，web 与 CLI 的所有活动都自动反映，无需额外维护时间字段。session 创建逻辑与 `POST /api/sessions` 端点一致，CLI 只是把「HTTP 请求驱动」换成「stdin 驱动」。
 
+> 两种模式进入 REPL 时都先打印一行版本横幅 `Trilobite <version>`（与 web 启动横幅共用 `src/trilobite/version.py` 的 `get_version()`），再打印 banner 提示行（`# trilobite cli · <working_dir>` 或 `# resumed · <name> · <working_dir>`）。
+
 ## 三、交互模型：状态机
 
 CLI 是一个两状态循环：
