@@ -11,9 +11,10 @@ interface State {
   maxTokens: number
   statusText: string | null
   streamTick: number
-  // Bumped when a tool call returns (or a subagent state change / run end -
-  // the moments files can actually change). The sidebar "Session files" tree
-  // watches it to reload so files the agent created/modified show up promptly.
+  // Bumped when a file-changing tool returns (edit/write/bash/task), or on
+  // subagent state changes / run ends - the moments files can actually
+  // change. The sidebar "Session files" tree watches it to reload so files
+  // the agent created/modified show up promptly.
   fsRefreshTick: number
   planMode: boolean
   additionalDirs: string[]
@@ -58,6 +59,12 @@ const state = reactive<State>({
 
 let currentTurnIdx = -1
 let currentToolIdx = -1
+
+// Tool returns that can change files in the workspace; the sidebar "Session
+// files" tree refreshes on these. read/glob/grep/todo never modify the
+// working tree (read's VLM images go to the session dir, not the workspace),
+// so their returns skip the reload.
+const FILE_CHANGING_TOOLS = new Set(['edit', 'write', 'bash', 'task'])
 
 function getCurrentTurn(): TurnItem | null {
   if (currentTurnIdx < 0) return null
@@ -241,8 +248,10 @@ function handleSSEEvent(event: SSEEvent) {
     }
 
     case 'tool_result': {
-      // A tool just completed - most likely place for file changes.
-      state.fsRefreshTick++
+      // Only file-changing tools trigger a tree refresh.
+      if (event.tool && FILE_CHANGING_TOOLS.has(event.tool)) {
+        state.fsRefreshTick++
+      }
       const turn = getCurrentTurn()
       if (!turn) break
       const running = turn.tools.find(
