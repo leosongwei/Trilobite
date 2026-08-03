@@ -1,12 +1,12 @@
 # 访问安全（token auth）
 
-Web 服务器（`-s` 模式）启动时生成一个随机访问 token（类似 Jupyter Notebook），用于防止局域网内其他人直接访问会话数据。token 每个进程生成一次，写入 `~/.config/trilobite/token`，启动时打印版本横幅、带 token 的访问链接、以及单独一行的 key：
+Web 服务器（`-s` 模式）用访问 token 做基本防护（类似 Jupyter Notebook），防止局域网内其他人直接访问会话数据。token **首次启动时生成**，持久化到 `~/.config/trilobite/access_token.txt`；之后的启动**读取已有 token 复用**（访问链接保持不变），只有文件不存在时才重新生成。启动时打印版本横幅、带 token 的访问链接、以及单独一行的 key：
 
 ```
 Trilobite 1.1.7
 Trilobite web UI: http://127.0.0.1:2345/?token=<token>
 Access key: <token>
-Access key saved to ~/.config/trilobite/token
+Access key saved to ~/.config/trilobite/access_token.txt
 ```
 
 `Trilobite <version>` 版本横幅与 CLI 模式共用 `src/trilobite/version.py` 的 `get_version()`（读 `importlib.metadata` 的 `trilobite-code` 包版本）。
@@ -28,6 +28,6 @@ Access key saved to ~/.config/trilobite/token
 
 ## 其他
 
-- 服务器每次启动重新生成 token，旧 token（含已发 cookie）立即失效。token 文件会被覆盖。
+- token 持久化在 `access_token.txt`，重启后不变，已派发的 cookie 继续有效；删除该文件即可重置 token。
 - CLI 模式（`-t`/`-c`）不走网络，不生成 token。
 - 明文 HTTP 传输；如需加密请自行在外部套 HTTPS 反向代理。

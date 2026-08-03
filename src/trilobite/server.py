@@ -24,25 +24,32 @@ agents: dict[str, Agent] = {}
 config: dict = {}
 
 # ── token auth ──────────────────────────────────────────────────────────────
-# The web server is guarded by a random token generated at every start (like
-# Jupyter Notebook). The token is printed as an access link on startup and
-# persisted to the config dir so the user can recover it later. Browsers
-# exchange it once for an HttpOnly session cookie; every /api/* request must
-# carry that cookie. Static assets stay public (they are just the compiled
-# frontend), so the login dialog can render before authentication.
+# The web server is guarded by an access token (like Jupyter Notebook). The
+# token is generated on first start and persisted to the config dir
+# (access_token.txt); later starts reuse the existing token so the access
+# link stays stable. Browsers exchange it once for an HttpOnly session
+# cookie; every /api/* request must carry that cookie. Static assets stay
+# public (they are just the compiled frontend), so the login dialog can
+# render before authentication.
 
 AUTH_COOKIE = "trilobite_token"
+TOKEN_FILE = "access_token.txt"
 auth_token: str | None = None
 
 
 def ensure_auth_token() -> str:
-    """Generate (once per process) and persist the access token."""
+    """Load the persisted access token, or generate and persist one on first run."""
     global auth_token
     if auth_token is None:
-        auth_token = secrets.token_urlsafe(32)
-        config_dir = get_config_dir()
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "token").write_text(auth_token)
+        token_path = get_config_dir() / TOKEN_FILE
+        if token_path.is_file():
+            existing = token_path.read_text().strip()
+            if existing:
+                auth_token = existing
+        if auth_token is None:
+            auth_token = secrets.token_urlsafe(32)
+            get_config_dir().mkdir(parents=True, exist_ok=True)
+            token_path.write_text(auth_token)
     return auth_token
 
 
@@ -530,7 +537,7 @@ def main():
 
     cfg = init_config()
     token = ensure_auth_token()
-    token_path = get_config_dir() / "token"
+    token_path = get_config_dir() / TOKEN_FILE
     print(f"Trilobite {get_pkg_version()}")
     print(f"Trilobite web UI: http://127.0.0.1:2345/?token={token}")
     print(f"Access key: {token}")
