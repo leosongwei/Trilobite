@@ -109,6 +109,7 @@ trilobite   # entry point，启动 uvicorn (0.0.0.0:2345)
 ## 项目管理
 
 注意：
+* 永远先拉master，基于新的master开分支，不要在master分支中编写代码。
 * 一般来说我用trilobite开发trilobite，所以你其实就运行在这个trilobite里面，这个进程占据了2345端口，当功能开发完后你可以叫我来重启进程。
 * gh已经配备，可以查看github的issues, PRs。
 
