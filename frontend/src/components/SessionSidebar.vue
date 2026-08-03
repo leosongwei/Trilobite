@@ -195,7 +195,7 @@ watch(
   () => state.fsRefreshTick,
   () => {
     if (refreshTimer) clearTimeout(refreshTimer)
-    refreshTimer = setTimeout(() => treeRef.value?.reloadAll(), 300)
+    refreshTimer = setTimeout(() => treeRef.value?.reloadAll(), 1000)
   },
 )
 
