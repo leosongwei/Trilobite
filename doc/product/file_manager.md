@@ -2,7 +2,7 @@
 
 ## 概述
 
-文件管理器是一个面向用户的轻量文件浏览/编辑界面（类 IDE），与 agent 运行完全解耦：用户可以直接查看工作区文件、对比文件与某个 git 分支的差异、编辑并保存文件，无需经过 agent 的对话流程。文件管理器只对**主 session** 提供（subagent 视图不显示入口）。
+文件管理器是一个面向用户的轻量文件浏览/编辑界面（类 IDE），与 agent 运行完全解耦：用户可以直接查看工作区文件、对比文件与某个 git 分支的差异、编辑并保存文件，无需经过 agent 的对话流程。文件树只对**主 session** 提供（subagent 视图不显示）。
 
 三个核心能力（issue #49）：
 
@@ -12,10 +12,10 @@
 
 ## 入口与布局
 
-* 入口：`SessionSidebar` 底部信息面板（Session/cwd/Allowed directories 区域）的 "Open Session Directory" 按钮（仅主 session 显示，subagent 隐藏）。
-* 点击后 `App.vue` 的 main 区域切换为文件管理器视图（`showFiles` 局部状态），隐藏 `ChatView`/`ChatInput`/`TokenBar`/审批横幅，保留 sidebar 便于切换会话；文件管理器顶栏提供"返回对话"按钮。
-* 切换会话时自动关闭文件管理器回到对话。
-* 布局：左侧 `FileTree`（可折叠目录树 + git 状态徽章，树宽可拖拽调整 180-600px），右侧内容区（顶栏：文件路径、base 分支下拉、查看/Diff 切换、编辑/保存/取消按钮；主体：只读高亮视图或 `DiffView` 或编辑 textarea）。
+* 文件树**内嵌在 sidebar**（`SessionSidebar` 底部，"Session files" 区域，仅主 session），默认展开工作区根目录——无需单独打开文件管理器即可浏览文件、查看 vs 分支的改动高亮。点击文件在 main 区域打开文件内容视图（顶栏提供"返回对话"按钮）。
+* sidebar 中 session 列表与下方面板（会话信息 + 文件树）之间有一条**可上下拖拽的分划线**，调整两部分高度。
+* 切换会话时自动关闭文件视图回到对话，文件树随之重建。
+* 文件视图布局：顶栏（返回对话、文件路径、base 分支下拉（仅 diff 模式）、查看/Diff 切换（segmented tabs）、编辑/保存/取消按钮）+ 内容区（只读高亮视图或 `DiffView` 或编辑 textarea）。
 
 ## 后端
 
@@ -89,11 +89,12 @@
 
 ### 新组件
 
-* `FileManager.vue` — 顶层面板：顶栏（返回对话、base 分支下拉）+ 左侧 `FileTree` + 右侧内容区。持有当前打开的目录/文件、当前视图（view/diff/edit）、脏状态。数据用组件内 ref + `api.ts` 调用管理，**不进全局 store**（视图状态与会话生命周期绑定，切会话即销毁）。
-* `FileTree.vue` — 递归渲染目录树：**懒加载**（初始只请求各根目录，展开目录时请求该目录内容并渲染子项，已加载目录内容缓存在组件内避免重复请求）、文件按 git 状态显示徽章（M/A/U/D，deleted 灰色）、目录内容按需重载（保存文件后刷新所在目录状态）。
+* `FileManager.vue` — main 区域的**文件内容视图**（无自己的树）：顶栏（返回对话、base 分支下拉、查看/Diff/编辑 tabs、保存/取消）+ 内容区（highlight.js 只读高亮 / `DiffView` / textarea 编辑）。打开的文件由 props 从 sidebar 树传入；切换文件保持当前视图模式，diff 模式打开文件时预加载内容。保存后 emit `file-saved` 通知 sidebar 刷新树。数据用组件内 ref 管理，**不进全局 store**。
+* `FileTree.vue` — 递归渲染目录树：**懒加载**（展开目录时请求该目录内容并缓存，已加载目录内容缓存在组件内避免重复请求）、文件按 git 状态显示徽章（M/A/U/D，deleted 灰色）、**diff 模式**（props `base`）下相对所选分支有改动的文件与目录名字标黄（目录递归标记，未展开也能看到）、deleted 文件红色删除线；`roots` 变化（切 session/增删目录）时重建。
 * diff 复用现有 `DiffView.vue`（props `rows: DiffRow[]`，含 split/unified 响应式切换）。
-* 编辑模式：原生 textarea（全文件、等宽字体），Ctrl+S 保存、Esc 取消，未保存切换文件/视图时确认提示；保存成功后刷新 diff。
+* 编辑模式：原生 textarea（全文件、等宽字体），Ctrl+S 保存、Esc 取消，未保存切换文件/视图时确认提示；保存成功后刷新 sidebar 树并回到查看模式。
 * 查看模式：只读渲染 + highlight.js 高亮（语言按扩展名推断；未识别语言回落为纯文本）。
+* 默认模式：git 工作区打开文件即 **diff 模式**（vs 默认 `master` 分支），非 git 工作区自动落查看模式。
 
 ### `api.ts` 新增
 
@@ -118,7 +119,7 @@
 | 敏感文件（.env 等） | 树中显示但读取/保存被后端拒绝 |
 | working_dir / additional_dirs 之外 | 后端拒绝（不会出现在树中，除非手动构造请求） |
 | agent 运行中编辑文件 | 允许；用户自行承担与 agent 读取的时序一致性（与终端里手动改文件同等语义） |
-| subagent 会话 | 无文件管理器入口 |
+| subagent 会话 | 无文件树 |
 
 ## 代码高亮取舍
 

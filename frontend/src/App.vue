@@ -16,14 +16,21 @@
   </div>
   <div v-else class="app" :class="{ 'sidebar-open': sidebarOpen }">
     <div class="sidebar-backdrop" @click="sidebarOpen = false"></div>
-    <SessionSidebar @select="sidebarOpen = false" @open-files="openFiles" />
+    <SessionSidebar
+      ref="sidebarRef"
+      @select="sidebarOpen = false"
+      @open-file="handleOpenFile"
+      @root-info="(info) => { rootInfoMap[info.path] = info }"
+    />
     <main class="main">
       <button class="menu-toggle" @click="sidebarOpen = true">&#9776;</button>
       <FileManager
         v-if="showFiles && state.currentSession"
         :session-id="state.currentSession"
-        :roots="fsRoots"
+        :file="openedFile"
+        :root-info="rootInfoMap"
         @close="showFiles = false"
+        @file-saved="(dir) => sidebarRef?.reloadTreeDir(dir)"
       />
       <template v-else>
         <div v-if="state.isSubagent" class="subagent-bar">
@@ -58,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useStore } from './store'
 import * as api from './api'
 import SessionSidebar from './components/SessionSidebar.vue'
@@ -66,29 +73,23 @@ import ChatView from './components/ChatView.vue'
 import ChatInput from './components/ChatInput.vue'
 import TokenBar from './components/TokenBar.vue'
 import FileManager from './components/FileManager.vue'
-import type { FsRoot } from './components/FileTree.vue'
+import type { RootInfo } from './components/FileManager.vue'
+import type { OpenFilePayload } from './components/FileTree.vue'
 
 const { state, loadSessions, setMode, approvePlanExit, rejectPlanExit, approvePermission, rejectPermission, approveSubagentPermission, rejectSubagentPermission, selectSession } = useStore()
 const sidebarOpen = ref(false)
 const showFiles = ref(false)
+const sidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
+const openedFile = ref<OpenFilePayload | null>(null)
+// Git info per workspace root, collected from the sidebar tree's root-info
+// events; the file manager needs it for the diff branch selector.
+const rootInfoMap = reactive<Record<string, RootInfo>>({})
 
-// The file manager browses the current session's workspace: working_dir plus
-// the authorized additional directories as separate roots.
-const fsRoots = computed<FsRoot[]>(() => {
-  const cur = state.sessions.find((s) => s.id === state.currentSession)
-  if (!cur) return []
-  const roots: FsRoot[] = [{ path: cur.working_dir, name: basename(cur.working_dir) }]
-  for (const d of state.additionalDirs) roots.push({ path: d, name: basename(d) })
-  return roots
-})
-
-function basename(p: string): string {
-  const parts = p.split('/').filter(Boolean)
-  return parts[parts.length - 1] || p
-}
-
-function openFiles() {
+// Clicking a file in the sidebar tree opens it in the file manager view.
+function handleOpenFile(f: OpenFilePayload) {
+  openedFile.value = f
   showFiles.value = true
+  sidebarOpen.value = false
 }
 
 // Access-key gate: 'checking' while probing the server, 'required' shows the
@@ -110,6 +111,7 @@ function goParent() {
 watch(() => state.currentSession, () => {
   sidebarOpen.value = false
   showFiles.value = false
+  openedFile.value = null
 })
 
 function handleKeydown(e: KeyboardEvent) {

@@ -44,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { getFileList } from '../api'
 import type { FsEntry, FsListing } from '../api'
 
@@ -196,16 +196,23 @@ function findNode(path: string, nodes: DirNode[]): DirNode | null {
   return null
 }
 
-onMounted(() => {
-  if (props.roots) {
-    rootNodes.value = props.roots.map((r) => makeNode(r.path, r.name))
-    // Workspace roots start expanded so the file manager opens on content.
+// Workspace roots: rebuild the tree whenever they change (session switch,
+// additional dirs). The root starts expanded so the tree opens on content.
+watch(
+  () => props.roots,
+  (roots) => {
+    if (!roots) {
+      rootNodes.value = []
+      return
+    }
+    rootNodes.value = roots.map((r) => makeNode(r.path, r.name))
     for (const node of rootNodes.value) {
       node.expanded = true
       loadNode(node)
     }
-  }
-})
+  },
+  { immediate: true },
+)
 
 defineExpose({ reloadDir, findNode })
 </script>

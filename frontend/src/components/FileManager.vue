@@ -23,17 +23,6 @@
       </div>
     </div>
     <div class="fm-body">
-      <div class="fm-tree" :style="{ width: treeWidth + 'px' }">
-        <FileTree
-          ref="treeRef"
-          :session-id="sessionId"
-          :roots="roots"
-          :base="view === 'diff' ? base : null"
-          @open-file="openFile"
-          @root-info="onRootInfo"
-        />
-      </div>
-      <div class="fm-resizer" :class="{ active: resizing }" @mousedown="startResize"></div>
       <div class="fm-content">
         <div v-if="error" class="fm-error">{{ error }}</div>
         <div v-if="!selectedFile" class="fm-empty">从左侧选择文件查看、对比或编辑</div>
@@ -71,25 +60,27 @@ import 'highlight.js/styles/vs2015.css'
 import { getFileContent, getFileDiff, saveFile } from '../api'
 import type { DiffRow } from '../types'
 import DiffView from './DiffView.vue'
-import FileTree from './FileTree.vue'
-import type { FsRoot, OpenFilePayload } from './FileTree.vue'
+import type { OpenFilePayload } from './FileTree.vue'
 
-interface RootInfo {
+export interface RootInfo {
   isGit: boolean
   branches: string[]
   currentBranch: string
 }
 
-const props = defineProps<{ sessionId: string; roots: FsRoot[] }>()
-const emit = defineEmits<{ close: [] }>()
+// The file to open is handed in from the sidebar tree; root info (branches,
+// git-ness) is collected there too and passed down for the diff UI.
+const props = defineProps<{
+  sessionId: string
+  file: OpenFilePayload | null
+  rootInfo: Record<string, RootInfo>
+}>()
+const emit = defineEmits<{ close: []; 'file-saved': [dir: string] }>()
 
-const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const editorRef = ref<HTMLTextAreaElement | null>(null)
-const treeWidth = ref(300)
-const resizing = ref(false)
 const selectedFile = ref<OpenFilePayload | null>(null)
-// Diff is the default mode: the tree highlights changed files vs the base
-// branch, which is the primary reason to open the file manager.
+// Diff is the default mode: changed files are highlighted vs the base branch,
+// which is the primary reason to open the file manager.
 const view = ref<'view' | 'diff' | 'edit'>('diff')
 const content = ref('')
 const editContent = ref('')
@@ -102,10 +93,19 @@ const diffLoading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const savedTick = ref(false)
-const rootInfo = ref<Record<string, RootInfo>>({})
 
 const deleted = computed(() => selectedFile.value?.status === 'deleted')
 const dirty = computed(() => view.value === 'edit' && editContent.value !== content.value)
+
+// Open whatever file the sidebar tree hands over; switching files keeps the
+// current view mode.
+watch(
+  () => props.file,
+  (f) => {
+    if (f) openFile(f)
+  },
+  { immediate: true },
+)
 
 // ── syntax highlighting (view mode) ──
 
@@ -135,31 +135,32 @@ const highlighted = computed(() => {
 
 // ── file operations ──
 
-function onRootInfo(info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }) {
-  rootInfo.value[info.path] = info
-  // Before any file is opened, initialize the git state from the first
-  // loaded root so diff mode (the default) is usable right away. A non-git
-  // workspace falls back to view mode since diff needs a base branch.
-  if (!selectedFile.value && !rootIsGit.value) {
-    rootIsGit.value = info.isGit
-    branches.value = info.branches
-    if (info.isGit) {
-      if (!branches.value.includes(base.value)) {
-        base.value = info.currentBranch || branches.value[0] || 'master'
-      }
-    } else if (view.value === 'diff') {
-      view.value = 'view'
-    }
+function rootFor(path: string): RootInfo | undefined {
+  let best: string | null = null
+  for (const p of Object.keys(props.rootInfo)) {
+    if (path.startsWith(p) && (best === null || p.length > best.length)) best = p
+  }
+  return best ? props.rootInfo[best] : undefined
+}
+
+// Apply the git state of the open file's workspace root. Called when the file
+// opens and again when root info arrives late (the sidebar tree may still be
+// loading when a file is clicked).
+function refreshGitState() {
+  if (!selectedFile.value) return
+  const info = rootFor(selectedFile.value.path)
+  if (!info) return
+  rootIsGit.value = info.isGit
+  branches.value = info.branches
+  if (rootIsGit.value && !branches.value.includes(base.value)) {
+    base.value = info.currentBranch || branches.value[0] || 'master'
+  }
+  if (!rootIsGit.value && view.value === 'diff') {
+    view.value = 'view'
   }
 }
 
-function rootFor(path: string): RootInfo | undefined {
-  let best: string | null = null
-  for (const p of Object.keys(rootInfo.value)) {
-    if (path.startsWith(p) && (best === null || p.length > best.length)) best = p
-  }
-  return best ? rootInfo.value[best] : undefined
-}
+watch(() => props.rootInfo, refreshGitState, { deep: true })
 
 async function openFile(f: OpenFilePayload) {
   if (view.value === 'edit' && dirty.value && !confirm('放弃未保存的修改？')) return
@@ -172,19 +173,11 @@ async function openFile(f: OpenFilePayload) {
     view.value = 'view'
     return
   }
-  const info = rootFor(f.path)
-  rootIsGit.value = info?.isGit ?? false
-  branches.value = info?.branches ?? []
-  let baseChanged = false
-  if (rootIsGit.value && !branches.value.includes(base.value)) {
-    base.value = info!.currentBranch || branches.value[0] || 'master'
-    baseChanged = true
-  }
   // Keep the current view mode across file switches; only fall back when the
   // new file cannot support it.
-  if (!rootIsGit.value && view.value === 'diff') {
-    view.value = 'view'
-  }
+  const prevBase = base.value
+  refreshGitState()
+  const baseChanged = base.value !== prevBase
   if (view.value === 'diff') {
     // Load the content too so switching to view/edit later shows it
     // instantly; when the base changed, the base watcher reloads the diff.
@@ -250,8 +243,7 @@ async function save() {
     view.value = 'view'
     savedTick.value = true
     setTimeout(() => { savedTick.value = false }, 2500)
-    const dir = dirname(selectedFile.value.path)
-    treeRef.value?.reloadDir(dir)
+    emit('file-saved', dirname(selectedFile.value.path))
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -268,28 +260,6 @@ function cancelEdit() {
 function dirname(path: string): string {
   const idx = path.lastIndexOf('/')
   return idx > 0 ? path.slice(0, idx) : path
-}
-
-// Drag the resizer to adjust the tree pane width (180-600 px).
-function startResize(e: MouseEvent) {
-  e.preventDefault()
-  resizing.value = true
-  const startX = e.clientX
-  const startW = treeWidth.value
-  const onMove = (ev: MouseEvent) => {
-    treeWidth.value = Math.min(600, Math.max(180, startW + ev.clientX - startX))
-  }
-  const onUp = () => {
-    resizing.value = false
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-  }
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
 }
 
 function tryClose() {
@@ -430,30 +400,10 @@ function tryClose() {
 }
 .fm-body {
   flex: 1;
-  display: flex;
   min-height: 0;
 }
-.fm-tree {
-  width: 300px;
-  min-width: 180px;
-  overflow: auto;
-  background: #252526;
-  padding: 8px 0;
-  flex-shrink: 0;
-}
-.fm-resizer {
-  width: 5px;
-  cursor: col-resize;
-  flex-shrink: 0;
-  background: transparent;
-  transition: background 0.1s;
-}
-.fm-resizer:hover,
-.fm-resizer.active {
-  background: #0e639c;
-}
 .fm-content {
-  flex: 1;
+  height: 100%;
   overflow: auto;
   background: #1e1e1e;
   min-width: 0;

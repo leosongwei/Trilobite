@@ -7,7 +7,7 @@
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
       <button @click="handleCreate">+ New Session</button>
     </div>
-    <div class="sessions">
+    <div class="sessions" :style="{ height: sessionsHeight + 'px' }">
       <template v-for="s in sessionTree" :key="s.id">
         <div
           class="session-item"
@@ -36,57 +36,75 @@
         </div>
       </template>
     </div>
-    <div v-if="state.currentSession" class="session-info">
-      <div class="info-row">
-        <span class="info-label">Session:</span>
-        <template v-if="editingName">
-          <input
-            v-model="editName"
-            class="info-edit"
-            type="text"
-            @keydown.enter="saveName"
-            @keydown.esc="cancelName"
-          />
-          <button class="icon-btn" title="Save" @click="saveName">&#10003;</button>
-          <button class="icon-btn" title="Cancel" @click="cancelName">&times;</button>
-        </template>
-        <template v-else>
-          <span class="info-value" :title="currentSessionName">{{ currentSessionName }}</span>
-          <button
-            v-if="!state.isSubagent"
-            class="icon-btn"
-            title="Rename session"
-            @click="startEditName"
-          >&#9998;</button>
-        </template>
-      </div>
-      <div class="info-row">
-        <span class="info-label">cwd:</span>
-        <span class="info-value" :title="currentSessionCwd">{{ currentSessionCwd }}</span>
-      </div>
-      <details>
-        <summary>Allowed directories ({{ state.additionalDirs.length }})</summary>
-        <div v-for="d in state.additionalDirs" :key="d" class="dir-item">
-          <span class="dir-path" :title="d">{{ d }}</span>
-          <span class="delete" @click="handleRemoveDir(d)">&times;</span>
+    <div class="sidebar-resizer" title="Drag to resize" @mousedown="startResize"></div>
+    <div class="sidebar-bottom">
+      <div v-if="state.currentSession" class="session-info">
+        <div class="info-row">
+          <span class="info-label">Session:</span>
+          <template v-if="editingName">
+            <input
+              v-model="editName"
+              class="info-edit"
+              type="text"
+              @keydown.enter="saveName"
+              @keydown.esc="cancelName"
+            />
+            <button class="icon-btn" title="Save" @click="saveName">&#10003;</button>
+            <button class="icon-btn" title="Cancel" @click="cancelName">&times;</button>
+          </template>
+          <template v-else>
+            <span class="info-value" :title="currentSessionName">{{ currentSessionName }}</span>
+            <button
+              v-if="!state.isSubagent"
+              class="icon-btn"
+              title="Rename session"
+              @click="startEditName"
+            >&#9998;</button>
+          </template>
         </div>
-        <div class="dir-add">
-          <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
-          <button @click="handleAddDir">+</button>
+        <div class="info-row">
+          <span class="info-label">cwd:</span>
+          <span class="info-value" :title="currentSessionCwd">{{ currentSessionCwd }}</span>
         </div>
-      </details>
-      <button v-if="!state.isSubagent" class="open-files-btn" @click="emit('open-files')">Open Session Directory</button>
+        <details>
+          <summary>Allowed directories ({{ state.additionalDirs.length }})</summary>
+          <div v-for="d in state.additionalDirs" :key="d" class="dir-item">
+            <span class="dir-path" :title="d">{{ d }}</span>
+            <span class="delete" @click="handleRemoveDir(d)">&times;</span>
+          </div>
+          <div class="dir-add">
+            <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
+            <button @click="handleAddDir">+</button>
+          </div>
+        </details>
+      </div>
+      <div v-if="!state.isSubagent && state.currentSession" class="sidebar-tree">
+        <div class="sidebar-tree-title">Session files</div>
+        <FileTree
+          ref="treeRef"
+          :session-id="state.currentSession"
+          :roots="fsRoots"
+          @open-file="(f) => emit('open-file', f)"
+          @root-info="(info) => emit('root-info', info)"
+        />
+      </div>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useStore } from '../store'
 import { getCwd, getVersion } from '../api'
 import type { Session } from '../types'
+import FileTree from './FileTree.vue'
+import type { FsRoot } from './FileTree.vue'
 
-const emit = defineEmits<{ select: []; 'open-files': [] }>()
+const emit = defineEmits<{
+  select: []
+  'open-file': [file: { path: string; name: string; status?: string }]
+  'root-info': [info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }]
+}>()
 
 const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession } = useStore()
 const name = ref('')
@@ -95,6 +113,8 @@ const newDir = ref('')
 const version = ref('')
 const editingName = ref(false)
 const editName = ref('')
+const sessionsHeight = ref(300)
+const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
 
 const currentSessionObj = computed(() =>
   state.sessions.find((s) => s.id === state.currentSession),
@@ -104,6 +124,55 @@ const currentSessionName = computed(() => {
   return currentSessionObj.value?.name ?? state.currentSession ?? ''
 })
 const currentSessionCwd = computed(() => currentSessionObj.value?.working_dir ?? '')
+
+// File tree roots: the session's working dir plus the authorized dirs. The
+// key is a joined string so the tree only rebuilds when they actually change
+// (the sessions list itself is polled every 3 s).
+const rootsKey = computed(() => {
+  const cur = currentSessionObj.value
+  return cur ? [cur.working_dir, ...state.additionalDirs].join('\n') : ''
+})
+const fsRoots = ref<FsRoot[]>([])
+watch(rootsKey, (key) => {
+  if (!key) {
+    fsRoots.value = []
+    return
+  }
+  const parts = key.split('\n')
+  fsRoots.value = parts.map((p) => ({ path: p, name: basename(p) }))
+}, { immediate: true })
+
+function basename(p: string): string {
+  const parts = p.split('/').filter(Boolean)
+  return parts[parts.length - 1] || p
+}
+
+// Drag the divider between the session list and the bottom panel.
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const startY = e.clientY
+  const startH = sessionsHeight.value
+  const onMove = (ev: MouseEvent) => {
+    sessionsHeight.value = Math.min(600, Math.max(100, startH + (ev.clientY - startY)))
+  }
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.body.style.cursor = 'row-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+// Refresh the tree after the file manager saves a file.
+function reloadTreeDir(path: string) {
+  treeRef.value?.reloadDir(path)
+}
+
+defineExpose({ reloadTreeDir })
 
 interface SessionNode extends Session {
   children: Session[]
