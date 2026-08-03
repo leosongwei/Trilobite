@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import importlib.metadata
 import json
 import re
 import secrets
@@ -17,6 +16,7 @@ from src.trilobite.agent import Agent
 from src.trilobite.config import init_config, get_config_dir, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
+from src.trilobite.version import get_version as get_pkg_version
 
 app = FastAPI(title="Trilobite")
 
@@ -130,11 +130,7 @@ async def get_cwd():
 
 @app.get("/api/version")
 async def get_version():
-    try:
-        version = importlib.metadata.version("trilobite-code")
-    except importlib.metadata.PackageNotFoundError:
-        version = "unknown"
-    return {"version": version}
+    return {"version": get_pkg_version()}
 
 
 @app.get("/api/config")
@@ -535,8 +531,10 @@ def main():
     cfg = init_config()
     token = ensure_auth_token()
     token_path = get_config_dir() / "token"
+    print(f"Trilobite {get_pkg_version()}")
     print(f"Trilobite web UI: http://127.0.0.1:2345/?token={token}")
-    print(f"Access key saved to {token_path} (also printed above in the link)")
+    print(f"Access key: {token}")
+    print(f"Access key saved to {token_path}")
     uvicorn.run(
         app,
         host="0.0.0.0",
