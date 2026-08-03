@@ -185,10 +185,11 @@ function reloadTreeDir(path: string) {
 
 defineExpose({ reloadTreeDir })
 
-// The agent's stream events (new turns, tool completions, subagent updates,
-// run ends) bump fsRefreshTick; reload the tree so files the agent created or
-// modified show up without waiting for the session poll. Debounced so a burst
-// of tool completions collapses into a single reload.
+// Tool completions (and subagent updates / run ends) bump fsRefreshTick;
+// reload the tree so files the agent created or modified show up without
+// waiting for the session poll. Debounced so a burst of tool completions
+// collapses into a single reload. New assistant turns alone do not trigger a
+// reload - they change no files.
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 watch(
   () => state.fsRefreshTick,

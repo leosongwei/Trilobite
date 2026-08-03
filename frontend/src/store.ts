@@ -11,9 +11,9 @@ interface State {
   maxTokens: number
   statusText: string | null
   streamTick: number
-  // Bumped when new chat content appears (new turn, tool completion, subagent
-  // state change, run end). The sidebar "Session files" tree watches it to
-  // reload so files the agent created/modified show up promptly.
+  // Bumped when a tool call returns (or a subagent state change / run end -
+  // the moments files can actually change). The sidebar "Session files" tree
+  // watches it to reload so files the agent created/modified show up promptly.
   fsRefreshTick: number
   planMode: boolean
   additionalDirs: string[]
@@ -169,7 +169,6 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'turn':
       state.isStreaming = true
-      state.fsRefreshTick++
       newTurn()
       break
 
