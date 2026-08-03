@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 _SENSITIVE_BASES = ("id_rsa", "id_ed25519", "id_ecdsa", "credentials")
 _SENSITIVE_SUFFIXES = (
@@ -10,6 +11,48 @@ _SENSITIVE_SUFFIXES = (
 _SENSITIVE_SEPARATORS = ("", "-", "_", ".")
 _EXEMPT_NAMES = {".env.example", ".env.sample", ".env.template"}
 _SENSITIVE_PATH_SUFFIXES = (".aws/credentials", ".gcp/credentials")
+
+#: Line-ending style of a text file, used when editing/saving content.
+LineEndingStyle = Literal["lf", "crlf", "mixed"]
+
+
+def detect_line_ending(text: str) -> LineEndingStyle:
+    """Classify line endings: pure CRLF, pure LF, or mixed (lone CR / both)."""
+    has_crlf = False
+    has_lf = False
+    has_lone_cr = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "\r":
+            if i + 1 < n and text[i + 1] == "\n":
+                has_crlf = True
+                i += 2
+                continue
+            has_lone_cr = True
+        elif c == "\n":
+            has_lf = True
+        i += 1
+    if has_lone_cr or (has_crlf and has_lf):
+        return "mixed"
+    if has_crlf:
+        return "crlf"
+    return "lf"
+
+
+def to_model_view(text: str, style: LineEndingStyle) -> str:
+    """Normalize a pure-CRLF text to LF for matching; leave others as-is."""
+    if style == "crlf":
+        return text.replace("\r\n", "\n")
+    return text
+
+
+def materialize(text: str, style: LineEndingStyle) -> str:
+    """Restore the original line-ending style after editing the LF view."""
+    if style == "crlf":
+        return text.replace("\r\n", "\n").replace("\n", "\r\n")
+    return text
 
 
 def is_sensitive_file(path: Path) -> bool:

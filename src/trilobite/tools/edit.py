@@ -1,13 +1,11 @@
 import difflib
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from src.trilobite.file_access import resolve_file_path
+from src.trilobite.file_access import detect_line_ending, materialize, resolve_file_path, to_model_view
 from src.trilobite.tools.tool import Tool
 
 _CONTEXT_LINES = 6
-
-LineEndingStyle = Literal["lf", "crlf", "mixed"]
 
 
 class EditTool(Tool):
@@ -68,14 +66,14 @@ class EditTool(Tool):
             return "Error: old_string and new_string are identical - nothing to change."
 
         raw = filepath.read_bytes().decode("utf-8", errors="replace")
-        style = _detect_line_ending(raw)
+        style = detect_line_ending(raw)
         # Match on a normalized LF "model view" so a pure-CRLF file can be
         # edited with an LF old_string (the read tool already shows LF). The
         # search/replace strings are normalized the same way to stay
         # consistent with that view.
-        content = _to_model_view(raw, style)
-        old_view = _to_model_view(old_string, style)
-        new_view = _to_model_view(new_string, style)
+        content = to_model_view(raw, style)
+        old_view = to_model_view(old_string, style)
+        new_view = to_model_view(new_string, style)
 
         count = content.count(old_view)
         if count == 0:
@@ -98,52 +96,13 @@ class EditTool(Tool):
 
         # Write bytes to preserve the original line endings verbatim
         # (read_text/write_text default to universal-newline translation).
-        filepath.write_bytes(_materialize(new_content, style).encode("utf-8"))
+        filepath.write_bytes(materialize(new_content, style).encode("utf-8"))
 
         diff_rows = _build_diff_rows(content, new_content, old_view)
         return {
             "result": f"File updated: {filename}",
             "diff": diff_rows,
         }
-
-
-def _detect_line_ending(text: str) -> LineEndingStyle:
-    """Classify line endings: pure CRLF, pure LF, or mixed (lone CR / both)."""
-    has_crlf = False
-    has_lf = False
-    has_lone_cr = False
-    i = 0
-    n = len(text)
-    while i < n:
-        c = text[i]
-        if c == "\r":
-            if i + 1 < n and text[i + 1] == "\n":
-                has_crlf = True
-                i += 2
-                continue
-            has_lone_cr = True
-        elif c == "\n":
-            has_lf = True
-        i += 1
-    if has_lone_cr or (has_crlf and has_lf):
-        return "mixed"
-    if has_crlf:
-        return "crlf"
-    return "lf"
-
-
-def _to_model_view(text: str, style: LineEndingStyle) -> str:
-    """Normalize a pure-CRLF text to LF for matching; leave others as-is."""
-    if style == "crlf":
-        return text.replace("\r\n", "\n")
-    return text
-
-
-def _materialize(text: str, style: LineEndingStyle) -> str:
-    """Restore the original line-ending style after editing the LF view."""
-    if style == "crlf":
-        return text.replace("\r\n", "\n").replace("\n", "\r\n")
-    return text
 
 
 def _build_diff_rows(old_content: str, new_content: str, old_str: str) -> list[dict[str, Any]]:

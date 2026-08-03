@@ -1,4 +1,4 @@
-import type { Session, SessionInfo, HistoryMessage, SSEEvent } from './types'
+import type { Session, SessionInfo, HistoryMessage, SSEEvent, DiffRow } from './types'
 
 export interface ImageAttachment {
   mime_type: string
@@ -203,4 +203,63 @@ export async function* subscribeStream(
       }
     }
   }
+}
+
+// ── file manager ────────────────────────────────────────────────────────────
+
+export interface FsEntry {
+  name: string
+  is_dir: boolean
+  size?: number
+  mtime?: number
+  status?: string
+}
+
+export interface FsListing {
+  path: string
+  name: string
+  is_git_repo: boolean
+  current_branch: string
+  branches: string[]
+  entries: FsEntry[]
+  truncated: boolean
+}
+
+export interface FsDiff {
+  rows: DiffRow[]
+  base: string
+  untracked: boolean
+}
+
+async function fsRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await authFetch(url, init)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Request failed')
+  }
+  return res.json()
+}
+
+export function getFileList(id: string, path: string, base?: string | null): Promise<FsListing> {
+  const params = new URLSearchParams({ path })
+  if (base) params.set('base', base)
+  return fsRequest(`/api/sessions/${encode(id)}/fs/list?${params}`)
+}
+
+export function getFileContent(id: string, path: string): Promise<{ path: string; content: string }> {
+  return fsRequest(`/api/sessions/${encode(id)}/fs/file?path=${encodeURIComponent(path)}`)
+}
+
+export function getFileDiff(id: string, path: string, base: string): Promise<FsDiff> {
+  return fsRequest(
+    `/api/sessions/${encode(id)}/fs/diff?path=${encodeURIComponent(path)}&base=${encodeURIComponent(base)}`,
+  )
+}
+
+export function saveFile(id: string, path: string, content: string): Promise<{ ok: boolean }> {
+  return fsRequest(`/api/sessions/${encode(id)}/fs/file`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, content }),
+  })
 }

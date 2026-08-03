@@ -16,50 +16,87 @@
   </div>
   <div v-else class="app" :class="{ 'sidebar-open': sidebarOpen }">
     <div class="sidebar-backdrop" @click="sidebarOpen = false"></div>
-    <SessionSidebar @select="sidebarOpen = false" />
+    <SessionSidebar
+      ref="sidebarRef"
+      :base="diffBase"
+      @select="sidebarOpen = false"
+      @open-file="handleOpenFile"
+      @root-info="(info) => { rootInfoMap[info.path] = info }"
+    />
     <main class="main">
       <button class="menu-toggle" @click="sidebarOpen = true">&#9776;</button>
-      <div v-if="state.isSubagent" class="subagent-bar">
-        <button class="back-btn" @click="goParent">&larr; parent</button>
-        <span class="subagent-tag" :class="state.subagentType">{{ state.subagentType }}</span>
-        <span class="subagent-title">{{ state.subagentDescription || state.currentSession }}</span>
-        <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>
-      </div>
-      <ChatView />
-      <template v-if="state.currentSession">
-        <div v-if="state.planExitRequest" class="plan-exit-banner">
-          <span>Agent requests to switch to Build mode</span>
-          <button class="approve" @click="approvePlanExit">Approve</button>
-          <button class="reject" @click="rejectPlanExit">Reject</button>
+      <FileManager
+        v-if="showFiles && state.currentSession"
+        :session-id="state.currentSession"
+        :file="openedFile"
+        :root-info="rootInfoMap"
+        :base="diffBase"
+        @close="showFiles = false"
+        @file-saved="(dir) => sidebarRef?.reloadTreeDir(dir)"
+        @update:base="(b) => { diffBase = b }"
+      />
+      <template v-else>
+        <div v-if="state.isSubagent" class="subagent-bar">
+          <button class="back-btn" @click="goParent">&larr; parent</button>
+          <span class="subagent-tag" :class="state.subagentType">{{ state.subagentType }}</span>
+          <span class="subagent-title">{{ state.subagentDescription || state.currentSession }}</span>
+          <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>
         </div>
-        <div v-if="state.permissionRequest" class="plan-exit-banner">
-          <span>Agent needs access to: {{ state.permissionRequest.path }}</span>
-          <button class="approve" @click="approvePermission">Grant</button>
-          <button class="reject" @click="rejectPermission">Deny</button>
-        </div>
-        <div v-if="state.subagentPermissionRequest" class="plan-exit-banner">
-          <span>Subagent [{{ state.subagentPermissionRequest.childType }}: {{ state.subagentPermissionRequest.childDescription }}] needs access to: {{ state.subagentPermissionRequest.path }}</span>
-          <button class="approve" @click="approveSubagentPermission">Grant</button>
-          <button class="reject" @click="rejectSubagentPermission">Deny</button>
-        </div>
-        <ChatInput />
-        <TokenBar />
+        <ChatView />
+        <template v-if="state.currentSession">
+          <div v-if="state.planExitRequest" class="plan-exit-banner">
+            <span>Agent requests to switch to Build mode</span>
+            <button class="approve" @click="approvePlanExit">Approve</button>
+            <button class="reject" @click="rejectPlanExit">Reject</button>
+          </div>
+          <div v-if="state.permissionRequest" class="plan-exit-banner">
+            <span>Agent needs access to: {{ state.permissionRequest.path }}</span>
+            <button class="approve" @click="approvePermission">Grant</button>
+            <button class="reject" @click="rejectPermission">Deny</button>
+          </div>
+          <div v-if="state.subagentPermissionRequest" class="plan-exit-banner">
+            <span>Subagent [{{ state.subagentPermissionRequest.childType }}: {{ state.subagentPermissionRequest.childDescription }}] needs access to: {{ state.subagentPermissionRequest.path }}</span>
+            <button class="approve" @click="approveSubagentPermission">Grant</button>
+            <button class="reject" @click="rejectSubagentPermission">Deny</button>
+          </div>
+          <ChatInput />
+          <TokenBar />
+        </template>
       </template>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useStore } from './store'
 import * as api from './api'
 import SessionSidebar from './components/SessionSidebar.vue'
 import ChatView from './components/ChatView.vue'
 import ChatInput from './components/ChatInput.vue'
 import TokenBar from './components/TokenBar.vue'
+import FileManager from './components/FileManager.vue'
+import type { RootInfo } from './components/FileManager.vue'
+import type { OpenFilePayload } from './components/FileTree.vue'
 
 const { state, loadSessions, setMode, approvePlanExit, rejectPlanExit, approvePermission, rejectPermission, approveSubagentPermission, rejectSubagentPermission, selectSession } = useStore()
 const sidebarOpen = ref(false)
+const showFiles = ref(false)
+const sidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
+const openedFile = ref<OpenFilePayload | null>(null)
+// Diff base branch, shared by the sidebar tree (change highlighting) and the
+// file manager (diff view + branch selector).
+const diffBase = ref('master')
+// Git info per workspace root, collected from the sidebar tree's root-info
+// events; the file manager needs it for the diff branch selector.
+const rootInfoMap = reactive<Record<string, RootInfo>>({})
+
+// Clicking a file in the sidebar tree opens it in the file manager view.
+function handleOpenFile(f: OpenFilePayload) {
+  openedFile.value = f
+  showFiles.value = true
+  sidebarOpen.value = false
+}
 
 // Access-key gate: 'checking' while probing the server, 'required' shows the
 // key dialog, 'ok' renders the app.
@@ -79,6 +116,10 @@ function goParent() {
 
 watch(() => state.currentSession, () => {
   sidebarOpen.value = false
+  showFiles.value = false
+  openedFile.value = null
+  diffBase.value = 'master'
+  for (const k of Object.keys(rootInfoMap)) delete rootInfoMap[k]
 })
 
 function handleKeydown(e: KeyboardEvent) {
