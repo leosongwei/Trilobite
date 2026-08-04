@@ -63,6 +63,7 @@ export interface Session {
   description?: string
   sealed?: boolean
   created_at?: number
+  updated_at?: number
 }
 
 export interface SessionInfo {

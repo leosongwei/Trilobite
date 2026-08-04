@@ -176,6 +176,14 @@ async def list_sessions():
                     info["history_length"] = len(agent.history) if agent else 0
                     info["plan_mode"] = agent._plan_mode if agent else info.get("plan_mode", False)
                     info["sealed"] = agent.is_sealed() if agent else bool(info.get("subagent_type"))
+                    # Last activity: history.json mtime (written at the end of
+                    # each run); never-messaged sessions fall back to created_at.
+                    hist = sd / "history.json"
+                    try:
+                        ts = hist.stat().st_mtime if hist.is_file() else None
+                    except OSError:
+                        ts = None
+                    info["updated_at"] = ts or info.get("created_at") or 0
                     result.append(info)
                 except Exception:
                     pass
