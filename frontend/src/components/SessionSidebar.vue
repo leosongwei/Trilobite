@@ -218,6 +218,9 @@ const sessionTree = computed<SessionNode[]>(() => {
   }
   return all
     .filter((s) => !s.parent_session)
+    // Newest sessions on top: descending by created_at, with missing
+    // timestamps (legacy sessions) pushed to the bottom.
+    .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))
     .map((s) => ({
       ...s,
       children: (childrenByParent.get(s.id) ?? []).slice().sort((a, b) => {
