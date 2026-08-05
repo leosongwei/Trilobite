@@ -19,11 +19,13 @@
     <SessionSidebar
       ref="sidebarRef"
       :base="diffBase"
+      :sidebar-width="sidebarWidth"
       :requests-tick="requestsTick"
       @select="sidebarOpen = false"
       @open-file="handleOpenFile"
       @root-info="(info) => { rootInfoMap[info.path] = info }"
     />
+    <div class="sidebar-width-resizer" title="Drag to resize" @mousedown="startWidthResize"></div>
     <main class="main">
       <button class="menu-toggle" @click="sidebarOpen = true">&#9776;</button>
       <FileManager
@@ -78,6 +80,9 @@ import { findSessionRoot } from './utils/sessions'
 
 const { state, loadSessions, setMode, approveRequest, rejectRequest, selectSession } = useStore()
 const sidebarOpen = ref(false)
+// Sidebar width, draggable on desktop and persisted across reloads. On mobile
+// the CSS overrides the width (drawer) and the resizer is hidden.
+const sidebarWidth = ref(Number(localStorage.getItem('trilobite.sidebarWidth')) || 260)
 const showFiles = ref(false)
 const sidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 const openedFile = ref<OpenFilePayload | null>(null)
@@ -140,6 +145,32 @@ function handleOpenFile(f: OpenFilePayload) {
   openedFile.value = f
   showFiles.value = true
   sidebarOpen.value = false
+}
+
+// Drag the divider between the sidebar and the chat to resize the sidebar
+// width. Clamped to keep the chat usable (min 200 px) and the sidebar under
+// half the viewport.
+function startWidthResize(e: MouseEvent) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startW = sidebarWidth.value
+  const onMove = (ev: MouseEvent) => {
+    sidebarWidth.value = Math.min(
+      Math.max(startW + (ev.clientX - startX), 200),
+      Math.round(window.innerWidth * 0.4),
+    )
+  }
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    localStorage.setItem('trilobite.sidebarWidth', String(sidebarWidth.value))
+  }
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
 }
 
 // Access-key gate: 'checking' while probing the server, 'required' shows the

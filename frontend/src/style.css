@@ -27,13 +27,25 @@ body {
 
 /* ── Sidebar ── */
 .sidebar {
-  width: 260px;
+  width: var(--sidebar-width, 260px);
   background: #252526;
   border-right: 1px solid #3c3c3c;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+
+/* Vertical divider between the sidebar and the chat: drag to resize the
+   sidebar width (desktop only; hidden on mobile where the sidebar is a
+   drawer). */
+.sidebar-width-resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.1s;
+}
+.sidebar-width-resizer:hover { background: #0e639c; }
 .sidebar-header {
   padding: 16px;
   border-bottom: 1px solid #3c3c3c;
@@ -713,9 +725,11 @@ button[title="Stop"]:not(:disabled):hover { background: #d73a3a; }
     top: 0;
     bottom: 0;
     z-index: 10;
+    width: min(280px, 85vw);
     transform: translateX(-100%);
     transition: transform 0.2s;
   }
+  .sidebar-width-resizer { display: none; }
 
   .app.sidebar-open .sidebar { transform: translateX(0); }
   .app.sidebar-open .sidebar-backdrop { opacity: 1; pointer-events: auto; }
