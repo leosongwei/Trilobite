@@ -37,7 +37,7 @@ per-session 事件总线，维护：
 ### 端点 (`src/trilobite/server.py`)
 
 * `POST /api/sessions/{id}/message`：running 则 steer 返回 `{status:"steered"}`，否则 start 返回 `{status:"started"}`。**不返回流**。
-* `GET /api/sessions/{id}/stream`：SSE 订阅。连接时发 `init`，随后持续推送事件，空闲时发 `: keepalive` 心跳；`done/cancelled/error` 后保持连接以等待下一个 run。响应带 `Cache-Control: no-store`（所有 `/api/*` 响应均禁止缓存——没有该头时浏览器可能对 GET 响应做启发式缓存，中断的流会被当成完整响应缓存，导致后续流连接被损坏的缓存条目卡住）。
+* `GET /api/sessions/{id}/stream`：SSE 订阅。连接时发 `init`，随后持续推送事件，空闲时发 `: keepalive` 心跳；`done/cancelled/error` 后保持连接以等待下一个 run。响应带 `Cache-Control: no-store`（所有 `/api/*` 响应均禁止缓存，避免浏览器启发式缓存中断的流）。
 
 ## SSE 事件协议
 
@@ -78,6 +78,7 @@ per-session 事件总线，维护：
 * `sendMessage` 只 POST，不处理流。
 * `revert(userSeq, message)`：编辑历史用户消息并重发。返回 `rerun` 则重连 SSE 重建对话；返回 `queued` 则由 `user_edit` 事件就地更新气泡，不重连（详见 [history.md](./history.md)）。
 * 网络断开自动重连（1s 退避）；切换 session 主动 abort 旧连接。
+* 每个流连接使用**不同的 URL**（`/stream?_t=<随机值>`）：Firefox 对同一 URL 的在途 GET 做 single-flight 合并——第二个请求会等第一个响应结束（SSE 永不结束，于是第二个 tab 打开同一 session 时 `/stream` 在浏览器缓存层无限排队，表现为"加载不出来"）。随机 query 让每个连接走独立的缓存槽，多开/重连互不阻塞。
 
 ### 自适应加载（`ChatView.vue`）
 

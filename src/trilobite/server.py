@@ -72,8 +72,10 @@ async def auth_middleware(request: Request, call_next):
     response = await call_next(request)
     if path.startswith("/api/"):
         # API 响应（尤其 SSE 流）一律禁止缓存：没有 Cache-Control 时浏览器
-        # 可以对 GET 响应做启发式缓存，中断的流会被当成完整响应缓存，后续
-        # 的流连接被损坏的缓存条目卡住（多开客户端时第二个 tab 加载不出来）。
+        # 可能对 GET 响应做启发式缓存/重验证。"多开时第二个 tab 卡住"的
+        # 根因是 Firefox 对同 URL 在途 GET 的 single-flight 合并，由前端
+        # 随机 query 参数绕过（见 api.ts）；no-store 负责其余情况（如中断
+        # 的流不被缓存）。
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -380,7 +382,8 @@ async def stream_session(name: str, request: Request):
         event_stream(),
         media_type="text/event-stream",
         # SSE 响应必须禁止一切缓存：没有 Cache-Control 时浏览器可能对 GET
-        # 响应做启发式缓存/重验证，导致后续 tab 的流连接被缓存层拦下。
+        # 响应做启发式缓存/重验证。多开时"第二个 tab 卡住"的根因（Firefox
+        # 对同 URL 在途 GET 的 single-flight 合并）由前端随机 query 绕过。
         headers={"Cache-Control": "no-store"},
     )
 

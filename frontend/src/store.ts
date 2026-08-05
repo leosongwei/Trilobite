@@ -535,11 +535,10 @@ function disconnectStream() {
   streamAbort = null
 }
 
-// 后台 tab 不占用 SSE 连接。浏览器对每个主机（HTTP/1.1）最多开 6 条并发
-// 连接，多个 tab 各持一条长期 SSE 后连接池被占满，新 tab 打开 session 的
-// /stream 请求会在浏览器里无限排队（表现为"加载不出来"，关掉一个 tab 才
-// 突然加载）。tab 切到后台时断开流、释放连接；切回前台立即重连，init +
-// 回放本来就会重建完整状态，不丢内容。
+// 后台 tab 不占用 SSE 连接。切到后台时断开流、释放连接；切回前台立即
+// 重连，init + 回放本来就会重建完整状态，不丢内容。多开时同一 session
+// 的同 URL 并发 GET 会在 Firefox 缓存层被 single-flight 合并（见
+// api.ts 的随机 query 参数），少一个挂着的连接就少一分被合并等待的风险。
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && streamAbort) {
     streamLog('tab hidden, dropping stream')
