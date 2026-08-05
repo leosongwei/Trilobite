@@ -49,7 +49,7 @@ frontmatter 缺失时整个文件当作正文；无可用 name 的 skill 被跳�
 
 ## 内置 skills
 
-内置 `create-skill`（教模型如何创建/修改 skill：格式、frontmatter 字段、两种文件形态、放置位置、命名与验证），保证任何会话至少有一个可用 skill。内置 skill 优先级最低：磁盘上出现同名 skill 时覆盖内置版本（用户可自定义 create-skill 的行为）。内置 skill 没有磁盘文件，加载时 `skill` 工具会注明 "built-in"。
+内置 `create-skill`（教模型如何创建/修改 skill：格式、frontmatter 字段、两种文件形态、放置位置、命名与验证），保证任何会话至少有一个可用 skill。内置 skill 的源码是包内 `src/trilobite/builtin_skills/` 下的标准 `SKILL.md` 文件（与磁盘 skill 同格式、同一解析路径），随包分发（MANIFEST.in）。内置 skill 优先级最低：磁盘上出现同名 skill 时覆盖内置版本（用户可自定义 create-skill 的行为）。内置 skill 没有可读磁盘文件，加载时 `skill` 工具会注明 "built-in"。
 
 ## 暴露方式
 
@@ -93,5 +93,5 @@ Relative paths in this skill (e.g. scripts/, reference/) are relative to this ba
 
 * 清单注入 system prompt 而非工具描述：工具 description 有长度上限，且清单与 env 块/AGENTS.md 一样随会话固化，保持 API 前缀稳定、上下文缓存持续命中
 * 不自动加载正文：模型只在任务匹配时调用 `skill` 工具，避免无关 skill 占满上下文
-* 内置 skill 用代码常量而非磁盘文件：与提示词同语义（行为随代码版本化），用户仍可用同名磁盘 skill 覆盖
+* 内置 skill 以包内 `builtin_skills/` 的 SKILL.md 源码形式存在（与提示词同语义：行为随代码版本化），用户仍可用同名磁盘 skill 覆盖
 * 不支持 sub-skill（`parent.child` 嵌套）与 URL 形式 skill；`skill_dirs` 覆盖本地目录场景

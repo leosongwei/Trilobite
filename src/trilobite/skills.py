@@ -8,7 +8,8 @@ frontmatter. The frontmatter carries the skill's ``name`` (required) and
 Discovery scans, in priority order (first match wins on name conflicts):
 
 1. builtin skills (``create-skill``; lowest priority, any on-disk skill
-   with the same name overrides them)
+   with the same name overrides them). Their sources live in the package's
+   ``builtin_skills/`` directory as ordinary ``<name>/SKILL.md`` files.
 2. ``.agents`` roots -- the cross-tool shared directory (highest disk
    priority): ``<working_dir>/.agents/skills``, ``~/.agents/skills``
 3. trilobite roots: ``<working_dir>/.trilobite/skills``,
@@ -70,82 +71,6 @@ class Skill:
         """Directory the skill lives in; relative paths in the body are
         relative to this directory. Builtin skills have no real directory."""
         return self.path.parent
-
-
-CREATE_SKILL_CONTENT = """# Create Skill
-
-Use this skill when the user asks you to create, edit, or explain a skill
-for this coding agent, or when you notice a repeatable workflow that would
-benefit from being packaged as a skill.
-
-## Skill format
-
-A skill is a markdown file with YAML frontmatter (the cross-tool "Agent
-Skills" convention):
-
----
-name: skill-name
-description: One-line summary of when to use this skill.
----
-
-# Skill Name
-
-Instructions the agent follows when this skill is loaded...
-
-- The frontmatter `name` is required: kebab-case, matching the file or
-  directory name. The `description` is optional; when missing, the first
-  non-empty line of the body is used (truncated at 240 chars). The body is
-  loaded verbatim when the skill tool is called.
-
-## Two file forms
-
-- Directory form (recommended): `<name>/SKILL.md` -- put helper scripts and
-  reference files next to the skill; relative paths in the body are
-  relative to the skill's directory.
-- Flat form: `<name>.md` -- a single-file skill.
-
-## Where to put it
-
-- Project-level: `.agents/skills/` (highest priority, shared with other
-  agents) or `.trilobite/skills/` in the working directory -- skills that
-  belong to this project, committed with the repo.
-- User-level: `~/.agents/skills/` (highest priority) or
-  `~/.config/trilobite/skills/` -- personal skills used across projects.
-- Extra directory listed in `skill_dirs` in config.yaml -- shared team
-  skills (relative paths resolve against the working directory, `~` is
-  expanded).
-
-Directories of other tools are also scanned, in this priority order:
-`.agents` > trilobite > opencode (`.opencode/{skill,skills}`) > kimi
-(`.kimi-code/skills`) > claude (`.claude/skills`). A skill with the same
-name in a higher-priority directory wins.
-
-## When to create a skill
-
-- The task has a fixed multi-step procedure with a checklist (code review,
-  release, migration, ...).
-- Domain knowledge the agent keeps re-deriving.
-- Keep skills focused: one procedure per skill; do not bloat a skill with
-  unrelated instructions.
-
-## After creating
-
-- The <available_skills> listing in the system prompt is fixed at session
-  start; a newly created skill appears in it only in a new session (or
-  after the agent restarts). Tell the user this.
-- Validate the file you wrote: read it back and confirm the frontmatter
-  has a valid `name` and the body is complete.
-"""
-
-BUILTIN_SKILLS: list[Skill] = [
-    Skill(
-        name="create-skill",
-        description="Create a new skill (SKILL.md + frontmatter) for this agent, or edit an existing one.",
-        path=_BUILTIN_ROOT / "create-skill" / "SKILL.md",
-        content=CREATE_SKILL_CONTENT,
-        builtin=True,
-    ),
-]
 
 
 def skill_roots(working_dir: Path, extra_dirs: list[str] | None = None) -> list[Path]:
@@ -225,6 +150,37 @@ def parse_skill(path: Path, fallback_name: str | None = None) -> Skill | None:
         first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         description = first.lstrip("# ").strip()
     return Skill(name=name.strip(), description=description[: _DESC_MAX], path=path, content=body)
+
+
+#: source directory of builtin skills (shipped inside the package); each is a
+#: standard ``<name>/SKILL.md`` parsed with :func:`parse_skill`
+_BUILTIN_SRC_DIR = Path(__file__).parent / "builtin_skills"
+
+
+def _load_builtin_skills() -> list[Skill]:
+    """Load builtin skills from ``builtin_skills/`` next to this module.
+
+    Builtin skills are ordinary SKILL.md files shipped with the package, so
+    they are parsed by the same code path as disk skills. Their ``path`` is
+    replaced with a ``<builtin>`` marker (there is no readable file on disk)
+    and :attr:`Skill.builtin` is set so the listing can annotate them and
+    disk skills of the same name can override them.
+    """
+    skills: list[Skill] = []
+    if not _BUILTIN_SRC_DIR.is_dir():
+        return skills
+    for entry in sorted(_BUILTIN_SRC_DIR.iterdir(), key=lambda p: p.name.lower()):
+        md = entry / "SKILL.md"
+        if entry.is_dir() and md.is_file():
+            skill = parse_skill(md, fallback_name=entry.name)
+            if skill is not None:
+                skill.path = _BUILTIN_ROOT / entry.name / "SKILL.md"
+                skill.builtin = True
+                skills.append(skill)
+    return skills
+
+
+BUILTIN_SKILLS: list[Skill] = _load_builtin_skills()
 
 
 def discover_skills(working_dir: Path, extra_dirs: list[str] | None = None) -> list[Skill]:
