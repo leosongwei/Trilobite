@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useStore } from '../store'
 import TurnBlock from './TurnBlock.vue'
 import UserMessage from './UserMessage.vue'
@@ -315,4 +315,12 @@ watch(
     }
   },
 )
+
+// 组件可能以非空 chatItems 重新挂载（打开文件管理器时 v-if 卸载对话区，
+// 关闭后重建 ChatView），此时 chatItems 不再变化、上面的 watch 不会触发，
+// 窗口停留在 0,0 导致对话空白——挂载时初始化窗口并对齐底部。
+onMounted(() => {
+  resetWindow()
+  nextTick(() => { scrollToBottom(); void fillViewport() })
+})
 </script>
