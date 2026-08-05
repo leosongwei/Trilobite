@@ -28,6 +28,7 @@ from src.trilobite.messages import (
 )
 from src.trilobite.prompts import IMAGE_READ_PROMPT, SYSTEM_PROMPT, subagent_system_prompt
 from src.trilobite.permission import AgentPermission, BuildModePermission, ExploreSubagentPermission, GeneralSubagentPermission, PlanModePermission
+from src.trilobite.skills import discover_skills, format_skill_listing
 from src.trilobite.tools.bash import kill_process_group, truncate_output
 from src.trilobite.tool_call import execute_tool
 
@@ -257,6 +258,15 @@ class Agent:
         self.system_prompt = self._build_env_block() + "\n\n" + self.system_prompt
         if self.config.get("enable_vl", False):
             self.system_prompt += "\n\n" + IMAGE_READ_PROMPT
+        # Append the available-skills listing (name/description/path only;
+        # the full body loads on demand via the skill tool). Like the env
+        # block and AGENTS.md, the listing is baked into the system message
+        # at session start and re-generated on compaction.
+        listing = format_skill_listing(
+            discover_skills(self.working_dir, self.config.get("skill_dirs", []))
+        )
+        if listing:
+            self.system_prompt += "\n\n" + listing
         self.working_context = self._load_working_context()
         self.history = History(session_dir / "history.json")
         self._broker = StreamBroker(len(self.history.raw))

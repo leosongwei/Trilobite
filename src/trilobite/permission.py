@@ -138,7 +138,7 @@ class PlanModePermission(AgentPermission):
     notice tells the model they are blocked.
     """
 
-    tool_names = ("read", "glob", "grep", "bash", "TodoList")
+    tool_names = ("read", "glob", "grep", "bash", "TodoList", "skill")
     advertised_tool_names = ALL_TOOL_NAMES
     exposes_exit_plan_mode = True
     exposes_task = True
@@ -157,7 +157,7 @@ class ExploreSubagentPermission(AgentPermission):
     subagents (``task`` is absent), which enforces the single-layer limit.
     """
 
-    tool_names = ("read", "glob", "grep", "bash")
+    tool_names = ("read", "glob", "grep", "bash", "skill")
 
     block_message = "Error: {tool} tool is not available to the explore subagent."
 
@@ -172,6 +172,6 @@ class GeneralSubagentPermission(AgentPermission):
     list).
     """
 
-    tool_names = ("read", "glob", "grep", "edit", "write", "bash")
+    tool_names = ("read", "glob", "grep", "edit", "write", "bash", "skill")
 
     block_message = "Error: {tool} tool is not available to subagents."

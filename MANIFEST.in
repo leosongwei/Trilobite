@@ -4,3 +4,6 @@ recursive-include src/trilobite/static *
 
 # Default config / prompt templates seeded into the user config dir on first run.
 recursive-include src/trilobite/config_example *
+
+# Builtin skills (SKILL.md files) shipped with the package.
+recursive-include src/trilobite/builtin_skills *
