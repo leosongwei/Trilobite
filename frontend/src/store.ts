@@ -513,14 +513,7 @@ let streamGen = 0
 // instead of exiting.
 let hiddenAbort = false
 
-// Stream diagnostics (console.debug). Used to debug multi-tab issues where a
-// second client opening the same session shows stale/empty content: the log
-// records connect/disconnect/reconnect/init/exception at every step.
-const streamLog = (...args: unknown[]) =>
-  console.debug(`[stream:${streamSession ?? '-'}]`, ...args)
-
 async function connectStream(name: string) {
-  streamLog('connectStream', name, 'aborting', streamSession)
   if (streamAbort) streamAbort.abort()
   streamSession = name
   streamGen++
@@ -528,7 +521,6 @@ async function connectStream(name: string) {
 }
 
 function disconnectStream() {
-  streamLog('disconnectStream')
   streamSession = null
   streamGen++
   if (streamAbort) streamAbort.abort()
@@ -541,7 +533,6 @@ function disconnectStream() {
 // api.ts 的随机 query 参数），少一个挂着的连接就少一分被合并等待的风险。
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && streamAbort) {
-    streamLog('tab hidden, dropping stream')
     hiddenAbort = true
     streamAbort.abort()
   }
@@ -559,8 +550,6 @@ function waitNextVisibilityChange(): Promise<void> {
 }
 
 async function runStream(name: string, gen: number) {
-  streamLog(`runStream starting (gen ${gen})`)
-  let attempt = 0
   while (streamSession === name && streamGen === gen) {
     // Hidden tab: no live stream. Wait until the tab is visible again (the
     // abort listener above dropped the old connection when hiding).
@@ -572,8 +561,6 @@ async function runStream(name: string, gen: number) {
     hiddenAbort = false
     const ac = new AbortController()
     streamAbort = ac
-    attempt++
-    const t0 = performance.now()
     try {
       const stream = api.subscribeStream(name, ac.signal)
       for await (const event of stream) {
@@ -581,20 +568,10 @@ async function runStream(name: string, gen: number) {
         try {
           handleSSEEvent(event)
         } catch (err) {
-          streamLog('handleSSEEvent threw for', event.type, err)
-        }
-        if (event.type === 'init') {
-          streamLog(
-            `connected ok, init: history=${(event as any).history?.length ?? '?'} items ` +
-              `is_running=${(event as any).is_running} in ${(performance.now() - t0).toFixed(0)}ms`,
-          )
+          console.error('handleSSEEvent threw for', event.type, err)
         }
       }
-      if (streamSession !== name || streamGen !== gen) {
-        streamLog('stream superseded')
-        return
-      }
-      streamLog('stream ended (server closed)')
+      if (streamSession !== name || streamGen !== gen) return
     } catch (e) {
       if (streamSession !== name || streamGen !== gen) return
       if (ac.signal.aborted) {
@@ -602,14 +579,12 @@ async function runStream(name: string, gen: number) {
         // again. Any other abort (session switch / disconnect) has already
         // bumped the generation, so the check above returned.
         if (!hiddenAbort) return
-        streamLog('stream aborted (tab hidden)')
         continue
       }
       // Network error - retry after a short backoff.
-      streamLog('stream error:', e instanceof Error ? e.message : String(e))
+      console.error('stream error:', e instanceof Error ? e.message : String(e))
     }
     if (streamSession !== name || streamGen !== gen) return
-    const t1 = performance.now()
     // Background tabs throttle setTimeout to ~1/min, which would delay the
     // reconnect for a long time; wake up early when the tab becomes visible
     // again so the stream reconnects immediately on return to the tab.
@@ -627,7 +602,6 @@ async function runStream(name: string, gen: number) {
       }
       document.addEventListener('visibilitychange', onVis)
     })
-    streamLog(`reconnect attempt ${attempt} after ${(performance.now() - t1).toFixed(0)}ms`)
   }
 }
 
@@ -683,7 +657,6 @@ export function useStore() {
   }
 
   async function selectSession(id: string) {
-    streamLog('selectSession', id)
     state.currentSession = id
     closeTurn()
     state.chatItems = []
