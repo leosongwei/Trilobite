@@ -502,6 +502,16 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
 // always shows the live (or in-progress) output.
 let streamAbort: AbortController | null = null
 let streamSession: string | null = null
+// Every connectStream() bumps this generation. runStream captures the
+// generation it was started with and exits as soon as it is stale -- so a
+// repeated click on the same session cannot leave the old runStream alive to
+// open a second, orphaned SSE connection (which would eat a browser
+// per-host connection and, across tabs, exhaust the pool).
+let streamGen = 0
+// Set by the tab-hidden listener: an abort caused by hiding (not by a session
+// switch) must make runStream wait for the tab to become visible again
+// instead of exiting.
+let hiddenAbort = false
 
 // Stream diagnostics (console.debug). Used to debug multi-tab issues where a
 // second client opening the same session shows stale/empty content: the log
@@ -513,12 +523,14 @@ async function connectStream(name: string) {
   streamLog('connectStream', name, 'aborting', streamSession)
   if (streamAbort) streamAbort.abort()
   streamSession = name
-  void runStream(name)
+  streamGen++
+  void runStream(name, streamGen)
 }
 
 function disconnectStream() {
   streamLog('disconnectStream')
   streamSession = null
+  streamGen++
   if (streamAbort) streamAbort.abort()
   streamAbort = null
 }
@@ -531,6 +543,7 @@ function disconnectStream() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && streamAbort) {
     streamLog('tab hidden, dropping stream')
+    hiddenAbort = true
     streamAbort.abort()
   }
 })
@@ -546,15 +559,18 @@ function waitNextVisibilityChange(): Promise<void> {
   })
 }
 
-async function runStream(name: string) {
+async function runStream(name: string, gen: number) {
+  streamLog(`runStream starting (gen ${gen})`)
   let attempt = 0
-  while (streamSession === name) {
+  while (streamSession === name && streamGen === gen) {
     // Hidden tab: no live stream. Wait until the tab is visible again (the
     // abort listener above dropped the old connection when hiding).
     if (document.visibilityState === 'hidden') {
+      hiddenAbort = false
       await waitNextVisibilityChange()
       continue
     }
+    hiddenAbort = false
     const ac = new AbortController()
     streamAbort = ac
     attempt++
@@ -562,7 +578,7 @@ async function runStream(name: string) {
     try {
       const stream = api.subscribeStream(name, ac.signal)
       for await (const event of stream) {
-        if (streamSession !== name) break
+        if (streamSession !== name || streamGen !== gen) break
         try {
           handleSSEEvent(event)
         } catch (err) {
@@ -575,20 +591,25 @@ async function runStream(name: string) {
           )
         }
       }
+      if (streamSession !== name || streamGen !== gen) {
+        streamLog('stream superseded')
+        return
+      }
       streamLog('stream ended (server closed)')
     } catch (e) {
-      // Aborted (session switch / tab hidden / disconnect) - stop the loop;
-      // the while condition re-checks streamSession, and the hidden check
-      // above waits for the tab to become visible again.
-      if (streamSession !== name) return
+      if (streamSession !== name || streamGen !== gen) return
       if (ac.signal.aborted) {
-        streamLog('stream aborted')
+        // Aborted because the tab went hidden: wait for it to become visible
+        // again. Any other abort (session switch / disconnect) has already
+        // bumped the generation, so the check above returned.
+        if (!hiddenAbort) return
+        streamLog('stream aborted (tab hidden)')
         continue
       }
       // Network error - retry after a short backoff.
       streamLog('stream error:', e instanceof Error ? e.message : String(e))
     }
-    if (streamSession !== name) return
+    if (streamSession !== name || streamGen !== gen) return
     const t1 = performance.now()
     // Background tabs throttle setTimeout to ~1/min, which would delay the
     // reconnect for a long time; wake up early when the tab becomes visible
