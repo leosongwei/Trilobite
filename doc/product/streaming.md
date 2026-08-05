@@ -15,7 +15,7 @@
 per-session 事件总线，维护：
 
 * `_subscribers`：每个连接的 SSE 客户端对应一个 `asyncio.Queue`。
-* `_turn_buffer`：当前 run 的事件（从第一个 `turn` 到现在），用于回放给中途连接的客户端。
+* `_turn_buffer`：当前 run 的事件（从第一个 `turn` 到现在），用于回放给中途连接的客户端。缓冲以**合并形态**保存：相邻的同类增量事件折叠为一条（thinking/text 增量拼接、同一 tool_call 的 tool_output 行按 `\n` 连接、同一工具的 tool_stream 参数保留累计值），输出量大的 run 也只回放几十条事件而非数万条原始增量——中途连接的客户端瞬间追平，不会逐条处理 live delta 而卡死；live 订阅者仍收到原始逐条事件。工具结束时其 tool_output 条目从缓冲移除（最终结果已进 `tool_result`）。
 * `_persisted_len`：已"提交"到 `init` 快照的历史长度。回放缓冲对应 `persisted_len` 之后的历史，二者不重叠。
 * `_lock`：保证快照与回放的一致性。
 
@@ -37,7 +37,7 @@ per-session 事件总线，维护：
 ### 端点 (`src/trilobite/server.py`)
 
 * `POST /api/sessions/{id}/message`：running 则 steer 返回 `{status:"steered"}`，否则 start 返回 `{status:"started"}`。**不返回流**。
-* `GET /api/sessions/{id}/stream`：SSE 订阅。连接时发 `init`，随后持续推送事件，空闲时发 `: keepalive` 心跳；`done/cancelled/error` 后保持连接以等待下一个 run。
+* `GET /api/sessions/{id}/stream`：SSE 订阅。连接时发 `init`，随后持续推送事件，空闲时发 `: keepalive` 心跳；`done/cancelled/error` 后保持连接以等待下一个 run。响应带 `Cache-Control: no-store`（所有 `/api/*` 响应均禁止缓存，避免浏览器启发式缓存中断的流）。
 
 ## SSE 事件协议
 
@@ -78,6 +78,7 @@ per-session 事件总线，维护：
 * `sendMessage` 只 POST，不处理流。
 * `revert(userSeq, message)`：编辑历史用户消息并重发。返回 `rerun` 则重连 SSE 重建对话；返回 `queued` 则由 `user_edit` 事件就地更新气泡，不重连（详见 [history.md](./history.md)）。
 * 网络断开自动重连（1s 退避）；切换 session 主动 abort 旧连接。
+* 每个流连接使用**不同的 URL**（`/stream?_t=<随机值>`）：Firefox 对同一 URL 的在途 GET 做 single-flight 合并——第二个请求会等第一个响应结束（SSE 永不结束，于是第二个 tab 打开同一 session 时 `/stream` 在浏览器缓存层无限排队，表现为"加载不出来"）。随机 query 让每个连接走独立的缓存槽，多开/重连互不阻塞。
 
 ### 自适应加载（`ChatView.vue`）
 

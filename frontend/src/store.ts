@@ -502,36 +502,106 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
 // always shows the live (or in-progress) output.
 let streamAbort: AbortController | null = null
 let streamSession: string | null = null
+// Every connectStream() bumps this generation. runStream captures the
+// generation it was started with and exits as soon as it is stale -- so a
+// repeated click on the same session cannot leave the old runStream alive to
+// open a second, orphaned SSE connection (which would eat a browser
+// per-host connection and, across tabs, exhaust the pool).
+let streamGen = 0
+// Set by the tab-hidden listener: an abort caused by hiding (not by a session
+// switch) must make runStream wait for the tab to become visible again
+// instead of exiting.
+let hiddenAbort = false
 
 async function connectStream(name: string) {
   if (streamAbort) streamAbort.abort()
   streamSession = name
-  void runStream(name)
+  streamGen++
+  void runStream(name, streamGen)
 }
 
 function disconnectStream() {
   streamSession = null
+  streamGen++
   if (streamAbort) streamAbort.abort()
   streamAbort = null
 }
 
-async function runStream(name: string) {
-  while (streamSession === name) {
+// 后台 tab 不占用 SSE 连接。切到后台时断开流、释放连接；切回前台立即
+// 重连，init + 回放本来就会重建完整状态，不丢内容。多开时同一 session
+// 的同 URL 并发 GET 会在 Firefox 缓存层被 single-flight 合并（见
+// api.ts 的随机 query 参数），少一个挂着的连接就少一分被合并等待的风险。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && streamAbort) {
+    hiddenAbort = true
+    streamAbort.abort()
+  }
+})
+
+// Resolve on the next visibility change; the caller re-checks the state.
+function waitNextVisibilityChange(): Promise<void> {
+  return new Promise((resolve) => {
+    const onVis = () => {
+      document.removeEventListener('visibilitychange', onVis)
+      resolve()
+    }
+    document.addEventListener('visibilitychange', onVis)
+  })
+}
+
+async function runStream(name: string, gen: number) {
+  while (streamSession === name && streamGen === gen) {
+    // Hidden tab: no live stream. Wait until the tab is visible again (the
+    // abort listener above dropped the old connection when hiding).
+    if (document.visibilityState === 'hidden') {
+      hiddenAbort = false
+      await waitNextVisibilityChange()
+      continue
+    }
+    hiddenAbort = false
     const ac = new AbortController()
     streamAbort = ac
     try {
       const stream = api.subscribeStream(name, ac.signal)
       for await (const event of stream) {
-        if (streamSession !== name) break
-        handleSSEEvent(event)
+        if (streamSession !== name || streamGen !== gen) break
+        try {
+          handleSSEEvent(event)
+        } catch (err) {
+          console.error('handleSSEEvent threw for', event.type, err)
+        }
       }
+      if (streamSession !== name || streamGen !== gen) return
     } catch (e) {
-      // Aborted (session switch / disconnect) - stop the loop.
-      if (ac.signal.aborted || streamSession !== name) return
+      if (streamSession !== name || streamGen !== gen) return
+      if (ac.signal.aborted) {
+        // Aborted because the tab went hidden: wait for it to become visible
+        // again. Any other abort (session switch / disconnect) has already
+        // bumped the generation, so the check above returned.
+        if (!hiddenAbort) return
+        continue
+      }
       // Network error - retry after a short backoff.
+      console.error('stream error:', e instanceof Error ? e.message : String(e))
     }
-    if (streamSession !== name) return
-    await new Promise((r) => setTimeout(r, 1000))
+    if (streamSession !== name || streamGen !== gen) return
+    // Background tabs throttle setTimeout to ~1/min, which would delay the
+    // reconnect for a long time; wake up early when the tab becomes visible
+    // again so the stream reconnects immediately on return to the tab.
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        document.removeEventListener('visibilitychange', onVis)
+        resolve()
+      }, 1000)
+      const onVis = () => {
+        if (document.visibilityState === 'visible') {
+          clearTimeout(timer)
+          document.removeEventListener('visibilitychange', onVis)
+          resolve()
+        }
+      }
+      document.addEventListener('visibilitychange', onVis)
+    })
   }
 }
 
@@ -542,19 +612,41 @@ async function runStream(name: string) {
 // sessions and running state appear across multiple browsers.
 let sessionPollTimer: ReturnType<typeof setInterval> | null = null
 
+function stopSessionPolling() {
+  if (sessionPollTimer !== null) {
+    clearInterval(sessionPollTimer)
+    sessionPollTimer = null
+  }
+}
+
+// 后台 tab 暂停轮询（省掉每 3s 一次的请求，也避免后台 tab 与前台抢占
+// 浏览器每主机的连接配额）；切回前台立即恢复并马上刷一次列表。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    stopSessionPolling()
+  } else if (state.sessions.length > 0 && sessionPollTimer === null) {
+    ensureSessionPolling()
+    void loadSessionsRefresher()
+  }
+})
+
+async function loadSessionsRefresher() {
+  try {
+    state.sessions = await api.getSessions()
+  } catch {
+    // transient error; the next tick retries
+  }
+}
+
 function ensureSessionPolling() {
   if (sessionPollTimer !== null) return
   sessionPollTimer = setInterval(async () => {
-    try {
-      state.sessions = await api.getSessions()
-      // Unresolved requests block their agent's run; a session that stopped
-      // running (e.g. cancelled from another tab) can no longer be awaiting
-      // approval, so prune those entries.
-      const running = new Set(state.sessions.filter((s) => s.is_running).map((s) => s.id))
-      state.pendingRequests = state.pendingRequests.filter((r) => running.has(r.session))
-    } catch {
-      // transient error; the next tick retries
-    }
+    await loadSessionsRefresher()
+    // Unresolved requests block their agent's run; a session that stopped
+    // running (e.g. cancelled from another tab) can no longer be awaiting
+    // approval, so prune those entries.
+    const running = new Set(state.sessions.filter((s) => s.is_running).map((s) => s.id))
+    state.pendingRequests = state.pendingRequests.filter((r) => running.has(r.session))
   }, 3000)
 }
 

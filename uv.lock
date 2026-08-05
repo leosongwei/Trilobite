@@ -442,7 +442,7 @@ wheels = [
 
 [[package]]
 name = "trilobite-code"
-version = "1.1.8"
+version = "1.1.21"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

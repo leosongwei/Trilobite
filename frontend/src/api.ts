@@ -177,7 +177,14 @@ export async function* subscribeStream(
   id: string,
   signal: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
-  const res = await authFetch(`/api/sessions/${encode(id)}/stream`, { signal })
+  // 每个连接用不同的 URL：Firefox 对同一 URL 的在途 GET 做 single-flight
+  // 合并（等第一个响应结束后从缓存续用），SSE 永不结束，第二个 tab 打开
+  // 同一 session 的 /stream 就会在缓存层无限排队。随机 query 让每个
+  // 连接走独立的缓存槽，多开/重连都不会被前一个连接挡住。
+  const res = await authFetch(
+    `/api/sessions/${encode(id)}/stream?_t=${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    { signal },
+  )
   if (!res.ok) throw new Error('Stream connection failed')
   if (!res.body) throw new Error('No response body')
 
