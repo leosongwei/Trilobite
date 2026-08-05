@@ -77,6 +77,23 @@
             <button @click="handleAddDir">+</button>
           </div>
         </details>
+        <details ref="requestsDetails" class="requests-list">
+          <summary>Requests ({{ state.pendingRequests.length }})</summary>
+          <div v-if="state.pendingRequests.length === 0" class="requests-empty">
+            No pending requests
+          </div>
+          <div v-for="r in state.pendingRequests" :key="r.key" class="request-item">
+            <div class="request-item-label">
+              <span class="request-kind">{{ r.kind === 'plan_exit' ? 'mode' : 'dir' }}</span>
+              <span class="request-agent" :title="r.session">{{ requestAgentLabel(r) }}</span>
+            </div>
+            <div class="request-item-detail">{{ requestDetail(r) }}</div>
+            <div class="request-actions">
+              <button class="request-approve" @click="approveRequest(r)">Approve</button>
+              <button class="request-reject" @click="rejectRequest(r)">Reject</button>
+            </div>
+          </div>
+        </details>
       </div>
       <div v-if="!state.isSubagent && state.currentSession" class="sidebar-tree">
         <div class="sidebar-tree-header">
@@ -99,7 +116,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useStore } from '../store'
 import { getCwd, getVersion } from '../api'
-import type { Session } from '../types'
+import type { Session, PendingRequest } from '../types'
 import FileTree from './FileTree.vue'
 import type { FsRoot } from './FileTree.vue'
 
@@ -111,9 +128,9 @@ const emit = defineEmits<{
 
 // Diff base branch, shared with the file manager; the tree's change
 // highlighting always compares the working tree against it.
-const props = defineProps<{ base: string }>()
+const props = defineProps<{ base: string; requestsTick?: number }>()
 
-const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession } = useStore()
+const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession, approveRequest, rejectRequest } = useStore()
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
@@ -122,6 +139,28 @@ const editingName = ref(false)
 const editName = ref('')
 const sessionsHeight = ref(300)
 const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
+const requestsDetails = ref<HTMLDetailsElement | null>(null)
+
+// The aggregated banner's Review button bumps requestsTick to open the
+// Requests list (the user can still collapse/expand it freely afterwards).
+watch(
+  () => props.requestsTick,
+  () => {
+    if (requestsDetails.value) requestsDetails.value.open = true
+  },
+)
+
+// Requests list display helpers: which agent asked, and for what.
+function requestAgentLabel(r: PendingRequest): string {
+  if (r.childType) return `[${r.childType}: ${r.childDescription}]`
+  const s = state.sessions.find((x) => x.id === r.session)
+  return s?.name || r.session
+}
+
+function requestDetail(r: PendingRequest): string {
+  if (r.kind === 'plan_exit') return 'Switch to Build mode'
+  return r.path ?? ''
+}
 
 function onRootInfo(info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }) {
   emit('root-info', info)

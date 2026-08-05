@@ -122,9 +122,9 @@ Error: edit tool is blocked in plan mode. Call exit_plan_mode to request switchi
 模型可以通过调用 `exit_plan_mode` 工具请求用户切换到 Build 模式。流程：
 
 1. 模型调用 `exit_plan_mode`
-2. Agent 发送 `plan_exit_request` SSE 事件
+2. Agent 发送 `plan_exit_request` SSE 事件（带 `session` 字段；主 agent 的请求会 fan-out 到其全部运行中子 agent 的 broker，浏览子 session 时也能看到）
 3. Agent 暂停，等待用户决策（`asyncio.Event`）
-4. 前端显示审批横幅："Agent requests to switch to Build mode" + Approve/Reject 按钮
+4. 前端把请求加入 pending requests 列表：同一主会话组内无其他 pending 时显示审批横幅 "Agent requests to switch to Build mode" + Approve/Reject 按钮；多个请求并发时横幅聚合显示数量，侧边栏 Requests 列表可单独审批
 5. 用户点击后，前端调用 `POST /api/sessions/{id}/plan_exit`
 6. Agent 收到决策，继续执行
 

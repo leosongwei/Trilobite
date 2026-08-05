@@ -185,12 +185,12 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 机制：
 
-- 父 agent 持有其所有运行中子 agent 的列表。子 agent 触发权限请求时，由父 agent **fan-out** 一个 `subagent_permission_request` 事件到：父 agent 自己的 broker + 所有运行中兄弟子 agent 的 broker（这样用户无论订阅哪个会话流都能收到）。
+- 父 agent 持有其所有运行中子 agent 的列表。子 agent 触发权限请求时，由父 agent **fan-out** 一个 `subagent_permission_request` 事件到：父 agent 自己的 broker + 所有运行中子 agent（含请求者自身）的 broker，这样用户无论订阅哪个会话流都能收到。
 - 事件载荷：`{type:"subagent_permission_request", child_session, child_type, child_description, path, tool, message}`。
-- 子 agent 自身的 broker 也发一份（用户正在看该子 session 时直接可见）。
 - 子 agent `await _permission_event`，暂停等待。
-- 前端在任一已订阅会话流收到该事件即弹**全局横幅**，例如："子 agent [explore: 查找 API 入口] 请求访问 `/home/other/config`"，附 Approve / Deny。
-- Approve / Deny 调 `POST /api/sessions/{child}/permission`。Approve：把路径加入该子 agent 的 `additional_dirs`（持久化到子 session.json）并重试该工具；Deny：子 agent 收到拒绝消息，工具返回错误，子 agent 继续。
+- 主 agent 自己的权限请求（`permission_request`）与 plan-exit 请求（`plan_exit_request`）同样 fan-out 到全部运行中子 agent 的 broker；两类事件都带 `session` 字段标明请求方，保证浏览子 session 时也能看到并审批主 agent 的请求。
+- 前端把收到的请求统一存入 **pending requests 列表**：同一主会话组（主 session + 其子 agent）内的 pending 请求弹横幅；侧边栏 "Allowed directories" 下方有可展开的 **Requests 列表**，列出并审批全部 pending 请求（目录授权 + 切换到 build 模式）。多个请求并发时互不覆盖、各自独立审批；横幅聚合显示 "N permission requests are pending" 并可跳转到 Requests 列表。
+- Approve / Deny 调 `POST /api/sessions/{child}/permission`（plan-exit 走 `/plan_exit`）。Approve：把路径加入该子 agent 的 `additional_dirs`（持久化到子 session.json）并重试该工具；Deny：子 agent 收到拒绝消息，工具返回错误，子 agent 继续。
 
 > v1 批准的目录只加到该子 agent，不自动传播给父或兄弟。传播留待后续。
 

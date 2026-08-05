@@ -863,7 +863,9 @@ class Agent:
                             if not self._plan_mode:
                                 tool_result = {"result": "exit_plan_mode is a no-op in build mode; you are already in build mode."}
                             else:
-                                await self._send_stream_event({"type": "plan_exit_request"})
+                                # Fan out to the group so the request is visible
+                                # even while the user is browsing a subagent.
+                                await self._broadcast_to_group({"type": "plan_exit_request", "session": self.name})
                                 await self._plan_exit_event.wait()
                                 self._plan_exit_event.clear()
                                 if self._plan_exit_approved:
@@ -899,8 +901,10 @@ class Agent:
                                     self, perm_path, tool_name, tool_result["result"]
                                 )
                             else:
-                                await self._send_stream_event({
+                                # Main session: fan out to its group too.
+                                await self._broadcast_to_group({
                                     "type": "permission_request",
+                                    "session": self.name,
                                     "path": perm_path,
                                     "tool": tool_name,
                                     "message": tool_result["result"],
@@ -1412,6 +1416,16 @@ class Agent:
         self._final_state = "interrupted"
         self._final_result = asst.content
         await self._send_stream_event({"type": "interrupted"})
+
+    async def _broadcast_to_group(self, event: dict) -> None:
+        """Send an event to this agent's own stream and, for the main session,
+        to all its running children. Used for the main session's own approval
+        requests (permission / plan-exit) so the prompt is visible no matter
+        which session the user is currently viewing."""
+        await self._send_stream_event(event)
+        if self._subagent_type is None:
+            for c in list(self._children):
+                await c._send_stream_event(event)
 
     async def _broadcast_subagent_permission(self, child: Agent, path: str, tool: str, message: str) -> None:
         """Fan a subagent's permission request to the parent and all running
