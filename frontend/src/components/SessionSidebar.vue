@@ -67,10 +67,16 @@
           <span class="info-value" :title="currentSessionCwd">{{ currentSessionCwd }}</span>
         </div>
         <details>
-          <summary>Allowed directories ({{ state.additionalDirs.length }})</summary>
-          <div v-for="d in state.additionalDirs" :key="d" class="dir-item">
-            <span class="dir-path" :title="d">{{ d }}</span>
-            <span class="delete" @click="handleRemoveDir(d)">&times;</span>
+          <summary>Allowed directories ({{ groupDirs.length }})</summary>
+          <div v-if="groupDirs.length === 0" class="requests-empty">
+            No allowed directories
+          </div>
+          <div v-for="entry in groupDirs" :key="entry.sessionId + entry.path" class="dir-item">
+            <span class="dir-path" :title="entry.path">
+              <span v-if="entry.source" class="dir-source">{{ entry.source }}</span>
+              {{ entry.path }}
+            </span>
+            <span class="delete" @click="handleRemoveGroupDir(entry)">&times;</span>
           </div>
           <div class="dir-add">
             <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
@@ -115,8 +121,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useStore } from '../store'
-import { getCwd, getVersion } from '../api'
+import { getCwd, getVersion, removeDir as apiRemoveDir } from '../api'
 import type { Session, PendingRequest } from '../types'
+import { findSessionRoot } from '../utils/sessions'
 import FileTree from './FileTree.vue'
 import type { FsRoot } from './FileTree.vue'
 
@@ -339,5 +346,48 @@ async function handleAddDir() {
 
 async function handleRemoveDir(path: string) {
   await removeDir(path)
+}
+
+// ── allowed directories (group-scoped) ─────────────────────────────────────
+// Allowed directories are per-session, but a subagent's grants (made from
+// its own permission requests) are invisible while browsing the main
+// session. Show the union of the current main-session group instead, with
+// the owning session labelled on entries that do not belong to the session
+// being viewed. The + box still adds to the viewed session only.
+interface GroupDirEntry {
+  sessionId: string
+  path: string
+  source: string | null
+}
+
+const groupDirs = computed<GroupDirEntry[]>(() => {
+  const cur = state.currentSession
+  if (!cur) return []
+  const root = findSessionRoot(state.sessions, cur)
+  if (!root) return []
+  const group = state.sessions.filter((s) => s.id === root || s.parent_session === root)
+  const entries: GroupDirEntry[] = []
+  for (const s of group) {
+    let source: string | null = null
+    if (s.id !== cur) {
+      source = s.subagent_type
+        ? `[${s.subagent_type}: ${s.description || s.id}]`
+        : s.name
+    }
+    for (const p of s.additional_dirs ?? []) {
+      entries.push({ sessionId: s.id, path: p, source })
+    }
+  }
+  return entries
+})
+
+async function handleRemoveGroupDir(entry: GroupDirEntry) {
+  if (entry.sessionId === state.currentSession) {
+    await handleRemoveDir(entry.path)
+    return
+  }
+  const dirs = await apiRemoveDir(entry.sessionId, entry.path)
+  const s = state.sessions.find((x) => x.id === entry.sessionId)
+  if (s) s.additional_dirs = dirs
 }
 </script>

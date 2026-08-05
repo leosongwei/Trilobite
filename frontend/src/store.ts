@@ -665,7 +665,12 @@ export function useStore() {
       if (req.session === state.currentSession) {
         state.additionalDirs = await api.addDir(req.session, req.path)
       } else {
-        await api.addDir(req.session, req.path)
+        // Approved for a session we are not viewing (e.g. a subagent while
+        // browsing the main session): refresh its dirs in the polled list so
+        // the sidebar Allowed directories updates right away.
+        const dirs = await api.addDir(req.session, req.path)
+        const s = state.sessions.find((x) => x.id === req.session)
+        if (s) s.additional_dirs = dirs
       }
       await api.resolvePermission(req.session, true)
     }

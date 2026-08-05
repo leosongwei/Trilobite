@@ -82,6 +82,7 @@ export interface Session {
   subagent_type?: string
   description?: string
   sealed?: boolean
+  additional_dirs?: string[]
   created_at?: number
   updated_at?: number
 }

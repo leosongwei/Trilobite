@@ -74,6 +74,7 @@ import FileManager from './components/FileManager.vue'
 import type { RootInfo } from './components/FileManager.vue'
 import type { OpenFilePayload } from './components/FileTree.vue'
 import type { PendingRequest } from './types'
+import { findSessionRoot } from './utils/sessions'
 
 const { state, loadSessions, setMode, approveRequest, rejectRequest, selectSession } = useStore()
 const sidebarOpen = ref(false)
@@ -92,16 +93,7 @@ const rootInfoMap = reactive<Record<string, RootInfo>>({})
 // main session and its subagents), no matter which session is being viewed,
 // so a subagent's request is visible while browsing a sibling.
 function sessionRoot(id: string | null): string | null {
-  if (!id) return null
-  // Walk up parent_session links to the main session; an unknown session
-  // (not yet picked up by the poll) is treated as its own root.
-  let curId = id
-  let parentId = state.sessions.find((s) => s.id === curId)?.parent_session ?? null
-  while (parentId) {
-    curId = parentId
-    parentId = state.sessions.find((s) => s.id === curId)?.parent_session ?? null
-  }
-  return curId
+  return findSessionRoot(state.sessions, id)
 }
 
 const groupPending = computed<PendingRequest[]>(() => {

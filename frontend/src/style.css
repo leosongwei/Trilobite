@@ -217,6 +217,15 @@ body {
   white-space: nowrap;
   flex: 1;
 }
+.dir-source {
+  font-size: 10px;
+  color: #9cdcfe;
+  background: #3a3d3e;
+  border-radius: 2px;
+  padding: 0 3px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
 .dir-add { display: flex; gap: 4px; margin-top: 4px; }
 .dir-add input {
   flex: 1;

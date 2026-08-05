@@ -79,6 +79,10 @@ Content-Type: application/json
 
 请求被批准/拒绝后条目即从列表移除；请求方 session 停止运行（未答复即结束）时条目自动清理。
 
+### Allowed directories 的组内展示
+
+Allowed directories 本身是 per-session 的（子 agent 批准的目录只写入该子 session，不传播给父或兄弟）。侧边栏展示时按**当前主会话组**合并：浏览组内任意 session 都能看到主 session + 全部子 agent 的授权目录并集，非当前浏览 session 的条目标注来源（`[type: description]` 或 session 名），可删除。`+` 添加框只作用于当前浏览的 session。
+
 ### 共享前缀攻击防护
 
 边界检查使用路径分隔符感知的前缀匹配，避免 `/home/user/project-evil` 通过 `/home/user/project` 的前缀检查：
