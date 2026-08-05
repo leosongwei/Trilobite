@@ -503,35 +503,76 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
 let streamAbort: AbortController | null = null
 let streamSession: string | null = null
 
+// Stream diagnostics (console.debug). Used to debug multi-tab issues where a
+// second client opening the same session shows stale/empty content: the log
+// records connect/disconnect/reconnect/init/exception at every step.
+const streamLog = (...args: unknown[]) =>
+  console.debug(`[stream:${streamSession ?? '-'}]`, ...args)
+
 async function connectStream(name: string) {
+  streamLog('connectStream', name, 'aborting', streamSession)
   if (streamAbort) streamAbort.abort()
   streamSession = name
   void runStream(name)
 }
 
 function disconnectStream() {
+  streamLog('disconnectStream')
   streamSession = null
   if (streamAbort) streamAbort.abort()
   streamAbort = null
 }
 
 async function runStream(name: string) {
+  let attempt = 0
   while (streamSession === name) {
     const ac = new AbortController()
     streamAbort = ac
+    attempt++
+    const t0 = performance.now()
     try {
       const stream = api.subscribeStream(name, ac.signal)
       for await (const event of stream) {
         if (streamSession !== name) break
-        handleSSEEvent(event)
+        try {
+          handleSSEEvent(event)
+        } catch (err) {
+          streamLog('handleSSEEvent threw for', event.type, err)
+        }
+        if (event.type === 'init') {
+          streamLog(
+            `connected ok, init: history=${(event as any).history?.length ?? '?'} items ` +
+              `is_running=${(event as any).is_running} in ${(performance.now() - t0).toFixed(0)}ms`,
+          )
+        }
       }
+      streamLog('stream ended (server closed)')
     } catch (e) {
       // Aborted (session switch / disconnect) - stop the loop.
       if (ac.signal.aborted || streamSession !== name) return
       // Network error - retry after a short backoff.
+      streamLog('stream error:', e instanceof Error ? e.message : String(e))
     }
     if (streamSession !== name) return
-    await new Promise((r) => setTimeout(r, 1000))
+    const t1 = performance.now()
+    // Background tabs throttle setTimeout to ~1/min, which would delay the
+    // reconnect for a long time; wake up early when the tab becomes visible
+    // again so the stream reconnects immediately on return to the tab.
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        document.removeEventListener('visibilitychange', onVis)
+        resolve()
+      }, 1000)
+      const onVis = () => {
+        if (document.visibilityState === 'visible') {
+          clearTimeout(timer)
+          document.removeEventListener('visibilitychange', onVis)
+          resolve()
+        }
+      }
+      document.addEventListener('visibilitychange', onVis)
+    })
+    streamLog(`reconnect attempt ${attempt} after ${(performance.now() - t1).toFixed(0)}ms`)
   }
 }
 
@@ -565,6 +606,7 @@ export function useStore() {
   }
 
   async function selectSession(id: string) {
+    streamLog('selectSession', id)
     state.currentSession = id
     closeTurn()
     state.chatItems = []

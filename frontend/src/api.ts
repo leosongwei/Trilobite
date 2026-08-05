@@ -177,7 +177,9 @@ export async function* subscribeStream(
   id: string,
   signal: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
+  console.debug(`[stream] GET /stream ${id} starting`)
   const res = await authFetch(`/api/sessions/${encode(id)}/stream`, { signal })
+  console.debug(`[stream] GET /stream ${id} -> ${res.status} ${res.headers.get('content-type')}`)
   if (!res.ok) throw new Error('Stream connection failed')
   if (!res.body) throw new Error('No response body')
 
