@@ -9,19 +9,21 @@ Discovery scans, in priority order (first match wins on name conflicts):
 
 1. builtin skills (``create-skill``; lowest priority, any on-disk skill
    with the same name overrides them)
-2. trilobite roots: ``<working_dir>/.trilobite/skills``,
-   ``<working_dir>/.agents/skills``, ``<config_dir>/skills``,
-   ``~/.agents/skills``, plus extra roots from the ``skill_dirs`` config
+2. ``.agents`` roots -- the cross-tool shared directory (highest disk
+   priority): ``<working_dir>/.agents/skills``, ``~/.agents/skills``
+3. trilobite roots: ``<working_dir>/.trilobite/skills``,
+   ``<config_dir>/skills``, plus extra roots from the ``skill_dirs`` config
    option (``~`` expanded, relative paths resolved against the working
    directory)
-3. opencode roots: ``<working_dir>/.opencode/{skill,skills}``,
+4. opencode roots: ``<working_dir>/.opencode/{skill,skills}``,
    ``<xdg_config>/opencode/{skill,skills}``
-4. kimi roots: ``<working_dir>/.kimi-code/skills``,
+5. kimi roots: ``<working_dir>/.kimi-code/skills``,
    ``$KIMI_CODE_HOME/skills`` (default ``~/.kimi-code/skills``)
-5. claude roots: ``<working_dir>/.claude/skills``, ``~/.claude/skills``
+6. claude roots: ``<working_dir>/.claude/skills``, ``~/.claude/skills``
 
-Cross-tool dedupe: a skill found in a higher-priority tool's directory wins
-over the same-named skill from a lower-priority tool.
+Cross-tool dedupe: a skill found in a higher-priority directory wins over
+the same-named skill from a lower-priority one (``.agents`` > trilobite >
+opencode > kimi > claude).
 
 The agent bakes a listing of available skills into its system prompt (see
 ``format_skill_listing``) and loads the full skill content on demand via the
@@ -104,19 +106,19 @@ Instructions the agent follows when this skill is loaded...
 
 ## Where to put it
 
-- Project-level: `.trilobite/skills/` or `.agents/skills/` in the working
-  directory -- skills that belong to this project, committed with the repo.
-- User-level: `~/.config/trilobite/skills/` or `~/.agents/skills/` --
-  personal skills used across projects.
+- Project-level: `.agents/skills/` (highest priority, shared with other
+  agents) or `.trilobite/skills/` in the working directory -- skills that
+  belong to this project, committed with the repo.
+- User-level: `~/.agents/skills/` (highest priority) or
+  `~/.config/trilobite/skills/` -- personal skills used across projects.
 - Extra directory listed in `skill_dirs` in config.yaml -- shared team
   skills (relative paths resolve against the working directory, `~` is
   expanded).
 
 Directories of other tools are also scanned, in this priority order:
-trilobite > opencode (`.opencode/{skill,skills}`) > kimi
+`.agents` > trilobite > opencode (`.opencode/{skill,skills}`) > kimi
 (`.kimi-code/skills`) > claude (`.claude/skills`). A skill with the same
-name in a higher-priority directory wins. Prefer the trilobite directories
-above when the skill is meant for this agent.
+name in a higher-priority directory wins.
 
 ## When to create a skill
 
@@ -149,20 +151,21 @@ BUILTIN_SKILLS: list[Skill] = [
 def skill_roots(working_dir: Path, extra_dirs: list[str] | None = None) -> list[Path]:
     """All directories scanned for skills, in priority order (highest first).
 
-    Sources are grouped by tool so cross-tool skill sets dedupe predictably:
-    trilobite > opencode > kimi > claude. Within a tool, project-level roots
-    precede user-level roots. ``.agents/skills`` is the cross-tool shared
-    directory and counts as a trilobite root (scanned first).
+    Sources are grouped by directory so cross-tool skill sets dedupe
+    predictably: ``.agents`` (the cross-tool shared directory) > trilobite >
+    opencode > kimi > claude. Within a group, project-level roots precede
+    user-level roots.
     """
     home = Path.home()
     xdg_config = get_config_dir().parent  # e.g. ~/.config
     kimi_home = Path(os.environ.get("KIMI_CODE_HOME", home / ".kimi-code"))
     roots = [
-        # trilobite (highest priority)
-        working_dir / ".trilobite" / "skills",
+        # .agents: cross-tool shared directory (highest priority)
         working_dir / ".agents" / "skills",
-        get_config_dir() / "skills",
         home / ".agents" / "skills",
+        # trilobite
+        working_dir / ".trilobite" / "skills",
+        get_config_dir() / "skills",
         # opencode (opencode accepts both singular and plural dir names)
         working_dir / ".opencode" / "skills",
         working_dir / ".opencode" / "skill",
@@ -231,8 +234,8 @@ def discover_skills(working_dir: Path, extra_dirs: list[str] | None = None) -> l
     (directory form) and ``<name>.md`` (flat form). Hidden entries are
     skipped. Builtin skills are seeded first and any on-disk skill with the
     same name overrides them (lowest priority); among disk roots the first
-    occurrence wins -- trilobite > opencode > kimi > claude -- and
-    duplicates are logged.
+    occurrence wins -- ``.agents`` > trilobite > opencode > kimi > claude
+    -- and duplicates are logged.
     """
     found: dict[str, Skill] = {s.name: s for s in BUILTIN_SKILLS}
     for root in skill_roots(working_dir, extra_dirs):

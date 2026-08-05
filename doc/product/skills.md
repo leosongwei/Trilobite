@@ -37,14 +37,15 @@ frontmatter 缺失时整个文件当作正文；无可用 name 的 skill 被跳�
 
 按优先级从高到低扫描以下根目录（同名冲突时先扫到的胜出，重复打 warning）：
 
-| 优先级 | 工具 | 项目级 | 用户级 |
+| 优先级 | 目录 | 项目级 | 用户级 |
 |--------|------|--------|--------|
-| 1 | **trilobite** | `<working_dir>/.trilobite/skills`、`.agents/skills` | `<config_dir>/skills`（默认 `~/.config/trilobite/skills`）、`~/.agents/skills`，外加 `config.yaml` 的 `skill_dirs` 列表（相对路径基于工作目录，支持 `~` 展开） |
-| 2 | **opencode** | `<working_dir>/.opencode/{skill,skills}` | `<xdg_config>/opencode/{skill,skills}`（opencode 兼容单复数目录名） |
-| 3 | **kimi** | `<working_dir>/.kimi-code/skills` | `$KIMI_CODE_HOME/skills`（默认 `~/.kimi-code/skills`） |
-| 4 | **claude** | `<working_dir>/.claude/skills` | `~/.claude/skills` |
+| 1 | **`.agents`**（跨工具共享，最高） | `<working_dir>/.agents/skills` | `~/.agents/skills` |
+| 2 | **trilobite** | `<working_dir>/.trilobite/skills` | `<config_dir>/skills`（默认 `~/.config/trilobite/skills`），外加 `config.yaml` 的 `skill_dirs` 列表（相对路径基于工作目录，支持 `~` 展开） |
+| 3 | **opencode** | `<working_dir>/.opencode/{skill,skills}` | `<xdg_config>/opencode/{skill,skills}`（opencode 兼容单复数目录名） |
+| 4 | **kimi** | `<working_dir>/.kimi-code/skills` | `$KIMI_CODE_HOME/skills`（默认 `~/.kimi-code/skills`） |
+| 5 | **claude** | `<working_dir>/.claude/skills` | `~/.claude/skills` |
 
-跨工具去重：同一 skill 名出现在多个工具的目录里时，高优先级工具的版本胜出（trilobite > opencode > kimi > claude）。`.agents/skills` 是跨工具共享目录，归入 trilobite 档（最先扫描）。内置 `create-skill` 在扫描前注册、优先级最低，磁盘同名 skill 覆盖它。隐藏条目（`.` 开头）跳过。
+跨工具去重：同一 skill 名出现在多个目录时，高优先级目录的版本胜出（`.agents` > trilobite > opencode > kimi > claude）。内置 `create-skill` 在扫描前注册、优先级最低，磁盘同名 skill 覆盖它。隐藏条目（`.` 开头）跳过。
 
 ## 内置 skills
 
