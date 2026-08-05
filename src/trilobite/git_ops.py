@@ -33,6 +33,7 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         ["git", "-C", str(root), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         errors="replace",
         timeout=15,
     )
@@ -91,14 +92,17 @@ def _list_dir_git(root: Path, relpath: str, base: str | None) -> dict[str, Any]:
     prefix = f"{relpath}/" if relpath else ""
 
     # Tracked + untracked non-ignored files under the directory (recursive).
+    # ``-z`` is essential: without it git C-style quotes non-ASCII paths
+    # (``core.quotePath``), so Chinese filenames would come back escaped and
+    # never match the raw paths from ``status --porcelain -z`` below.
     files: set[str] = set()
     untracked: set[str] = set()
     for args, is_untracked in (
-        (("ls-files", "--cached"), False),
-        (("ls-files", "-o", "--exclude-standard"), True),
+        (("-z", "--cached"), False),
+        (("-z", "-o", "--exclude-standard"), True),
     ):
-        proc = _git(root, *args, "--", dirpath)
-        lines = proc.stdout.splitlines()
+        proc = _git(root, "ls-files", *args, "--", dirpath)
+        lines = [s for s in proc.stdout.split("\0") if s]
         files.update(lines)
         if is_untracked:
             untracked.update(lines)
