@@ -84,7 +84,7 @@
           </div>
         </details>
         <details ref="requestsDetails" class="requests-list">
-          <summary>Requests ({{ state.pendingRequests.length }})</summary>
+          <summary>Pending Requests ({{ state.pendingRequests.length }})</summary>
           <div v-if="state.pendingRequests.length === 0" class="requests-empty">
             No pending requests
           </div>
