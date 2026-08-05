@@ -1,5 +1,5 @@
 <template>
-  <aside class="sidebar">
+  <aside class="sidebar" :style="{ '--sidebar-width': sidebarWidth + 'px' }">
     <div class="sidebar-header">
       <h1>Trilobite<span v-if="version" class="version"> v{{ version }}</span></h1>
       <input v-model="name" type="text" placeholder="Session name" />
@@ -135,7 +135,7 @@ const emit = defineEmits<{
 
 // Diff base branch, shared with the file manager; the tree's change
 // highlighting always compares the working tree against it.
-const props = defineProps<{ base: string; requestsTick?: number }>()
+const props = defineProps<{ base: string; requestsTick?: number; sidebarWidth: number }>()
 
 const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession, approveRequest, rejectRequest } = useStore()
 const name = ref('')
