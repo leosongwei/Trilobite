@@ -33,36 +33,50 @@ const { state } = useStore()
 const chatRef = ref<HTMLElement>()
 
 // ── 自适应加载（窗口化）──────────────────────────────────────────────────────
-// 切到长 session 时一次性渲染全部历史会让浏览器卡很久，因此只渲染靠近底部的
-// 一个"窗口"：windowStart 指向窗口最早的条目，窗口始终包含末尾（流式输出
-// 可见）。初始只渲染底部 INITIAL_VISIBLE 条，fillViewport 增量向上扩窗直到
-// 填满视口；用户滚到顶部时再向上扩窗。窗口有 MAX_VISIBLE 上限，超出时从顶
-// 部卸载条目（只卸已滚出视口上方的），防止长会话滚动浏览后 DOM 无限膨胀。
-const INITIAL_VISIBLE = 2 // 初始从底部渲染的条数（fillViewport 会快速补齐到填满视口）
+// 切到长 session 时一次性渲染全部历史会让浏览器卡很久，因此只渲染一个
+// "窗口"：windowStart / windowEnd 分别是窗口最早/最晚条目的下标（半开区间，
+// 窗口 = chatItems[windowStart .. windowEnd)）。窗口通常包含末尾（流式输出
+// 可见）；用户滚到顶部时向上扩窗加载旧消息，旧消息保留在窗口顶部不被卸载。
+// DOM 有界性由卸载底部已滚出视口下方的条目保证（trimExcess）——用户向上翻
+// 历史时旧消息一直可看，滚回底部时窗口重新包含末尾并钉底。
+const INITIAL_VISIBLE = 10 // 初始从底部渲染的条数：切 session/启动只显示最后
+                          // 几条，往上滚动才加载更早的；内容不足一屏时由
+                          // fillViewport 补齐填满视口（避免无法滚动的死区）
 const FILL_STEP = 2       // fillViewport 每次向上扩窗的条数
 const LOAD_MORE = 10      // 滚到顶部时向上扩窗的条数
-const MAX_VISIBLE = 10    // 窗口上限：超过后从顶部卸载。取保守值——单条泡泡
-                          // 高度不可控（超长 thinking / 大量工具条目），一屏
-                          // 往往装不下 5 个泡泡，固定条数上限才保证 DOM 有界。
-const TOP_THRESHOLD = 64  // 距顶部多少 px 内触发加载更多
-const TRIM_SAFE_MARGIN = 48 // 卸载单条的安全余量（覆盖 margin 等测量误差），
-                            // 保证卸载后不会拽动当前视口内容
+const MAX_FILL = 30       // fillViewport 扩窗的条数硬上限。不依赖 scrollHeight
+                          // 测量——滚动容器测量一旦异常（高度不受约束/内容高度
+                          // 未更新），"视口已满"判断会失效并一路扩到全部渲染，
+                          // 切 session 时把整个历史一次性挂进 DOM。条数上限
+                          // 保证无论测量如何，初始窗口始终有界。
+const MAX_VISIBLE = 40    // 窗口上限：超过后从底部卸载已滚出视口的条目。单条
+                          // 泡泡高度不可控（超长 thinking / 大量工具条目），
+                          // 固定条数上限才保证 DOM 有界。
+const TOP_THRESHOLD = 64    // 距顶部多少 px 内触发加载更多
+const BOTTOM_THRESHOLD = 64 // 距底部多少 px 内视为"钉底"（跟随流式滚动 /
+                            // 窗口重新包含末尾）
+const TRIM_SAFE_MARGIN = 48 // 卸载条目的安全余量（覆盖 margin 等测量误差），
+                            // 保证不卸载视口内或即将滚入视口的内容
 
-// 窗口最早可见条目的下标；窗口 = chatItems[windowStart .. 末尾]。
+// 窗口最早/最晚可见条目的下标；窗口 = chatItems[windowStart .. windowEnd)。
+// 通常 windowEnd === chatItems.length（窗口包含末尾，流式输出可见）；用户向
+// 上翻历史时底部条目可能被卸载（windowEnd < length），滚回底部后重新包含末尾。
 const windowStart = ref(0)
-const windowSize = computed(() => state.chatItems.length - windowStart.value)
+const windowEnd = ref(0)
+const windowSize = computed(() => windowEnd.value - windowStart.value)
 // 正在向上扩窗时挂起滚动处理，避免重入。
 let loadingMore = false
-// 正在卸载顶部条目（等待 DOM 更新后补偿滚动位置）时挂起重入。
-let trimming = false
 
-const visibleItems = computed(() => state.chatItems.slice(windowStart.value))
+const visibleItems = computed(() =>
+  state.chatItems.slice(windowStart.value, windowEnd.value),
+)
 const hasMoreAbove = computed(() => windowStart.value > 0)
 // "活的" thinking 泡泡：当前位于对话最底部、且其下方还没有任何正文/工具/
 // 后续内容的那个 thinking。泡泡默认展开全文（见 ThinkingBlock）；live 状态
 // 用于两处：手动折叠时 tail-follow 对齐最新几行，以及下方 maybeScrollThinking
-// 在限额内流式增长时滚动钉底。
+// 在限额内流式增长时滚动钉底。窗口不含末尾（用户正在翻历史）时不存在 live 泡泡。
 const liveIdx = computed(() => {
+  if (windowEnd.value < state.chatItems.length) return -1
   const items = visibleItems.value
   if (items.length === 0) return -1
   const last = items[items.length - 1]
@@ -74,6 +88,7 @@ const liveIdx = computed(() => {
 
 function resetWindow() {
   windowStart.value = Math.max(0, state.chatItems.length - INITIAL_VISIBLE)
+  windowEnd.value = state.chatItems.length
 }
 
 function scrollToBottom() {
@@ -83,17 +98,20 @@ function scrollToBottom() {
 }
 
 // 内容比视口还短却仍有更早的消息时，自动扩窗直到填满视口，避免出现"看得到
-// 空白却无法滚动加载"的死区。扩窗发生在窗口顶部，底部锚点不动；每步扩窗后
-// 重新钉底并检查是否已溢出。
+// 空白却无法滚动加载"的死区。扩窗受 MAX_FILL 条数硬上限约束（不依赖滚动测量，
+// 见常量注释），视口已满时也提前返回——不打扰正在翻历史的用户；扩窗发生在
+// 窗口顶部，只有用户原本钉底时扩窗后才重新钉底。
 async function fillViewport() {
   for (let i = 0; i < 50; i++) {
     const el = chatRef.value
     if (!el) return
     if (windowStart.value === 0) return // 已全部加载
-    scrollToBottom()
+    if (windowSize.value >= MAX_FILL) return // 条数硬上限，防止测量失效时全量渲染
     if (el.scrollHeight > el.clientHeight) return // 已溢出，视口填满
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD
     windowStart.value = Math.max(0, windowStart.value - FILL_STEP)
     await nextTick()
+    if (atBottom) scrollToBottom()
   }
 }
 
@@ -103,10 +121,19 @@ function onScroll() {
   if (!el) return
   if (el.scrollTop <= TOP_THRESHOLD && hasMoreAbove.value) {
     loadMore()
-  } else {
-    // 向下滚动（或已离开顶部）时顺带卸载超出窗口上限的顶部条目。
-    trimExcess()
+    return
   }
+  // 滚回底部附近：窗口重新包含末尾（之前向上翻历史可能卸载了底部条目），
+  // 重新钉底对齐最新内容。
+  if (el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD) {
+    if (windowEnd.value < state.chatItems.length) {
+      resetWindow()
+      nextTick(() => { scrollToBottom(); void fillViewport() })
+    }
+    return
+  }
+  // 向下滚动（或已离开顶部）时顺带卸载超出窗口上限的底部条目。
+  trimExcess()
 }
 
 function loadMore() {
@@ -120,44 +147,39 @@ function loadMore() {
   nextTick(() => {
     loadingMore = false
     if (el) el.scrollTop = el.scrollHeight - prevHeight + prevTop
-    // 若扩出来的内容仍不足以让视口溢出（极短消息），继续补齐。
+    // 若扩出来的内容仍不足以让视口溢出（极短消息），继续补齐；视口已满时
+    // fillViewport 直接返回，不会把正在翻历史的用户拽到底部。
     void fillViewport()
-    // 窗口可能因此超过上限，尝试卸载顶部条目。
+    // 窗口可能因此超过上限，尝试卸载底部条目。
     trimExcess()
   })
 }
 
-// 窗口超过 MAX_VISIBLE 时从顶部卸载条目，防止 DOM 无限膨胀。只卸载已完全
-// 滚出视口上方的条目：按被卸条目的测量高度（含安全余量）限制卸载量，卸载后
-// 用 scrollHeight 差值精确补偿 scrollTop，当前视口内容不跳动。卸载分批进行
-// （每批最多 LOAD_MORE 条），用户继续下滚时逐批卸完。
-// 窗口始终包含末尾，卸载只发生在窗口顶部——正在流式输出的泡泡位于末尾，
-// 往上滚动（loadMore）或卸载都不会把它刷掉。
+// 窗口超过 MAX_VISIBLE 时从底部卸载条目，防止 DOM 无限膨胀。只卸载已完全
+// 滚出视口下方的条目——用户向上翻历史加载的旧消息位于窗口顶部，保留不卸载，
+// 滚动浏览体验与正常聊天一致。卸载底部内容不影响当前视口（scrollTop 不变），
+// 无需滚动补偿。流式输出期间不卸载，避免卸掉正在输出的泡泡；卸载分批进行
+// （每批最多 LOAD_MORE 条），用户继续滚动时逐批卸完。
 function trimExcess() {
-  if (loadingMore || trimming) return
+  if (loadingMore || state.isStreaming) return
   const el = chatRef.value
   if (!el) return
+  // 钉底中不卸载——用户正看着最新内容（可能是高度不足安全余量的短消息）。
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD) return
   const size = windowSize.value
   if (size <= MAX_VISIBLE) return
   const maxTrim = Math.min(size - MAX_VISIBLE, LOAD_MORE)
   const nodes = el.querySelectorAll<HTMLElement>('[data-chat-item]')
-  const prevTop = el.scrollTop
-  let removed = 0
+  const containerBottom = el.getBoundingClientRect().bottom
   let count = 0
-  for (let i = 0; i < maxTrim && i < nodes.length; i++) {
-    const h = nodes[i].offsetHeight + TRIM_SAFE_MARGIN
-    if (removed + h > prevTop) break // 再卸会拽动视口内容，等用户继续下滚
-    removed += h
+  // 从后往前数：完全位于视口下方的条目才卸载。
+  for (let i = nodes.length - 1; i >= 0 && count < maxTrim; i--) {
+    const rect = nodes[i].getBoundingClientRect()
+    if (rect.top < containerBottom - TRIM_SAFE_MARGIN) break // 该条已进入视口，停止
     count++
   }
   if (count === 0) return
-  trimming = true
-  const prevHeight = el.scrollHeight
-  windowStart.value += count
-  nextTick(() => {
-    trimming = false
-    if (el) el.scrollTop = el.scrollHeight - prevHeight + prevTop
-  })
+  windowEnd.value -= count
 }
 
 // Typeset math in the chat container after content changes.
@@ -195,6 +217,7 @@ watch(() => state.currentSession, () => {
 watch(() => state.chatItems, () => scheduleTypeset(), { deep: false })
 watch(() => state.streamTick, () => scheduleTypeset())
 watch(windowStart, () => scheduleTypeset())
+watch(windowEnd, () => scheduleTypeset())
 
 // init 整体替换 chatItems 后重置窗口并对齐到底部补齐视口（revert 重跑、切
 // session、重连都走这条路径）；顶层 item（turn / user / compact / error）
@@ -204,16 +227,25 @@ watch(() => state.chatItems, () => {
   resetWindow()
   nextTick(() => { scrollToBottom(); void fillViewport() })
 }, { deep: false })
-watch(() => state.chatItems.length, () => nextTick(scrollToBottom))
+watch(() => state.chatItems.length, () => {
+  // 窗口包含末尾时新追加的消息进入窗口；用户钉底时跟随滚动，翻历史时不打扰。
+  if (windowEnd.value === state.chatItems.length - 1) {
+    windowEnd.value = state.chatItems.length
+    const el = chatRef.value
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD) {
+      nextTick(scrollToBottom)
+    }
+  }
+})
 
-// 流式追加或向上扩窗都可能让窗口超过上限，随时检查并卸载顶部条目。
+// 流式追加或向上扩窗都可能让窗口超过上限，随时检查并卸载底部条目。
 watch(windowSize, () => {
   if (windowSize.value > MAX_VISIBLE) nextTick(trimExcess)
 })
 
 // turn 内部的"新泡泡"首次出现（thinking 从空变非空、正文从空变非空、新增
 // 工具调用）时滚到底部；而这些泡泡之后的流式内容增长不改变计数，不滚动，
-// 不打扰用户来回翻看。
+// 不打扰用户来回翻看。窗口不含末尾（翻历史中）或用户不在底部时不滚动。
 const bubbleCount = computed(() => {
   let n = 0
   for (const it of state.chatItems) {
@@ -225,7 +257,14 @@ const bubbleCount = computed(() => {
   }
   return n
 })
-watch(bubbleCount, () => nextTick(scrollToBottom))
+watch(bubbleCount, () => {
+  const el = chatRef.value
+  if (!el) return
+  if (windowEnd.value < state.chatItems.length) return
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD) {
+    nextTick(scrollToBottom)
+  }
+})
 
 // thinking 泡泡流式增长：折叠框高度随内容渐进增高（内容 1 行框 1 行高、2 行
 // 框 2 行高，……封顶于 CSS max-height 后不再变高）。每次框高度增长都滚到底
@@ -243,6 +282,7 @@ function maybeScrollThinking() {
   const el = chatRef.value
   const items = visibleItems.value
   if (!el || items.length === 0) return
+  if (windowEnd.value < state.chatItems.length) return // 窗口不含末尾（翻历史中）
   const last = items[items.length - 1]
   // 只处理底部"活的" thinking 泡泡（下方无正文/工具）。
   if (last.kind !== 'turn' || !last.thinking || last.text || last.tools.length > 0) return
@@ -260,11 +300,19 @@ watch(() => state.streamTick, () => nextTick(maybeScrollThinking))
 
 // 纯文字输出结束（run 完成，isStreaming 翻回 false）时滚一次底：流式期间
 // 每个 delta 都不钉底（见上），只在输出全部结束后滚到底展示完整结果；若内容
-// 仍不足一屏（新会话的短消息），顺带补齐视口拉进更多历史。
+// 仍不足一屏（新会话的短消息），顺带补齐视口拉进更多历史。窗口不含末尾或
+// 用户不在底部（正在翻历史）时不打扰。
 watch(
   () => state.isStreaming,
   (v, prev) => {
-    if (prev && !v) nextTick(() => { scrollToBottom(); void fillViewport() })
+    if (prev && !v) {
+      const el = chatRef.value
+      if (!el) return
+      if (windowEnd.value < state.chatItems.length) return
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD) {
+        nextTick(() => { scrollToBottom(); void fillViewport() })
+      }
+    }
   },
 )
 </script>

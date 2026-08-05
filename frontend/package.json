@@ -16,8 +16,11 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.11",
+    "jsdom": "^29.1.1",
     "typescript": "~5.7.2",
     "vite": "^6.0.5",
+    "vitest": "^4.1.10",
     "vue-tsc": "^3.3.8"
   }
 }
