@@ -912,7 +912,12 @@ class Agent:
                             self._permission_event.clear()
                             await self._permission_event.wait()
                             if self._permission_approved:
-                                self._additional_dirs.append(Path(perm_path).resolve())
+                                # The frontend also calls addDir (persisting to
+                                # session.json); dedupe so the approved path is
+                                # never listed twice.
+                                resolved = Path(perm_path).resolve()
+                                if resolved not in self._additional_dirs:
+                                    self._additional_dirs.append(resolved)
                                 self._persist_additional_dirs()
                                 # Retry the tool with updated additional_dirs
                                 on_output = self._make_output_callback(tc.id)
