@@ -37,9 +37,11 @@ Instructions the agent follows when this skill is loaded...
 
 ## Where to put it
 
-- Project-level: `.agents/skills/` (highest priority, shared with other
-  agents) or `.trilobite/skills/` in the working directory -- skills that
-  belong to this project, committed with the repo.
+- Project-level (default): `.agents/skills/` in the working directory --
+  highest priority and shared with other agents (Claude Code, Codex, ...),
+  so the skill works for anyone developing this repo. Fall back to
+  `.trilobite/skills/` only when the skill is Trilobite-specific and should
+  stay out of other agents' sight.
 - User-level: `~/.agents/skills/` (highest priority) or
   `~/.config/trilobite/skills/` -- personal skills used across projects.
 - Extra directory listed in `skill_dirs` in config.yaml -- shared team
