@@ -5,14 +5,23 @@ Skills follow the cross-tool "Agent Skills" convention: a directory
 frontmatter. The frontmatter carries the skill's ``name`` (required) and
 ``description`` (optional, falls back to the first line of the body).
 
-Discovery scans, in order (first match wins on name conflicts):
+Discovery scans, in priority order (first match wins on name conflicts):
 
 1. builtin skills (``create-skill``; lowest priority, any on-disk skill
    with the same name overrides them)
-2. project roots: ``<working_dir>/.trilobite/skills``, ``<working_dir>/.agents/skills``
-3. user roots: ``<config_dir>/skills`` (``~/.config/trilobite/skills``), ``~/.agents/skills``
-4. extra roots from the ``skill_dirs`` config option (``~`` expanded,
-   relative paths resolved against the working directory)
+2. trilobite roots: ``<working_dir>/.trilobite/skills``,
+   ``<working_dir>/.agents/skills``, ``<config_dir>/skills``,
+   ``~/.agents/skills``, plus extra roots from the ``skill_dirs`` config
+   option (``~`` expanded, relative paths resolved against the working
+   directory)
+3. opencode roots: ``<working_dir>/.opencode/{skill,skills}``,
+   ``<xdg_config>/opencode/{skill,skills}``
+4. kimi roots: ``<working_dir>/.kimi-code/skills``,
+   ``$KIMI_CODE_HOME/skills`` (default ``~/.kimi-code/skills``)
+5. claude roots: ``<working_dir>/.claude/skills``, ``~/.claude/skills``
+
+Cross-tool dedupe: a skill found in a higher-priority tool's directory wins
+over the same-named skill from a lower-priority tool.
 
 The agent bakes a listing of available skills into its system prompt (see
 ``format_skill_listing``) and loads the full skill content on demand via the
@@ -22,6 +31,7 @@ a skill is actually invoked.
 """
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,6 +112,12 @@ Instructions the agent follows when this skill is loaded...
   skills (relative paths resolve against the working directory, `~` is
   expanded).
 
+Directories of other tools are also scanned, in this priority order:
+trilobite > opencode (`.opencode/{skill,skills}`) > kimi
+(`.kimi-code/skills`) > claude (`.claude/skills`). A skill with the same
+name in a higher-priority directory wins. Prefer the trilobite directories
+above when the skill is meant for this agent.
+
 ## When to create a skill
 
 - The task has a fixed multi-step procedure with a checklist (code review,
@@ -131,12 +147,33 @@ BUILTIN_SKILLS: list[Skill] = [
 
 
 def skill_roots(working_dir: Path, extra_dirs: list[str] | None = None) -> list[Path]:
-    """All directories scanned for skills, project roots first."""
+    """All directories scanned for skills, in priority order (highest first).
+
+    Sources are grouped by tool so cross-tool skill sets dedupe predictably:
+    trilobite > opencode > kimi > claude. Within a tool, project-level roots
+    precede user-level roots. ``.agents/skills`` is the cross-tool shared
+    directory and counts as a trilobite root (scanned first).
+    """
+    home = Path.home()
+    xdg_config = get_config_dir().parent  # e.g. ~/.config
+    kimi_home = Path(os.environ.get("KIMI_CODE_HOME", home / ".kimi-code"))
     roots = [
+        # trilobite (highest priority)
         working_dir / ".trilobite" / "skills",
         working_dir / ".agents" / "skills",
         get_config_dir() / "skills",
-        Path.home() / ".agents" / "skills",
+        home / ".agents" / "skills",
+        # opencode (opencode accepts both singular and plural dir names)
+        working_dir / ".opencode" / "skills",
+        working_dir / ".opencode" / "skill",
+        xdg_config / "opencode" / "skills",
+        xdg_config / "opencode" / "skill",
+        # kimi
+        working_dir / ".kimi-code" / "skills",
+        kimi_home / "skills",
+        # claude
+        working_dir / ".claude" / "skills",
+        home / ".claude" / "skills",
     ]
     for d in extra_dirs or []:
         p = Path(d).expanduser()
@@ -194,7 +231,7 @@ def discover_skills(working_dir: Path, extra_dirs: list[str] | None = None) -> l
     (directory form) and ``<name>.md`` (flat form). Hidden entries are
     skipped. Builtin skills are seeded first and any on-disk skill with the
     same name overrides them (lowest priority); among disk roots the first
-    occurrence wins (project roots are scanned before user roots) and
+    occurrence wins -- trilobite > opencode > kimi > claude -- and
     duplicates are logged.
     """
     found: dict[str, Skill] = {s.name: s for s in BUILTIN_SKILLS}
