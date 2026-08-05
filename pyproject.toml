@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trilobite-code"
-version = "1.1.20"
+version = "1.1.21"
 description = "Add your description here"
 readme = "README.md"
 license = "MIT"

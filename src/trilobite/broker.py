@@ -52,17 +52,17 @@ class StreamBroker:
         t = event.get("type")
         async with self._lock:
             if t == "turn":
-                self._turn_buffer.append(event)
+                self._turn_buffer.append(dict(event))
                 self._is_running = True
             elif t in ("done", "cancelled", "error", "interrupted"):
                 self._is_running = False
             else:
-                self._turn_buffer.append(event)
+                self._append_to_buffer(event)
                 # When a tool finishes, drop its streamed output lines from
                 # the replay buffer: the final (truncated) result is now in
-                # the tool_result event, and keeping thousands of
-                # tool_output lines would make reconnect replay painfully
-                # slow.
+                # the tool_result event, and keeping the lines would make
+                # reconnect replay render output the frontend immediately
+                # discards anyway.
                 if t == "tool_result":
                     tcid = event.get("tool_call_id")
                     if tcid is not None:
@@ -90,6 +90,52 @@ class StreamBroker:
             self._persisted_len = history_len
             self._turn_buffer = []
 
+    def _append_to_buffer(self, event: dict) -> None:
+        """Append ``event`` to the replay buffer, folding in adjacent deltas.
+
+        The buffer is what a client attaching mid-run receives on top of the
+        ``init`` snapshot. A heavy run produces tens of thousands of raw
+        delta events (LLM thinking/text chunks, bash output lines), and
+        replaying each one separately would make the new client process them
+        as individual live deltas -- a long freeze while the page catches up
+        ("多开客户端时打开同一 session 加载迟缓"). Adjacent same-kind
+        deltas are therefore merged into a single event; the merged content
+        is exactly what the sequence appends to the same frontend state
+        (thinking/text concatenate, tool_output lines join with ``\\n``,
+        tool_stream args are cumulative), so the catch-up renders identically
+        with a handful of events. Live subscribers still receive every raw
+        event -- the merge only affects what mid-run attaches replay.
+
+        Buffer entries are stored as copies (``dict(event)``): merging mutates
+        a buffer entry in place, so it must never alias an event already
+        handed to a subscriber queue.
+        """
+        t = event.get("type")
+        buf = self._turn_buffer
+        if t == "thinking" and buf and buf[-1].get("type") == "thinking":
+            buf[-1]["text"] += event["text"]
+        elif t == "text" and buf and buf[-1].get("type") == "text":
+            buf[-1]["text"] += event["text"]
+        elif (
+            t == "tool_stream"
+            and not event.get("complete")
+            and buf
+            and buf[-1].get("type") == "tool_stream"
+            and not buf[-1].get("complete")
+            and buf[-1].get("tool_name") == event.get("tool_name")
+        ):
+            # args is the cumulative argument string; keep the latest.
+            buf[-1]["args"] = event["args"]
+        elif (
+            t == "tool_output"
+            and buf
+            and buf[-1].get("type") == "tool_output"
+            and buf[-1].get("tool_call_id") == event.get("tool_call_id")
+        ):
+            buf[-1]["text"] += "\n" + event["text"]
+        else:
+            self._turn_buffer.append(dict(event))
+
     async def attach(
         self,
         history_raw: list,
@@ -110,7 +156,8 @@ class StreamBroker:
         async with self._lock:
             q: asyncio.Queue = asyncio.Queue()
             for ev in self._turn_buffer:
-                q.put_nowait(ev)
+                # Copy: a later merge may still mutate the buffer entry.
+                q.put_nowait(dict(ev))
             self._subscribers.add(q)
             snapshot = {
                 "history": list(history_raw[: self._persisted_len]),

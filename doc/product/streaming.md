@@ -15,7 +15,7 @@
 per-session 事件总线，维护：
 
 * `_subscribers`：每个连接的 SSE 客户端对应一个 `asyncio.Queue`。
-* `_turn_buffer`：当前 run 的事件（从第一个 `turn` 到现在），用于回放给中途连接的客户端。
+* `_turn_buffer`：当前 run 的事件（从第一个 `turn` 到现在），用于回放给中途连接的客户端。缓冲以**合并形态**保存：相邻的同类增量事件折叠为一条（thinking/text 增量拼接、同一 tool_call 的 tool_output 行按 `\n` 连接、同一工具的 tool_stream 参数保留累计值），输出量大的 run 也只回放几十条事件而非数万条原始增量——中途连接的客户端瞬间追平，不会逐条处理 live delta 而卡死；live 订阅者仍收到原始逐条事件。工具结束时其 tool_output 条目从缓冲移除（最终结果已进 `tool_result`）。
 * `_persisted_len`：已"提交"到 `init` 快照的历史长度。回放缓冲对应 `persisted_len` 之后的历史，二者不重叠。
 * `_lock`：保证快照与回放的一致性。
 
