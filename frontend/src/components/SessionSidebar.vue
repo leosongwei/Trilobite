@@ -67,14 +67,37 @@
           <span class="info-value" :title="currentSessionCwd">{{ currentSessionCwd }}</span>
         </div>
         <details>
-          <summary>Allowed directories ({{ state.additionalDirs.length }})</summary>
-          <div v-for="d in state.additionalDirs" :key="d" class="dir-item">
-            <span class="dir-path" :title="d">{{ d }}</span>
-            <span class="delete" @click="handleRemoveDir(d)">&times;</span>
+          <summary>Allowed directories ({{ groupDirs.length }})</summary>
+          <div v-if="groupDirs.length === 0" class="requests-empty">
+            No allowed directories
+          </div>
+          <div v-for="entry in groupDirs" :key="entry.sessionId + entry.path" class="dir-item">
+            <span class="dir-path" :title="entry.path">
+              <span v-if="entry.source" class="dir-source">{{ entry.source }}</span>
+              {{ entry.path }}
+            </span>
+            <span class="delete" @click="handleRemoveGroupDir(entry)">&times;</span>
           </div>
           <div class="dir-add">
             <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
             <button @click="handleAddDir">+</button>
+          </div>
+        </details>
+        <details ref="requestsDetails" class="requests-list">
+          <summary>Pending Requests ({{ state.pendingRequests.length }})</summary>
+          <div v-if="state.pendingRequests.length === 0" class="requests-empty">
+            No pending requests
+          </div>
+          <div v-for="r in state.pendingRequests" :key="r.key" class="request-item">
+            <div class="request-item-label">
+              <span class="request-kind">{{ r.kind === 'plan_exit' ? 'mode' : 'dir' }}</span>
+              <span class="request-agent" :title="r.session">{{ requestAgentLabel(r) }}</span>
+            </div>
+            <div class="request-item-detail">{{ requestDetail(r) }}</div>
+            <div class="request-actions">
+              <button class="request-approve" @click="approveRequest(r)">Approve</button>
+              <button class="request-reject" @click="rejectRequest(r)">Reject</button>
+            </div>
           </div>
         </details>
       </div>
@@ -98,8 +121,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useStore } from '../store'
-import { getCwd, getVersion } from '../api'
-import type { Session } from '../types'
+import { getCwd, getVersion, removeDir as apiRemoveDir } from '../api'
+import type { Session, PendingRequest } from '../types'
+import { findSessionRoot } from '../utils/sessions'
 import FileTree from './FileTree.vue'
 import type { FsRoot } from './FileTree.vue'
 
@@ -111,9 +135,9 @@ const emit = defineEmits<{
 
 // Diff base branch, shared with the file manager; the tree's change
 // highlighting always compares the working tree against it.
-const props = defineProps<{ base: string }>()
+const props = defineProps<{ base: string; requestsTick?: number }>()
 
-const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession } = useStore()
+const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession, approveRequest, rejectRequest } = useStore()
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
@@ -122,6 +146,28 @@ const editingName = ref(false)
 const editName = ref('')
 const sessionsHeight = ref(300)
 const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
+const requestsDetails = ref<HTMLDetailsElement | null>(null)
+
+// The aggregated banner's Review button bumps requestsTick to open the
+// Requests list (the user can still collapse/expand it freely afterwards).
+watch(
+  () => props.requestsTick,
+  () => {
+    if (requestsDetails.value) requestsDetails.value.open = true
+  },
+)
+
+// Requests list display helpers: which agent asked, and for what.
+function requestAgentLabel(r: PendingRequest): string {
+  if (r.childType) return `[${r.childType}: ${r.childDescription}]`
+  const s = state.sessions.find((x) => x.id === r.session)
+  return s?.name || r.session
+}
+
+function requestDetail(r: PendingRequest): string {
+  if (r.kind === 'plan_exit') return 'Switch to Build mode'
+  return r.path ?? ''
+}
 
 function onRootInfo(info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }) {
   emit('root-info', info)
@@ -300,5 +346,48 @@ async function handleAddDir() {
 
 async function handleRemoveDir(path: string) {
   await removeDir(path)
+}
+
+// ── allowed directories (group-scoped) ─────────────────────────────────────
+// Allowed directories are per-session, but a subagent's grants (made from
+// its own permission requests) are invisible while browsing the main
+// session. Show the union of the current main-session group instead, with
+// the owning session labelled on entries that do not belong to the session
+// being viewed. The + box still adds to the viewed session only.
+interface GroupDirEntry {
+  sessionId: string
+  path: string
+  source: string | null
+}
+
+const groupDirs = computed<GroupDirEntry[]>(() => {
+  const cur = state.currentSession
+  if (!cur) return []
+  const root = findSessionRoot(state.sessions, cur)
+  if (!root) return []
+  const group = state.sessions.filter((s) => s.id === root || s.parent_session === root)
+  const entries: GroupDirEntry[] = []
+  for (const s of group) {
+    let source: string | null = null
+    if (s.id !== cur) {
+      source = s.subagent_type
+        ? `[${s.subagent_type}: ${s.description || s.id}]`
+        : s.name
+    }
+    for (const p of s.additional_dirs ?? []) {
+      entries.push({ sessionId: s.id, path: p, source })
+    }
+  }
+  return entries
+})
+
+async function handleRemoveGroupDir(entry: GroupDirEntry) {
+  if (entry.sessionId === state.currentSession) {
+    await handleRemoveDir(entry.path)
+    return
+  }
+  const dirs = await apiRemoveDir(entry.sessionId, entry.path)
+  const s = state.sessions.find((x) => x.id === entry.sessionId)
+  if (s) s.additional_dirs = dirs
 }
 </script>

@@ -5,6 +5,26 @@ export interface ImageMeta {
   date?: string
 }
 
+// A pending approval request: a directory grant (main session or subagent)
+// or a plan-exit switch request. Multiple requests can be pending at once
+// (main session + several subagents), so they live in a list keyed by
+// requesting session instead of a single banner slot.
+export type PendingRequestKind = 'dir' | 'plan_exit'
+
+export interface PendingRequest {
+  /** Unique dedupe key: `${session}:${kind}:${path ?? ''}`. */
+  key: string
+  kind: PendingRequestKind
+  /** Session that made the request (main session id or subagent session id). */
+  session: string
+  /** Subagent display info, set for subagent directory requests. */
+  childType?: string
+  childDescription?: string
+  path?: string
+  tool?: string
+  message?: string
+}
+
 export type SSEEvent =
   | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
   | { type: 'user'; text: string; user_seq: number; images?: ImageMeta[] }
@@ -19,8 +39,8 @@ export type SSEEvent =
   | { type: 'tool_result'; tool: string; result: string; tool_call_id?: string; diff?: DiffRow[]; diff_prev?: string; diff_current?: string }
   | { type: 'usage'; token_count: number; max_context_tokens: number }
   | { type: 'status'; text: string }
-  | { type: 'plan_exit_request' }
-  | { type: 'permission_request'; path: string; tool: string; message: string }
+  | { type: 'plan_exit_request'; session: string }
+  | { type: 'permission_request'; session: string; path: string; tool: string; message: string }
   | { type: 'subagents'; parent: string; children: SubagentChild[] }
   | { type: 'subagent_state'; session: string; state: string }
   | { type: 'subagent_permission_request'; child_session: string; child_type: string; child_description: string; path: string; tool: string; message: string }
@@ -62,6 +82,7 @@ export interface Session {
   subagent_type?: string
   description?: string
   sealed?: boolean
+  additional_dirs?: string[]
   created_at?: number
   updated_at?: number
 }

@@ -70,6 +70,19 @@ Content-Type: application/json
 - **权限提示而非硬拒绝**：当模型尝试访问工作区外的路径时，Agent 暂停执行，前端弹出横幅让用户授权（Grant）或拒绝（Deny）。批准后目录自动加入 `additional_dirs` 并持久化，Agent 自动重试工具调用。用户无需手动添加目录。
 - **敏感文件硬拒绝**：`.env`、SSH 密钥等敏感文件无论位置一律拒绝，不走权限提示流程。
 
+### 权限请求 UI（横幅 + Pending Requests 列表）
+
+所有待审批请求（目录授权、切换到 build 模式）统一进入前端 **pending requests 列表**，同一主会话组（主 session + 其子 agent）内的请求互不覆盖、各自独立审批：
+
+- **横幅**：当前浏览的 session 所属主会话组内有 pending 请求时弹出。只有一个请求时显示详情与 Approve/Reject（目录授权显示 Grant/Deny）；多个请求并发时聚合为 "N permission requests are pending" + Review 按钮（打开侧边栏 Pending Requests 列表）。主 agent 与子 agent 的请求都 fan-out 到整个主会话组的 broker（事件带 `session` 字段标明请求方），浏览组内任意 session 都能看到。
+- **Pending Requests 列表**：侧边栏 "Allowed directories" 下方可展开，列出全部 pending 请求（含请求方、路径/模式切换、Approve/Reject 按钮）。批准后条目消失；目录授权批准的路径进入该 session 的 Allowed directories，横幅同步消失。
+
+请求被批准/拒绝后条目即从列表移除；请求方 session 停止运行（未答复即结束）时条目自动清理。
+
+### Allowed directories 的组内展示
+
+Allowed directories 本身是 per-session 的（子 agent 批准的目录只写入该子 session，不传播给父或兄弟）。侧边栏展示时按**当前主会话组**合并：浏览组内任意 session 都能看到主 session + 全部子 agent 的授权目录并集，非当前浏览 session 的条目标注来源（`[type: description]` 或 session 名），可删除。`+` 添加框只作用于当前浏览的 session。
+
 ### 共享前缀攻击防护
 
 边界检查使用路径分隔符感知的前缀匹配，避免 `/home/user/project-evil` 通过 `/home/user/project` 的前缀检查：

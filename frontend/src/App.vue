@@ -19,6 +19,7 @@
     <SessionSidebar
       ref="sidebarRef"
       :base="diffBase"
+      :requests-tick="requestsTick"
       @select="sidebarOpen = false"
       @open-file="handleOpenFile"
       @root-info="(info) => { rootInfoMap[info.path] = info }"
@@ -44,20 +45,14 @@
         </div>
         <ChatView />
         <template v-if="state.currentSession">
-          <div v-if="state.planExitRequest" class="plan-exit-banner">
-            <span>Agent requests to switch to Build mode</span>
-            <button class="approve" @click="approvePlanExit">Approve</button>
-            <button class="reject" @click="rejectPlanExit">Reject</button>
+          <div v-if="bannerRequest" class="plan-exit-banner">
+            <span>{{ bannerText }}</span>
+            <button class="approve" @click="approveRequest(bannerRequest)">{{ bannerApproveLabel }}</button>
+            <button class="reject" @click="rejectRequest(bannerRequest)">{{ bannerRejectLabel }}</button>
           </div>
-          <div v-if="state.permissionRequest" class="plan-exit-banner">
-            <span>Agent needs access to: {{ state.permissionRequest.path }}</span>
-            <button class="approve" @click="approvePermission">Grant</button>
-            <button class="reject" @click="rejectPermission">Deny</button>
-          </div>
-          <div v-if="state.subagentPermissionRequest" class="plan-exit-banner">
-            <span>Subagent [{{ state.subagentPermissionRequest.childType }}: {{ state.subagentPermissionRequest.childDescription }}] needs access to: {{ state.subagentPermissionRequest.path }}</span>
-            <button class="approve" @click="approveSubagentPermission">Grant</button>
-            <button class="reject" @click="rejectSubagentPermission">Deny</button>
+          <div v-else-if="groupPendingCount > 1" class="plan-exit-banner">
+            <span>{{ groupPendingCount }} permission requests are pending</span>
+            <button class="approve" @click="openRequestsList">Review</button>
           </div>
           <ChatInput />
           <TokenBar />
@@ -78,8 +73,10 @@ import TokenBar from './components/TokenBar.vue'
 import FileManager from './components/FileManager.vue'
 import type { RootInfo } from './components/FileManager.vue'
 import type { OpenFilePayload } from './components/FileTree.vue'
+import type { PendingRequest } from './types'
+import { findSessionRoot } from './utils/sessions'
 
-const { state, loadSessions, setMode, approvePlanExit, rejectPlanExit, approvePermission, rejectPermission, approveSubagentPermission, rejectSubagentPermission, selectSession } = useStore()
+const { state, loadSessions, setMode, approveRequest, rejectRequest, selectSession } = useStore()
 const sidebarOpen = ref(false)
 const showFiles = ref(false)
 const sidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
@@ -90,6 +87,53 @@ const diffBase = ref('master')
 // Git info per workspace root, collected from the sidebar tree's root-info
 // events; the file manager needs it for the diff branch selector.
 const rootInfoMap = reactive<Record<string, RootInfo>>({})
+
+// ── permission banners ─────────────────────────────────────────────────────
+// The banner shows pending requests of the current main-session group (the
+// main session and its subagents), no matter which session is being viewed,
+// so a subagent's request is visible while browsing a sibling.
+function sessionRoot(id: string | null): string | null {
+  return findSessionRoot(state.sessions, id)
+}
+
+const groupPending = computed<PendingRequest[]>(() => {
+  const root = sessionRoot(state.currentSession)
+  if (!root) return []
+  return state.pendingRequests.filter((r) => sessionRoot(r.session) === root)
+})
+
+const groupPendingCount = computed(() => groupPending.value.length)
+
+// One pending request: show its details with Approve/Reject. Several: collapse
+// to a count and point at the sidebar Requests list.
+const bannerRequest = computed(() =>
+  groupPending.value.length === 1 ? groupPending.value[0] : null,
+)
+
+const bannerText = computed(() => {
+  const r = bannerRequest.value
+  if (!r) return ''
+  if (r.kind === 'plan_exit') return 'Agent requests to switch to Build mode'
+  if (r.childType) {
+    return `Subagent [${r.childType}: ${r.childDescription}] needs access to: ${r.path}`
+  }
+  return `Agent needs access to: ${r.path}`
+})
+
+const bannerApproveLabel = computed(() =>
+  bannerRequest.value?.kind === 'plan_exit' ? 'Approve' : 'Grant',
+)
+const bannerRejectLabel = computed(() =>
+  bannerRequest.value?.kind === 'plan_exit' ? 'Reject' : 'Deny',
+)
+
+// The aggregated banner's Review button opens the sidebar and expands the
+// Requests list (SessionSidebar watches the tick).
+const requestsTick = ref(0)
+function openRequestsList() {
+  sidebarOpen.value = true
+  requestsTick.value++
+}
 
 // Clicking a file in the sidebar tree opens it in the file manager view.
 function handleOpenFile(f: OpenFilePayload) {

@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem } from './types'
+import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem, PendingRequest } from './types'
 import * as api from './api'
 
 interface State {
@@ -18,21 +18,17 @@ interface State {
   fsRefreshTick: number
   planMode: boolean
   additionalDirs: string[]
-  planExitRequest: boolean
-  permissionRequest: { path: string; tool: string; message: string } | null
+  // Pending approval requests (directory grants + plan-exit), one entry per
+  // requesting session. Concurrent requests from the main session and several
+  // subagents never overwrite each other; the banner and the sidebar Requests
+  // list both render from this array. Entries are pruned when the requesting
+  // session stops running (an unanswered request blocks its run).
+  pendingRequests: PendingRequest[]
   isSubagent: boolean
   sealed: boolean
   subagentType: string | null
   subagentDescription: string
   enableVl: boolean
-  subagentPermissionRequest: {
-    childSession: string
-    childType: string
-    childDescription: string
-    path: string
-    tool: string
-    message: string
-  } | null
 }
 
 const state = reactive<State>({
@@ -47,14 +43,12 @@ const state = reactive<State>({
   fsRefreshTick: 0,
   planMode: false,
   additionalDirs: [],
-  planExitRequest: false,
-  permissionRequest: null,
+  pendingRequests: [],
   isSubagent: false,
   sealed: false,
   subagentType: null,
   subagentDescription: '',
   enableVl: false,
-  subagentPermissionRequest: null,
 })
 
 let currentTurnIdx = -1
@@ -136,6 +130,33 @@ function markRunningSubagentsStopped(endType: string) {
       s.is_running = false
     }
   }
+}
+
+function requestKey(kind: PendingRequest['kind'], session: string, path?: string): string {
+  return `${session}:${kind}:${path ?? ''}`
+}
+
+function addPendingRequest(req: Omit<PendingRequest, 'key'>) {
+  const key = requestKey(req.kind, req.session, req.path)
+  if (!state.pendingRequests.some((r) => r.key === key)) {
+    state.pendingRequests.push({ ...req, key })
+  }
+}
+
+function removePendingRequest(req: PendingRequest) {
+  state.pendingRequests = state.pendingRequests.filter((r) => r.key !== req.key)
+}
+
+// An unanswered request blocks its agent's run, so a session that is no
+// longer running can no longer be awaiting approval. Drop requests for the
+// current session (its run just ended) and for any session that is not
+// running (hard-stopped children on a main-session cancel).
+function dropEndedSessionRequests() {
+  state.pendingRequests = state.pendingRequests.filter(
+    (r) =>
+      r.session !== state.currentSession &&
+      state.sessions.some((s) => s.id === r.session && s.is_running),
+  )
 }
 
 function handleSSEEvent(event: SSEEvent) {
@@ -280,15 +301,17 @@ function handleSSEEvent(event: SSEEvent) {
       break
 
     case 'plan_exit_request':
-      state.planExitRequest = true
+      addPendingRequest({ kind: 'plan_exit', session: event.session })
       break
 
     case 'permission_request':
-      state.permissionRequest = {
+      addPendingRequest({
+        kind: 'dir',
+        session: event.session,
         path: event.path,
         tool: event.tool,
         message: event.message,
-      }
+      })
       break
 
     case 'subagents': {
@@ -318,19 +341,24 @@ function handleSSEEvent(event: SSEEvent) {
       if (event.state !== 'running') {
         const s = state.sessions.find((x) => x.id === event.session)
         if (s) s.is_running = false
+        // A finished subagent can no longer be awaiting approval.
+        state.pendingRequests = state.pendingRequests.filter(
+          (r) => r.session !== event.session,
+        )
       }
       break
     }
 
     case 'subagent_permission_request':
-      state.subagentPermissionRequest = {
-        childSession: event.child_session,
+      addPendingRequest({
+        kind: 'dir',
+        session: event.child_session,
         childType: event.child_type,
         childDescription: event.child_description,
         path: event.path,
         tool: event.tool,
         message: event.message,
-      }
+      })
       break
 
     case 'done':
@@ -341,12 +369,14 @@ function handleSSEEvent(event: SSEEvent) {
       state.fsRefreshTick++
       if (event.type === 'interrupted' && state.isSubagent) state.sealed = true
       markRunningSubagentsStopped(event.type)
+      dropEndedSessionRequests()
       closeTurn()
       break
 
     case 'error': {
       state.isStreaming = false
       state.fsRefreshTick++
+      dropEndedSessionRequests()
       let content = ''
       if (event.status_code) {
         content += `[HTTP ${event.status_code}] `
@@ -517,6 +547,11 @@ function ensureSessionPolling() {
   sessionPollTimer = setInterval(async () => {
     try {
       state.sessions = await api.getSessions()
+      // Unresolved requests block their agent's run; a session that stopped
+      // running (e.g. cancelled from another tab) can no longer be awaiting
+      // approval, so prune those entries.
+      const running = new Set(state.sessions.filter((s) => s.is_running).map((s) => s.id))
+      state.pendingRequests = state.pendingRequests.filter((r) => running.has(r.session))
     } catch {
       // transient error; the next tick retries
     }
@@ -618,54 +653,40 @@ export function useStore() {
     if (s) s.name = name
   }
 
-  async function approvePlanExit() {
-    if (!state.currentSession) return
-    state.planExitRequest = false
-    state.planMode = false
-    await api.planExit(state.currentSession, true)
-  }
-
-  async function rejectPlanExit() {
-    if (!state.currentSession) return
-    state.planExitRequest = false
-    await api.planExit(state.currentSession, false)
-  }
-
-  async function approvePermission() {
-    if (!state.currentSession || !state.permissionRequest) return
-    const permPath = state.permissionRequest.path
-    state.permissionRequest = null
-    // Add the directory to additional_dirs
-    if (!state.additionalDirs.includes(permPath)) {
-      state.additionalDirs.push(permPath)
-      await api.addDir(state.currentSession, permPath)
+  async function approveRequest(req: PendingRequest) {
+    // Remove the entry first so the banner/list update immediately; the API
+    // call unblocks the waiting agent.
+    removePendingRequest(req)
+    if (req.kind === 'plan_exit') {
+      if (req.session === state.currentSession) state.planMode = false
+      await api.planExit(req.session, true)
+    } else {
+      if (!req.path) return
+      if (req.session === state.currentSession) {
+        state.additionalDirs = await api.addDir(req.session, req.path)
+      } else {
+        // Approved for a session we are not viewing (e.g. a subagent while
+        // browsing the main session): refresh its dirs in the polled list so
+        // the sidebar Allowed directories updates right away.
+        const dirs = await api.addDir(req.session, req.path)
+        const s = state.sessions.find((x) => x.id === req.session)
+        if (s) s.additional_dirs = dirs
+      }
+      await api.resolvePermission(req.session, true)
     }
-    await api.resolvePermission(state.currentSession, true)
   }
 
-  async function rejectPermission() {
-    if (!state.currentSession || !state.permissionRequest) return
-    state.permissionRequest = null
-    await api.resolvePermission(state.currentSession, false)
+  async function rejectRequest(req: PendingRequest) {
+    removePendingRequest(req)
+    if (req.kind === 'plan_exit') {
+      await api.planExit(req.session, false)
+    } else {
+      await api.resolvePermission(req.session, false)
+    }
   }
 
   async function interruptSubagent(name: string) {
     await api.interruptSession(name)
-  }
-
-  async function approveSubagentPermission() {
-    if (!state.subagentPermissionRequest) return
-    const { childSession, path } = state.subagentPermissionRequest
-    state.subagentPermissionRequest = null
-    await api.addDir(childSession, path)
-    await api.resolvePermission(childSession, true)
-  }
-
-  async function rejectSubagentPermission() {
-    if (!state.subagentPermissionRequest) return
-    const { childSession } = state.subagentPermissionRequest
-    state.subagentPermissionRequest = null
-    await api.resolvePermission(childSession, false)
   }
 
   async function revert(userSeq: number, message: string) {
@@ -699,13 +720,9 @@ export function useStore() {
     addDir,
     removeDir,
     renameSession,
-    approvePlanExit,
-    rejectPlanExit,
-    approvePermission,
-    rejectPermission,
+    approveRequest,
+    rejectRequest,
     interruptSubagent,
-    approveSubagentPermission,
-    rejectSubagentPermission,
     revert,
   }
 }
