@@ -90,7 +90,7 @@ grep -E "^def .*\(self\):$" app.py
 
 * `is_git_repo(root)` → bool（`git rev-parse --is-inside-work-tree`）
 * `list_dir(root, relpath)` → 单个目录的条目清单 + git 状态：
-  * git 仓库：`git ls-files -- <dir>` 取 tracked 文件 + `git ls-files -o --exclude-standard -- <dir>` 取未跟踪非忽略文件（被 .gitignore 忽略的目录如 `.venv`/`node_modules` 天然不出现），再配合 `git status --porcelain -- <dir>` 标记 `modified/added/deleted/untracked`，其余为 `clean`
+  * git 仓库：`git ls-files -z -- <dir>` 取 tracked 文件 + `git ls-files -z -o --exclude-standard -- <dir>` 取未跟踪非忽略文件（被 .gitignore 忽略的目录如 `.venv`/`node_modules` 天然不出现；`-z` 保证中文等非 ASCII 路径不被转义），再配合 `git status --porcelain -z -- <dir>` 标记 `modified/added/deleted/untracked`，其余为 `clean`
   * 非 git 仓库：`os.listdir`（复用 `file_discovery._NOISE_DIRS` 剪枝噪音目录），全部标记 `untracked`
 * `list_branches(root)` → 分支名列表 + 当前分支（`git for-each-ref refs/heads` + `git symbolic-ref --short HEAD`）
 * `show_base_content(root, base, relpath)` → `git show <base>:<relpath>` 的基线内容；base 分支不存在或文件在基线中不存在时返回 None + 原因
