@@ -84,7 +84,7 @@ per-session 事件总线，维护：
 切到历史很长的 session 时，一次性渲染全部 `chatItems` 会让浏览器卡顿很久，因此 `ChatView` 对消息列表做**窗口化**（防止 DOM 膨胀）：
 
 * 窗口由两个边界定义：`visibleItems = chatItems.slice(windowStart, windowEnd)`（半开区间）。窗口通常包含末尾（`windowEnd === chatItems.length`），流式输出向底部追加时窗口跟着增长；用户滚回底部时窗口重新包含末尾。v-for 以条目对象为 key，扩窗/卸载只挂载/卸载变化的条目，不复用整窗重挂载。
-* 初始只渲染底部 `INITIAL_VISIBLE`（2）条；`fillViewport` 以 `FILL_STEP`（2）条为步长向上增量扩窗，每步钉底并检查视口，直到内容溢出视口（只加载足够填满页面的数量）；短 session 则一直扩到全部加载。视口已满时 `fillViewport` 直接返回（不打扰正在翻历史的用户），只在用户原本钉底时扩窗后重新钉底。run 结束（`isStreaming` 翻回 false）时若内容仍不足一屏也会补齐。
+* 初始只渲染底部 `INITIAL_VISIBLE`（2）条；`fillViewport` 以 `FILL_STEP`（2）条为步长向上增量扩窗，每步钉底并检查视口，直到内容溢出视口（只加载足够填满页面的数量）或达到条数硬上限 `MAX_FILL`（30）——硬上限不依赖 `scrollHeight` 测量，滚动容器测量一旦异常（高度不受约束/内容高度未更新）也不会把整个历史一次性挂进 DOM；短 session 则一直扩到全部加载。视口已满时 `fillViewport` 直接返回（不打扰正在翻历史的用户），只在用户原本钉底时扩窗后重新钉底。run 结束（`isStreaming` 翻回 false）时若内容仍不足一屏也会补齐。
 * 用户滚到顶部（`scrollTop <= TOP_THRESHOLD`）时向上扩窗 `LOAD_MORE`（10）条，扩窗前后用 `scrollHeight` 差值恢复 `scrollTop`，保持视觉位置不跳。顶部有"滚动到顶部加载更早的消息…"提示。
 * 窗口有上限 `MAX_VISIBLE`（40）条：超出后从**底部**卸载条目（`trimExcess`，每批最多 `LOAD_MORE` 条）——只卸载已完全滚出视口下方的条目（按 `getBoundingClientRect` 判断，含安全余量），用户向上翻历史加载的旧消息位于窗口顶部，保留不卸载，可以一路翻到最早。卸载底部内容不影响当前视口，无需滚动补偿；流式输出期间和用户钉底时不卸载（避免卸掉正在输出的泡泡或正在看的短消息）。滚回底部附近（`BOTTOM_THRESHOLD`）时窗口重置回底部 `INITIAL_VISIBLE` 条并重新钉底。
 * 滚动钉底（`scrollToBottom`）的触发时机：

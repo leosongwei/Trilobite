@@ -42,6 +42,11 @@ const chatRef = ref<HTMLElement>()
 const INITIAL_VISIBLE = 2 // 初始从底部渲染的条数（fillViewport 会快速补齐到填满视口）
 const FILL_STEP = 2       // fillViewport 每次向上扩窗的条数
 const LOAD_MORE = 10      // 滚到顶部时向上扩窗的条数
+const MAX_FILL = 30       // fillViewport 扩窗的条数硬上限。不依赖 scrollHeight
+                          // 测量——滚动容器测量一旦异常（高度不受约束/内容高度
+                          // 未更新），"视口已满"判断会失效并一路扩到全部渲染，
+                          // 切 session 时把整个历史一次性挂进 DOM。条数上限
+                          // 保证无论测量如何，初始窗口始终有界。
 const MAX_VISIBLE = 40    // 窗口上限：超过后从底部卸载已滚出视口的条目。单条
                           // 泡泡高度不可控（超长 thinking / 大量工具条目），
                           // 固定条数上限才保证 DOM 有界。
@@ -91,13 +96,15 @@ function scrollToBottom() {
 }
 
 // 内容比视口还短却仍有更早的消息时，自动扩窗直到填满视口，避免出现"看得到
-// 空白却无法滚动加载"的死区。视口已满时直接返回——不打扰正在翻历史的用户；
-// 扩窗发生在窗口顶部，只有用户原本钉底时扩窗后才重新钉底。
+// 空白却无法滚动加载"的死区。扩窗受 MAX_FILL 条数硬上限约束（不依赖滚动测量，
+// 见常量注释），视口已满时也提前返回——不打扰正在翻历史的用户；扩窗发生在
+// 窗口顶部，只有用户原本钉底时扩窗后才重新钉底。
 async function fillViewport() {
   for (let i = 0; i < 50; i++) {
     const el = chatRef.value
     if (!el) return
     if (windowStart.value === 0) return // 已全部加载
+    if (windowSize.value >= MAX_FILL) return // 条数硬上限，防止测量失效时全量渲染
     if (el.scrollHeight > el.clientHeight) return // 已溢出，视口填满
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD
     windowStart.value = Math.max(0, windowStart.value - FILL_STEP)
