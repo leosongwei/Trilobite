@@ -41,7 +41,13 @@ frontmatter 缺失时整个文件当作正文；无可用 name 的 skill 被跳�
 2. **用户级**：`<config_dir>/skills`（默认 `~/.config/trilobite/skills`）、`~/.agents/skills`
 3. **扩展目录**：`config.yaml` 的 `skill_dirs` 列表（相对路径基于工作目录，支持 `~` 展开），如 `["~/team-skills"]`
 
+内置 `create-skill` 在扫描前注册、优先级最低，磁盘同名 skill 覆盖它。
+
 `.agents/skills` 是跨工具通用目录，与 opencode / Kimi CLI 共享同一批 skill。隐藏条目（`.` 开头）跳过。
+
+## 内置 skills
+
+内置 `create-skill`（教模型如何创建/修改 skill：格式、frontmatter 字段、两种文件形态、放置位置、命名与验证），保证任何会话至少有一个可用 skill。内置 skill 优先级最低：磁盘上出现同名 skill 时覆盖内置版本（用户可自定义 create-skill 的行为）。内置 skill 没有磁盘文件，加载时 `skill` 工具会注明 "built-in"。
 
 ## 暴露方式
 
@@ -52,12 +58,13 @@ Agent 初始化时发现 skills，把清单追加到 system prompt（紧跟在�
 ```
 <available_skills>
 The following skills are available. When a task matches a skill's purpose, call the skill tool with the skill's name to load its full instructions.
+- create-skill: Create a new skill (SKILL.md + frontmatter) for this agent, or edit an existing one. (built-in)
 - code-review: Review code changes for bugs. (at /path/to/skills/code-review/SKILL.md)
 - deploy: Deploy the service. (at /path/to/team-skills/deploy/SKILL.md)
 </available_skills>
 ```
 
-无 skill 时不输出该块。清单只含 name/description/path，不含正文。
+清单至少包含内置 `create-skill`；内置条目标注 `built-in`。清单只含 name/description/path，不含正文。
 
 ### `skill` 工具
 
@@ -84,4 +91,5 @@ Relative paths in this skill (e.g. scripts/, reference/) are relative to this ba
 
 * 清单注入 system prompt 而非工具描述：工具 description 有长度上限，且清单与 env 块/AGENTS.md 一样随会话固化，保持 API 前缀稳定、上下文缓存持续命中
 * 不自动加载正文：模型只在任务匹配时调用 `skill` 工具，避免无关 skill 占满上下文
+* 内置 skill 用代码常量而非磁盘文件：与提示词同语义（行为随代码版本化），用户仍可用同名磁盘 skill 覆盖
 * 不支持 sub-skill（`parent.child` 嵌套）与 URL 形式 skill；`skill_dirs` 覆盖本地目录场景

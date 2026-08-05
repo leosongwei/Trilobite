@@ -54,12 +54,18 @@ class SkillTool(Tool):
         skills = discover_skills(Path(working_dir), init_config().get("skill_dirs", []))
         for s in skills:
             if s.name == name:
+                if s.builtin:
+                    base_line = "This is a built-in skill; it has no files on disk."
+                else:
+                    base_line = (
+                        f"Base directory for this skill: {s.base_dir}\n"
+                        "Relative paths in this skill (e.g. scripts/, reference/) are relative to this base directory."
+                    )
                 return (
                     f'<skill_content name="{s.name}">\n'
                     f"# Skill: {s.name}\n\n"
                     f"{s.content}\n\n"
-                    f"Base directory for this skill: {s.base_dir}\n"
-                    "Relative paths in this skill (e.g. scripts/, reference/) are relative to this base directory.\n"
+                    f"{base_line}\n"
                     "</skill_content>"
                 )
         available = ", ".join(s.name for s in skills) or "none"

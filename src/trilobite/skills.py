@@ -7,9 +7,11 @@ frontmatter. The frontmatter carries the skill's ``name`` (required) and
 
 Discovery scans, in order (first match wins on name conflicts):
 
-1. project roots: ``<working_dir>/.trilobite/skills``, ``<working_dir>/.agents/skills``
-2. user roots: ``<config_dir>/skills`` (``~/.config/trilobite/skills``), ``~/.agents/skills``
-3. extra roots from the ``skill_dirs`` config option (``~`` expanded,
+1. builtin skills (``create-skill``; lowest priority, any on-disk skill
+   with the same name overrides them)
+2. project roots: ``<working_dir>/.trilobite/skills``, ``<working_dir>/.agents/skills``
+3. user roots: ``<config_dir>/skills`` (``~/.config/trilobite/skills``), ``~/.agents/skills``
+4. extra roots from the ``skill_dirs`` config option (``~`` expanded,
    relative paths resolved against the working directory)
 
 The agent bakes a listing of available skills into its system prompt (see
@@ -21,7 +23,7 @@ a skill is actually invoked.
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,9 @@ _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.DO
 #: max length of the description fallback / listing truncation
 _DESC_MAX = 240
 
+#: marker path for builtin skills -- never a real file on disk
+_BUILTIN_ROOT = Path("<builtin>")
+
 
 @dataclass
 class Skill:
@@ -46,12 +51,83 @@ class Skill:
     description: str
     path: Path
     content: str
+    builtin: bool = field(default=False)
 
     @property
     def base_dir(self) -> Path:
         """Directory the skill lives in; relative paths in the body are
-        relative to this directory."""
+        relative to this directory. Builtin skills have no real directory."""
         return self.path.parent
+
+
+CREATE_SKILL_CONTENT = """# Create Skill
+
+Use this skill when the user asks you to create, edit, or explain a skill
+for this coding agent, or when you notice a repeatable workflow that would
+benefit from being packaged as a skill.
+
+## Skill format
+
+A skill is a markdown file with YAML frontmatter (the cross-tool "Agent
+Skills" convention):
+
+---
+name: skill-name
+description: One-line summary of when to use this skill.
+---
+
+# Skill Name
+
+Instructions the agent follows when this skill is loaded...
+
+- The frontmatter `name` is required: kebab-case, matching the file or
+  directory name. The `description` is optional; when missing, the first
+  non-empty line of the body is used (truncated at 240 chars). The body is
+  loaded verbatim when the skill tool is called.
+
+## Two file forms
+
+- Directory form (recommended): `<name>/SKILL.md` -- put helper scripts and
+  reference files next to the skill; relative paths in the body are
+  relative to the skill's directory.
+- Flat form: `<name>.md` -- a single-file skill.
+
+## Where to put it
+
+- Project-level: `.trilobite/skills/` or `.agents/skills/` in the working
+  directory -- skills that belong to this project, committed with the repo.
+- User-level: `~/.config/trilobite/skills/` or `~/.agents/skills/` --
+  personal skills used across projects.
+- Extra directory listed in `skill_dirs` in config.yaml -- shared team
+  skills (relative paths resolve against the working directory, `~` is
+  expanded).
+
+## When to create a skill
+
+- The task has a fixed multi-step procedure with a checklist (code review,
+  release, migration, ...).
+- Domain knowledge the agent keeps re-deriving.
+- Keep skills focused: one procedure per skill; do not bloat a skill with
+  unrelated instructions.
+
+## After creating
+
+- The <available_skills> listing in the system prompt is fixed at session
+  start; a newly created skill appears in it only in a new session (or
+  after the agent restarts). Tell the user this.
+- Validate the file you wrote: read it back and confirm the frontmatter
+  has a valid `name` and the body is complete.
+"""
+
+BUILTIN_SKILLS: list[Skill] = [
+    Skill(
+        name="create-skill",
+        description="Create a new skill (SKILL.md + frontmatter) for this agent, or edit an existing one.",
+        path=_BUILTIN_ROOT / "create-skill" / "SKILL.md",
+        content=CREATE_SKILL_CONTENT,
+        builtin=True,
+    ),
+]
 
 
 def skill_roots(working_dir: Path, extra_dirs: list[str] | None = None) -> list[Path]:
@@ -116,10 +192,12 @@ def discover_skills(working_dir: Path, extra_dirs: list[str] | None = None) -> l
 
     Both file forms are recognized under each root: ``<name>/SKILL.md``
     (directory form) and ``<name>.md`` (flat form). Hidden entries are
-    skipped. On name conflicts the first occurrence wins (project roots are
-    scanned before user roots); duplicates are logged.
+    skipped. Builtin skills are seeded first and any on-disk skill with the
+    same name overrides them (lowest priority); among disk roots the first
+    occurrence wins (project roots are scanned before user roots) and
+    duplicates are logged.
     """
-    found: dict[str, Skill] = {}
+    found: dict[str, Skill] = {s.name: s for s in BUILTIN_SKILLS}
     for root in skill_roots(working_dir, extra_dirs):
         if not root.is_dir():
             continue
@@ -142,11 +220,15 @@ def discover_skills(working_dir: Path, extra_dirs: list[str] | None = None) -> l
             if skill is None:
                 continue
             if skill.name in found:
-                _log.warning(
-                    "duplicate skill %r: %s wins over %s",
-                    skill.name, found[skill.name].path, skill.path,
-                )
-                continue
+                if found[skill.name].builtin:
+                    # on-disk skill overrides the builtin of the same name
+                    _log.debug("skill %r overrides builtin", skill.name)
+                else:
+                    _log.warning(
+                        "duplicate skill %r: %s wins over %s",
+                        skill.name, found[skill.name].path, skill.path,
+                    )
+                    continue
             found[skill.name] = skill
     return list(found.values())
 
@@ -170,6 +252,7 @@ def format_skill_listing(skills: list[Skill]) -> str | None:
     ]
     for s in sorted(skills, key=lambda s: s.name):
         desc = " ".join(s.description.split())[: _DESC_MAX]
-        lines.append(f'- {s.name}: {_xml_escape(desc)} (at {s.path})')
+        loc = "built-in" if s.builtin else f"at {s.path}"
+        lines.append(f'- {s.name}: {_xml_escape(desc)} ({loc})')
     lines.append("</available_skills>")
     return "\n".join(lines)
