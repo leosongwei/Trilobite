@@ -7,7 +7,7 @@ Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 
 
 * `server.py` - FastAPI 应用入口。会话级 REST API：`POST /api/sessions/{name}/message` 启动/转向 agent（返回 JSON，agent 作为独立 asyncio task 运行，关闭浏览器不取消）、`GET /api/sessions/{name}/stream` SSE 订阅实时输出；另有会话 CRUD、mode 切换、permission/plan_exit 审批、`/revert`、`/compact`、`/interrupt`、additional_dirs 增删、`/history`、`/info`、图片 serve、文件管理器 `fs/list`/`fs/file`/`fs/diff`/`fs/file`(PUT) 等端点；挂载静态前端文件。token 访问控制：启动时生成随机 key（写入配置目录 `token` 文件并打印带 `?token=` 的链接），`/api/auth/status`、`/api/auth/login` 换取 HttpOnly cookie，其余 `/api/*` 由中间件校验。`main()` 用 argparse 分发：`-t`/`-c` 进入 CLI 模式，默认 `-s` 启动 uvicorn (0.0.0.0:2345)，关闭 access log。详见 `doc/product/security.md`、`doc/product/file_manager.md`。
 * `cli.py` -- 命令行交互模式（`trilobite -t [dir]` 新建 / `-c` 续接当前目录最新主 session / `-s` 服务器为默认）。纯订阅者 + 渲染器：实例化 `Agent`、`attach_subscriber()` 订阅 broker 队列（与 SSE `/stream` 同构），把事件渲染到终端。类 bash 行式 REPL：IDLE 用 `input()` 读输入、RUNNING 消费 broker 事件到结束（Ctrl+C 中断 cancel），运行中不做 steering。`-c` 按 `history.json` 的 mtime 找当前目录最新主 session 续接（加载历史、不回显）。不改动 agent/broker/工具层。详见 `doc/product/cli.md`。
-* `agent.py` -- 核心 Agent 类。管理会话生命周期：构建 system 消息（env 块 + `SYSTEM_PROMPT` + 工作目录 `AGENTS.md`），与 LLM 流式对话，循环执行 tool calls，支持 plan/build 双模式切换、用户 steering、上下文压缩、subagent 派生（`task` 工具）和 VLM 图片输入。详见 `doc/product/context_building.md`、`doc/product/streaming.md`、`doc/product/subagent.md`。
+* `agent.py` -- 核心 Agent 类。管理会话生命周期：构建 system 消息（env 块 + `SYSTEM_PROMPT` + 工作目录 `AGENTS.md` + skills 清单），与 LLM 流式对话，循环执行 tool calls，支持 plan/build 双模式切换、用户 steering、上下文压缩、subagent 派生（`task` 工具）和 VLM 图片输入。详见 `doc/product/context_building.md`、`doc/product/streaming.md`、`doc/product/subagent.md`、`doc/product/skills.md`。
 * `messages.py` -- 类型化对话消息层（v2 内存表示）。`Message` 基类及 `SystemMessage`/`UserMessage`/`AssistantMessage`/`CompactMarker`/`Image`/`ToolCall`/`ToolResult` 子类，每个对象三向投影：`to_api_dicts`（发 LLM）、`to_storage_dict`（持久化 v2 JSON）、`to_frontend_dicts`（v1 兼容扁平 dict 给前端）。`AssistantMessage` 自包含一个 turn（thinking+content+tool_calls+tool_results），保证 steering 消息只能落在整个 turn 之后、API 消息序列永远合法。`from_v1` 把旧扁平格式惰性升级。详见 `doc/product/history.md`。
 * `history.py` -- 对话历史管理。持久化到 v2 JSON（`{"version":2,"messages":[...]}`），内部用 `messages.py` 的类型对象。`get_api_messages` 从最后一个 `CompactMarker` 之后取消息、合并连续同 role 的 UserMessage（`<multi_message/>` 分隔，避免 API 报错）。
 * `broker.py` - 流式事件总线（StreamBroker）。解耦 agent 运行与 HTTP 请求：事件广播到所有订阅者，维护当前 run 的回放缓冲和已提交历史长度（`persisted_len`），支持浏览器多开、关闭重开、切 tab 恢复。终态事件 `done`/`cancelled`/`error`/`interrupted` 推进 `persisted_len` 并清空缓冲。详见 `doc/product/streaming.md`。
@@ -17,12 +17,13 @@ Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 
 * `compaction.py` -- 上下文压缩。`should_compact` 用上次 API 返回的真实 token 用量 + pending 消息估算，超 `max_context_tokens * compaction_trigger_ratio` 阈值时触发；`build_compact_prompt` 构建 kimi 风格第一人称 handoff 请求，自动附带 TODO 列表（不转录）。详见 `doc/product/compact.md`。
 * `image_storage.py` -- 图片存储。`save_image` 把图片字节存到 `session_dir/images/<sha256前12位>.<ext>`，返回 `Image` 元数据；提供 MIME↔扩展名映射。供 `read` 工具读图片和用户上传图片复用。详见 `doc/product/vlm.md`。
 * `config.py` -- 配置管理。首次运行自动从包内 `config_example/` 复制默认配置（仅 `config.yaml`）。
+* `skills.py` -- Skill 发现与加载（Agent Skills 格式：`SKILL.md` + YAML frontmatter）。按项目级（`.trilobite/skills`、`.agents/skills`）→ 用户级（`~/.config/trilobite/skills`、`~/.agents/skills`）→ 配置 `skill_dirs` 扩展目录的顺序扫描，支持目录形式 `<name>/SKILL.md` 和平铺形式 `<name>.md`；`format_skill_listing` 渲染 `<available_skills>` 清单注入 system prompt（只含 name/description/path，正文由 `skill` 工具按需加载）。详见 `doc/product/skills.md`。
 * `prompts.py` -- 所有提示词的代码常量，硬编码不可配置：`SYSTEM_PROMPT`、`COMPACTION_PROMPT`（压缩摘要）、`SUBAGENT_ROLE_PREFIX` + `SUBAGENT_ROLE_PROMPTS`（explore/general 角色）、`IMAGE_READ_PROMPT`（VLM）。
 * `tokens.py` -- 简易 token 估算（字符级，区分 ASCII/CJK）。
 * `file_access.py` -- 文件路径解析和安全检查（敏感文件过滤）。详见 `doc/product/file_access.md`。
 * `file_discovery.py` - 文件发现（glob/grep 共用）：git 仓库用 `git ls-files` 尊重 .gitignore，否则 `os.walk` 跳过噪音目录；不依赖 ripgrep。
 * `git_ops.py` - 文件管理器的 git 封装：`list_dir`（单目录条目 + porcelain 变更状态，被 ignore 目录不出现）、`list_branches`/`current_branch`、`show_base_content`（`git show <base>:<path>`，文件不在基线返回空）、`build_diff_rows`（difflib 全文件对比生成 DiffRow）。
-* `tools/` -- 七个具体工具（均继承 `tools/tool.py`）：
+* `tools/` -- 八个具体工具（均继承 `tools/tool.py`）：
   * `read.py` -- 读取文件（支持 start_line/limit_lines/limit_chars 分页）；`enable_vl` 时读图片存入 session images 目录并返回 `<image/>` marker
   * `glob.py` -- 按文件名模式查找（尊重 .gitignore，按 mtime 倒序）
   * `grep.py` -- 正则搜索文件内容（content/files_with_matches/count 模式、上下文行、glob/路径过滤）
@@ -30,6 +31,7 @@ Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 
   * `write.py` -- 整文件创建/覆盖/追加（overwrite/append，自动建父目录）
   * `bash.py` -- 执行 shell 命令（进程组 + reader 线程逐行流式输出，输出默认截断尾部 100 行/10k 字符）
   * `todo.py` -- 任务列表管理（JSON 持久化在 session 目录 `todos.json`）
+  * `skill.py` -- 按名加载 skill 的 SKILL.md 全文（`<skill_content>` 输出，含 base 目录说明）；调用时重新发现，会话中途新增的 skill 也可加载
 
 ## 前端 (`frontend/`)
 
@@ -74,7 +76,7 @@ Token 超过 `compaction_trigger_ratio` 阈值时触发压缩：插入 `CompactM
 
 ## 配置 (`src/trilobite/config_example/`)
 
-* `config.yaml` -- `model`、`api_key`、`api_url`、`reasoning_effort`、`max_context_tokens`（上下文窗口）、`max_tokens`（单次输出上限）、`log_level`、`compaction_trigger_ratio`、`enable_vl`
+* `config.yaml` -- `model`、`api_key`、`api_url`、`reasoning_effort`、`max_context_tokens`（上下文窗口）、`max_tokens`（单次输出上限）、`log_level`、`compaction_trigger_ratio`、`enable_vl`、`skill_dirs`（额外的 skill 搜索目录，相对路径基于工作目录，支持 `~` 展开）
 
 提示词（系统提示词、压缩摘要、subagent 角色）不在配置里，而是硬编码在 `src/trilobite/prompts.py`，不可配置。
 

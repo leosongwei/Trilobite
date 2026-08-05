@@ -7,3 +7,5 @@ max_tokens: 65536
 log_level: WARNING
 compaction_trigger_ratio: 0.7
 enable_vl: false
+# 额外的 skill 搜索目录（相对路径基于工作目录，支持 ~ 展开），如 ["~/team-skills"]
+skill_dirs: []

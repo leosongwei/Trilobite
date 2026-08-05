@@ -6,7 +6,7 @@
 
 ## system 消息的组成
 
-system 消息的内容是三段拼接：
+system 消息的内容是四段拼接：
 
 ```
 <env>
@@ -17,6 +17,10 @@ system 消息的内容是三段拼接：
 
 {system_prompt}
 
+<available_skills>
+...
+</available_skills>
+
 <AGENTS.md>
 {working_dir}/AGENTS.md 的内容
 </AGENTS.md>
@@ -26,9 +30,10 @@ system 消息的内容是三段拼接：
 |------|------|------|
 | `env_block` | `Agent._build_env_block()`（`src/trilobite/agent.py`） | 动态环境块：工作目录绝对路径、是否 git 仓库、平台。放在最前面，让模型知道自己身处何处，从而优先用相对路径工作，而不是猜测绝对路径飘到工作目录外 |
 | `system_prompt` | 代码常量 `SYSTEM_PROMPT`（`src/trilobite/prompts.py`） | agent 的基础指令 |
+| `skills_listing` | `format_skill_listing()`（`src/trilobite/skills.py`） | 可用 skills 清单（name/description/path），只读工具 `skill` 按名加载正文。无 skill 时整块省略。详见 [skills.md](./skills.md) |
 | `working_context` | `<working_dir>/AGENTS.md` | 如果工作目录下存在 `AGENTS.md`，将其内容用 `<AGENTS.md>` 标签包裹后追加；不存在则为空 |
 
-`env_block` 在 `Agent.__init__` 时拼到 `system_prompt` 前面（`self.system_prompt = env_block + "\n\n" + system_prompt`），因此主 agent 和 subagent 都会带上它。compaction 重建 system 消息时也会重新生成。
+`env_block` 在 `Agent.__init__` 时拼到 `system_prompt` 前面（`self.system_prompt = env_block + "\n\n" + system_prompt`），skills 清单拼到后面，因此主 agent 和 subagent 都会带上它们。compaction 重建 system 消息时也会重新生成。
 
 ## 生命周期
 

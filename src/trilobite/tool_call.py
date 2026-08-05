@@ -8,6 +8,7 @@ from src.trilobite.tools.bash import BashTool
 from src.trilobite.tools.glob import GlobTool
 from src.trilobite.tools.grep import GrepTool
 from src.trilobite.tools.todo import TodoListTool
+from src.trilobite.tools.skill import SkillTool
 
 ALL_TOOLS = [
     ReadTool(),
@@ -17,6 +18,7 @@ ALL_TOOLS = [
     WriteTool(),
     BashTool(),
     TodoListTool(),
+    SkillTool(),
 ]
 
 _TOOL_MAP: dict[str, Any] = {t.name: t for t in ALL_TOOLS}
