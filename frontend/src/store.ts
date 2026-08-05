@@ -523,9 +523,38 @@ function disconnectStream() {
   streamAbort = null
 }
 
+// 后台 tab 不占用 SSE 连接。浏览器对每个主机（HTTP/1.1）最多开 6 条并发
+// 连接，多个 tab 各持一条长期 SSE 后连接池被占满，新 tab 打开 session 的
+// /stream 请求会在浏览器里无限排队（表现为"加载不出来"，关掉一个 tab 才
+// 突然加载）。tab 切到后台时断开流、释放连接；切回前台立即重连，init +
+// 回放本来就会重建完整状态，不丢内容。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && streamAbort) {
+    streamLog('tab hidden, dropping stream')
+    streamAbort.abort()
+  }
+})
+
+// Resolve on the next visibility change; the caller re-checks the state.
+function waitNextVisibilityChange(): Promise<void> {
+  return new Promise((resolve) => {
+    const onVis = () => {
+      document.removeEventListener('visibilitychange', onVis)
+      resolve()
+    }
+    document.addEventListener('visibilitychange', onVis)
+  })
+}
+
 async function runStream(name: string) {
   let attempt = 0
   while (streamSession === name) {
+    // Hidden tab: no live stream. Wait until the tab is visible again (the
+    // abort listener above dropped the old connection when hiding).
+    if (document.visibilityState === 'hidden') {
+      await waitNextVisibilityChange()
+      continue
+    }
     const ac = new AbortController()
     streamAbort = ac
     attempt++
@@ -548,8 +577,14 @@ async function runStream(name: string) {
       }
       streamLog('stream ended (server closed)')
     } catch (e) {
-      // Aborted (session switch / disconnect) - stop the loop.
-      if (ac.signal.aborted || streamSession !== name) return
+      // Aborted (session switch / tab hidden / disconnect) - stop the loop;
+      // the while condition re-checks streamSession, and the hidden check
+      // above waits for the tab to become visible again.
+      if (streamSession !== name) return
+      if (ac.signal.aborted) {
+        streamLog('stream aborted')
+        continue
+      }
       // Network error - retry after a short backoff.
       streamLog('stream error:', e instanceof Error ? e.message : String(e))
     }
@@ -583,19 +618,41 @@ async function runStream(name: string) {
 // sessions and running state appear across multiple browsers.
 let sessionPollTimer: ReturnType<typeof setInterval> | null = null
 
+function stopSessionPolling() {
+  if (sessionPollTimer !== null) {
+    clearInterval(sessionPollTimer)
+    sessionPollTimer = null
+  }
+}
+
+// 后台 tab 暂停轮询（省掉每 3s 一次的请求，也避免后台 tab 与前台抢占
+// 浏览器每主机的连接配额）；切回前台立即恢复并马上刷一次列表。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    stopSessionPolling()
+  } else if (state.sessions.length > 0 && sessionPollTimer === null) {
+    ensureSessionPolling()
+    void loadSessionsRefresher()
+  }
+})
+
+async function loadSessionsRefresher() {
+  try {
+    state.sessions = await api.getSessions()
+  } catch {
+    // transient error; the next tick retries
+  }
+}
+
 function ensureSessionPolling() {
   if (sessionPollTimer !== null) return
   sessionPollTimer = setInterval(async () => {
-    try {
-      state.sessions = await api.getSessions()
-      // Unresolved requests block their agent's run; a session that stopped
-      // running (e.g. cancelled from another tab) can no longer be awaiting
-      // approval, so prune those entries.
-      const running = new Set(state.sessions.filter((s) => s.is_running).map((s) => s.id))
-      state.pendingRequests = state.pendingRequests.filter((r) => running.has(r.session))
-    } catch {
-      // transient error; the next tick retries
-    }
+    await loadSessionsRefresher()
+    // Unresolved requests block their agent's run; a session that stopped
+    // running (e.g. cancelled from another tab) can no longer be awaiting
+    // approval, so prune those entries.
+    const running = new Set(state.sessions.filter((s) => s.is_running).map((s) => s.id))
+    state.pendingRequests = state.pendingRequests.filter((r) => running.has(r.session))
   }, 3000)
 }
 
