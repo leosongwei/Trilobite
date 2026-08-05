@@ -39,7 +39,9 @@ const chatRef = ref<HTMLElement>()
 // 可见）；用户滚到顶部时向上扩窗加载旧消息，旧消息保留在窗口顶部不被卸载。
 // DOM 有界性由卸载底部已滚出视口下方的条目保证（trimExcess）——用户向上翻
 // 历史时旧消息一直可看，滚回底部时窗口重新包含末尾并钉底。
-const INITIAL_VISIBLE = 2 // 初始从底部渲染的条数（fillViewport 会快速补齐到填满视口）
+const INITIAL_VISIBLE = 10 // 初始从底部渲染的条数：切 session/启动只显示最后
+                          // 几条，往上滚动才加载更早的；内容不足一屏时由
+                          // fillViewport 补齐填满视口（避免无法滚动的死区）
 const FILL_STEP = 2       // fillViewport 每次向上扩窗的条数
 const LOAD_MORE = 10      // 滚到顶部时向上扩窗的条数
 const MAX_FILL = 30       // fillViewport 扩窗的条数硬上限。不依赖 scrollHeight
