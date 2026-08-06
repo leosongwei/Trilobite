@@ -205,10 +205,10 @@ async function openFile(f: OpenFilePayload) {
     if (view.value !== 'view') view.value = 'view'
     return
   }
-  // Preview only supports markdown files; fall back when switching to another.
-  if (view.value === 'preview' && !isMarkdown.value) view.value = 'view'
-  // Keep the current view mode across file switches; only fall back when the
-  // new file cannot support it.
+  // Markdown files always land on preview; any other file keeps the current
+  // view mode and only falls back to plain view when it cannot support it.
+  if (isMarkdown.value) view.value = 'preview'
+  else if (view.value === 'preview') view.value = 'view'
   const prevBase = props.base
   refreshGitState()
   const baseChanged = props.base !== prevBase

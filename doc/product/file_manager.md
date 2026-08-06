@@ -17,7 +17,7 @@
 * sidebar **宽度**可通过其右边缘的竖向分划线拖动调整（200px 到视口 40%），持久化到 localStorage；窄屏（≤768px）下 sidebar 仍是隐藏的抽屉，不显示宽度分划线。
 * 切换会话时自动关闭文件视图回到对话，文件树随之重建。
 * 文件视图布局：顶栏（Back、文件路径、base 分支下拉（仅 diff 模式）、View/Diff/Edit 切换（segmented tabs）、Save/Cancel 按钮）+ 内容区（只读高亮视图、`DiffView`、编辑 textarea 或 markdown 预览）。
-* **Markdown 预览**：打开 `.md` 文件时顶栏额外出现 Preview tab，用与模型输出一致的方式渲染整个文件（`renderMarkdown` + MathJax 公式）。MathJax 只作用于预览元素本身，不触碰文件管理器其它 UI 文本（其中的 `$` 会被误判为公式分隔符）；代码块/行内代码中的 `$` 保持字面量（`renderMarkdown` 的 LaTeX 保护跳过代码区域，且 MathJax 原生跳过 `<pre>`/`<code>`）。
+* **Markdown 预览**：打开 `.md` 文件时自动切到 Preview 模式，顶栏出现 Preview tab（可手动切回其它模式），用与模型输出一致的方式渲染整个文件（`renderMarkdown` + MathJax 公式）。MathJax 只作用于预览元素本身，不触碰文件管理器其它 UI 文本（其中的 `$` 会被误判为公式分隔符）；代码块/行内代码中的 `$` 保持字面量（`renderMarkdown` 的 LaTeX 保护跳过代码区域，且 MathJax 原生跳过 `<pre>`/`<code>`）。
 
 ### Markdown 预览测试样例
 
