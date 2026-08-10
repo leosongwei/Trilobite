@@ -27,8 +27,12 @@ npm run build
 This compiles to `src/trilobite/static/` (gitignored). Runtime only needs FastAPI.
 
 The icon font (Material Symbols, Apache-2.0) is vendored as a gitignored
-subset; regenerate it with `frontend/scripts/fetch-material-icons.sh` whenever
-you add an icon (requires `curl` + `uv`).
+subset. The icon list lives in one place — `frontend/public/icons.json` —
+and is consumed by `frontend/scripts/fetch-material-icons.sh` (subset +
+sync check), `frontend/src/icons.css` (sync check) and the debug page
+`/debug-icons.html`. To add an icon: edit `icons.json`, run
+`frontend/scripts/fetch-material-icons.sh` (requires `curl` + `uv` +
+`python3`), then rebuild.
 
 ## Install from a built wheel
 

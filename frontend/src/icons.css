@@ -6,6 +6,10 @@
  * font file and its Apache-2.0 LICENSE live under
  * frontend/public/vendor/material-symbols/ (gitignored, generated artifacts).
  *
+ * The icon list lives in frontend/public/icons.json (single source of truth,
+ * shared with the fetch script and /debug-icons.html); the script verifies
+ * that the codepoints below stay in sync with it.
+ *
  * Usage: <span class="ms ms-close"></span>. The icon inherits the parent's
  * font-size; override with a wrapper class when a different size is needed.
  */
