@@ -29,8 +29,9 @@ This compiles to `src/trilobite/static/` (gitignored). Runtime only needs FastAP
 The icon font (Material Symbols, Apache-2.0) is vendored as a gitignored
 subset. The icon list lives in one place — `frontend/public/icons.json` —
 and is consumed by `frontend/scripts/fetch-material-icons.sh` (subset +
-sync check), `frontend/src/icons.css` (sync check) and the debug page
-`/debug-icons.html`. To add an icon: edit `icons.json`, run
+sync check), `frontend/src/icons.css` (sync check) and the debug page served
+at `GET /debug/icons` (also reachable at `/debug-icons.html`). To add an
+icon: edit `icons.json`, run
 `frontend/scripts/fetch-material-icons.sh` (requires `curl` + `uv` +
 `python3`), then rebuild.
 

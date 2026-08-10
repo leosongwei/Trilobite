@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -757,6 +757,17 @@ async def get_image(name: str, filename: str):
         raise HTTPException(404, "image not found")
     mime = ext_to_mime(path.suffix)
     return Response(path.read_bytes(), media_type=mime)
+
+
+# Debug page: every icon used by the frontend, standard Unicode vs the
+# vendored Material Symbols subset (see frontend/public/debug-icons.html).
+# Served outside /api so it works without a token, like the static assets.
+@app.get("/debug/icons")
+async def debug_icons():
+    path = Path(__file__).parent / "static" / "debug-icons.html"
+    if not path.is_file():
+        raise HTTPException(404, "debug-icons.html not found — rebuild the frontend (npm run build)")
+    return HTMLResponse(path.read_text(encoding="utf-8"))
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")
