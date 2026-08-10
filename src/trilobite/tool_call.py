@@ -116,6 +116,10 @@ CRON_CREATE_DEF: dict = {
         "parameters": {
             "type": "object",
             "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Short human-readable name for the schedule (shown in the sidebar instead of a prompt preview). Required: always give the task a concise name.",
+                },
                 "cron": {
                     "type": "string",
                     "description": "5-field cron expression in local time: 'minute hour day-of-month month day-of-week' (e.g. '30 9 * * *' = every day at 09:30; '*/5 * * * *' = every 5 minutes).",
@@ -129,7 +133,7 @@ CRON_CREATE_DEF: dict = {
                     "description": "true (default) = fire on every cron match until deleted. false = fire once at the next match, then auto-delete.",
                 },
             },
-            "required": ["cron", "prompt"],
+            "required": ["name", "cron", "prompt"],
         },
     },
 }

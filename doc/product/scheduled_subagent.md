@@ -72,13 +72,14 @@
 
 ```jsonc
 {
+  "name": "每日依赖检查",     // 短名（必填），模型给任务命名，侧边栏/列表中显示
   "cron": "30 9 * * *",      // 5 字段 cron 表达式，本地时区（分 时 日 月 周）
   "prompt": "…",             // 1..8192 字节，fire 时作为任务说明注入定时 agent
   "recurring": true          // 默认 true；false = 下次匹配时 fire 一次后自动删除
 }
 ```
 
-返回：`{id, cron, recurring, next_fire_at, description}`。`description` 为 prompt 前 40 字符（空白折叠），用作侧边栏展示名。
+返回：`{id, cron, recurring, next_fire_at, description}`。`description` 为模型给的 `name`（未提供时回退 prompt 前 40 字符预览），用作侧边栏展示名与列表 desc。
 
 校验：cron 表达式可解析（用 `croniter`）；prompt 非空且 ≤ 8KB；每 session 上限 20 个（超出返回错误）；`recurring=false` 时 cron 必须能在未来匹配到（超出 5 年窗口视为不可达，报错）。
 
@@ -153,6 +154,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 - 定时 session 节点挂载于主 session 之下（`parent_session` 字段，与 subagent 同），带**时钟徽标**（与 EX/GE 角色徽标区分），描述显示 prompt 预览；节点信息展示 cron 表达式、`next_fire_at`、`run_count`、最近一次 `last_state`。
 - fire 运行中：running 徽标（绿闪）；完成后回到 idle。节点**状态点**四态：从未 fire（pending）浅蓝点、运行中绿闪点、上次 fire 以 `error` 结束红点、正常结束（completed/interrupted）灰点（与 subagent 结束一致）。schedule 被删除后仍按最后终态显示（不因删除而变回浅蓝）。
+- **手动删除记录**：非运行状态的 subagent / 定时 session 节点 hover 显示 ×，可删除（删除定时 session 时其 schedule 一并从 owner 移除）；运行中的节点不可删除。
 - 定时 session 不参与主 session 的自动命名；排序同 subagent（`created_at` 降序）。
 
 ### 定时 session 视图（复用 ChatView）
@@ -173,6 +175,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
   "schedules": [
     {
       "id": "…",              // uuid4().hex
+      "name": "每日依赖检查",  // 模型给的名字；缺省空串
       "cron": "30 9 * * *",
       "prompt": "…",
       "recurring": true,

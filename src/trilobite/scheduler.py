@@ -73,6 +73,7 @@ class Schedule:
         last_fire_at: float | None = None,
         completed: bool = False,
         deleted: bool = False,
+        name: str = "",
     ):
         self.id = id
         #: The scheduled agent's session id (one session per schedule).
@@ -80,6 +81,9 @@ class Schedule:
         self.cron = cron
         self.prompt = prompt
         self.recurring = recurring
+        #: Short model-given name; falls back to a prompt preview when absent.
+        self.name = name
+        #: Sidebar label: the name when given, else a prompt preview.
         self.description = description
         self.created_at = created_at
         self.run_count = run_count
@@ -109,6 +113,7 @@ class Schedule:
             "last_fire_at": self.last_fire_at,
             "completed": self.completed,
             "deleted": self.deleted,
+            "name": self.name,
         }
 
     @classmethod
@@ -126,6 +131,7 @@ class Schedule:
             last_fire_at=d.get("last_fire_at"),
             completed=bool(d.get("completed", False)),
             deleted=bool(d.get("deleted", False)),
+            name=d.get("name", ""),
         )
 
     def next_fire_at(self, after: datetime | None = None) -> datetime | None:
@@ -246,8 +252,9 @@ class CronService:
         cron = str(args.get("cron") or "").strip()
         prompt = str(args.get("prompt") or "").strip()
         recurring = bool(args.get("recurring", True))
+        name = str(args.get("name") or "").strip()
         if not cron or not prompt:
-            return "Error: cron_create requires 'cron' (5-field expression) and 'prompt'."
+            return "Error: cron_create requires 'name', 'cron' (5-field expression) and 'prompt'."
         if not croniter.is_valid(cron):
             return f"Error: invalid cron expression '{cron}'. Expected 5 fields: minute hour day-of-month month day-of-week (local time)."
         if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
@@ -273,8 +280,9 @@ class CronService:
 
         sched_id = uuid.uuid4().hex
         sched_session = uuid.uuid4().hex
-        #: Prompt preview (whitespace-collapsed, 40 chars) as the sidebar label.
-        description = " ".join(prompt.split())[:40]
+        #: Sidebar label: the model-given name, else a whitespace-collapsed
+        #: 40-char prompt preview.
+        description = name or " ".join(prompt.split())[:40]
 
         # The schedule's own session is created up front so it shows up in the
         # sidebar immediately and accumulates runs over the schedule's life.
@@ -295,6 +303,7 @@ class CronService:
         sched = Schedule(
             id=sched_id, session_id=sched_session, cron=cron, prompt=prompt,
             recurring=recurring, description=description, created_at=now.timestamp(),
+            name=name,
         )
         schedules.append(sched)
         self._persist(session_name, schedules)

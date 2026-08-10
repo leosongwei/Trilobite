@@ -37,6 +37,7 @@
             <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
             {{ c.description || c.name }}
           </span>
+          <span v-if="!c.is_running" class="delete" title="delete session" @click.stop="handleDelete(c.id)">&times;</span>
         </div>
       </template>
     </div>
@@ -345,7 +346,7 @@ async function resetDefaults() {
 
 async function handleDelete(id: string) {
   const s = state.sessions.find((x) => x.id === id)
-  const label = s?.name ?? id
+  const label = s?.description || s?.name || id
   if (!confirm(`Delete session "${label}"?`)) return
   await deleteSession(id)
 }
