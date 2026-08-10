@@ -21,7 +21,7 @@
 - ✅ 侧边栏树状展示：主 session 下挂定时 session 节点（时钟徽标），可切入查看、可中断正在运行的 fire。
 - ✅ schedule 持久化到主 session 目录 `schedules.json`，服务重启重载，只计未来触发（停机期间错过的 fire 不补跑）。
 - ✅ 无人值守权限：工作区（含 `additional_dirs`）内全权限，越界**自动拒绝**（不弹交互式审批，见第六节）。
-- ✅ 派生角色按主 agent 模式固化：build → general，plan → explore（与 `task` 工具的派生权限规则一致）。
+- ✅ cron 工具仅 build 模式暴露；定时 agent 一律 general 角色（复用 `GeneralSubagentPermission`）。
 
 ### v1 不做的事（non-goals）
 
@@ -45,11 +45,11 @@
 - 生命周期：recurring 7 天过期（stale 标记），一次性 fire 后自删；持久化到 `cron/<workspaceId>/<id>.json`，恢复同 session 时重载。
 - 附带确定性 jitter、错过 fire coalesce 合并、agent 运行中 buffered。
 
-我们的设计在"三个增删查工具 + cron 表达式 + prompt + recurring"上与 kimi-code 保持一致，在执行模型上改为独立定时 agent（更贴 Trilobite 的 subagent 架构与"不返回结果"需求），并在持久化位置（schedule 随主 session）、生命周期（无过期、无 coalesce）上做了简化决策，见第十一节。
+我们的设计在"三个增删查工具 + cron 表达式 + prompt + recurring"上与 kimi-code 保持一致，在执行模型上改为独立定时 agent（更贴 Trilobite 的 subagent 架构与"不返回结果"需求），并在权限（kimi 无角色概念、权限即主 agent 当前权限；我们一律 general 且仅 build 模式可创建，见第四节）、持久化位置（schedule 随主 session）、生命周期（无过期、无 coalesce）上做了简化决策，见第十一节。
 
 ## 三、概念定位
 
-定时 subagent 与 subagent 一样是**角色**而非**模式**：role（explore/general）在创建 schedule 时按主 agent 当前模式固化，之后不切换。它与 `task` subagent 的差异：
+定时 subagent 与 subagent 一样是**角色**而非**模式**：一律 general 角色（复用 `GeneralSubagentPermission`），在 schedule 创建时即固定，之后不切换。它与 `task` subagent 的差异：
 
 | 维度 | `task` subagent | 定时 subagent |
 |---|---|---|
@@ -90,16 +90,11 @@
 
 参数：`{id}`。删除 schedule 并停止未来触发。**历史 session 保留**（可继续查看过去的运行记录，节点标记为已删除不再触发），用户可另行删除 session。删除不存在的 id 返回错误。
 
-### 派生角色规则
+### 暴露与角色
 
-`cron_create` 执行时按主 agent 当前 permission 固化定时 agent 的角色（写入 schedule）：
+cron 三工具**仅 build 模式暴露**（`BuildModePermission` 白名单含 cron 三工具，`PlanModePermission` 不含）；定时 agent **一律 general 角色**（复用 `GeneralSubagentPermission`），不随主 agent 模式变化，schedule 创建后切模式不影响 fire。
 
-| 主 agent 模式 | 定时 agent 角色 |
-|---|---|
-| Build | `general`（工作区内全权限） |
-| Plan | `explore`（只读） |
-
-与 `task` 工具的派生权限规则一致，保住 plan 模式只读语义不被"借壳"破坏。角色在创建时固化，之后主 agent 切模式不影响已创建 schedule 的 fire。
+理由：定时 agent 的结果不返回主 agent，explore（只读探索）的产出没有出口、角色无用；而 plan 模式若允许创建 general 定时 agent 则"借壳"破坏只读语义。cron 工具仅 build 可见，plan 模式天然无法创建定时任务，只读语义不被破坏；需要定时任务的用户切到 build 创建即可。
 
 ## 五、调度与生命周期
 
@@ -117,7 +112,7 @@
 1. tick 命中且该 schedule 无运行中的 fire（有则跳过，发 `cron_missed` 事件，见第七节）。
 2. 取/建定时 Agent 实例（名字 = schedule 对应 session 的 id）：
    - `agents` 字典中已有实例（上次 fire 结束后的 idle 实例）→ 直接复用；
-   - 没有（重启后或首次 fire）→ 按 `session.json`（working_dir、role、parent_session）从磁盘重建并注册进 `agents` 字典。
+   - 没有（重启后或首次 fire）→ 按 `session.json`（working_dir、parent_session）从磁盘重建并注册进 `agents` 字典。
 3. 在定时 session 的 history 末尾追加一个 `CompactMarker` + 一条合成 user 消息：`⏰ 定时触发（<本地时间>）\n<prompt>`。
 4. 以独立 asyncio task 跑 `run()`（与主 agent 运行互不阻塞）。
 5. fire 结束（完成/中断/出错/超步数）→ 更新 `schedules.json` 的 `run_count`/`last_state`/`last_fire_at`，发 `cron_fire_end` 事件，实例留在 `agents` 字典供查看。
@@ -136,11 +131,11 @@
 
 定时 agent 在无人值守环境运行，**不弹交互式权限请求**（没人审批会挂死）：
 
-- 工作区 + 继承主 session 的 `additional_dirs` 范围内：正常执行（general 角色全工具，explore 角色只读）。
+- 工作区 + 继承主 session 的 `additional_dirs` 范围内：正常执行（general 角色全工具）。
 - 越界访问：工具直接返回错误。与 subagent 的交互式审批不同，定时 agent 在 agent 工具派发处（`file_access` 路径解析失败后）不触发 `permission_request` 事件，直接返回拒绝，错误信息会进入该次 fire 的历史，用户回看可知。
 - 敏感文件过滤沿用 `file_access.py`。
 
-权限类直接复用 `GeneralSubagentPermission` / `ExploreSubagentPermission`（工具白名单与 `task` subagent 完全一致，不新建权限类），差异仅在越界处理路径（非交互）。实现上 Agent 增加非交互标志，在权限请求分支改为直接拒绝。
+权限类直接复用 `GeneralSubagentPermission`（工具白名单与 general subagent 完全一致，不新建权限类），差异仅在越界处理路径（非交互）。实现上 Agent 增加非交互标志，在权限请求分支改为直接拒绝。
 
 ## 七、事件与前端
 
@@ -181,7 +176,6 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
       "cron": "30 9 * * *",
       "prompt": "…",
       "recurring": true,
-      "role": "general",       // 创建时按主 agent 模式固化
       "description": "…",      // prompt 前 40 字符
       "created_at": "…",
       "run_count": 12,
@@ -194,7 +188,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 ### 定时 session（`sessions/<uuid>/`）
 
-与 subagent 同构，`session.json` 增加：`kind: "scheduled"`、`schedule_id`、`role`；沿用 `parent_session`（主 session id）、`created_at`。一个 schedule 对应**唯一** session，每次 fire 复用，history 跨 fire 累积（`CompactMarker` 分段）。
+与 subagent 同构，`session.json` 增加：`kind: "scheduled"`、`schedule_id`；沿用 `parent_session`（主 session id）、`created_at`。一个 schedule 对应**唯一** session，每次 fire 复用，history 跨 fire 累积（`CompactMarker` 分段）。
 
 ### 重启恢复
 
@@ -214,15 +208,16 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 1. **`pyproject.toml`**：新增依赖 `croniter`（cron 解析与下次触发计算）。
 2. **`scheduler.py`**（新模块）：`CronService`——`load_all` / `create` / `delete` / `list` / `remove_session` / `tick` 循环 / `_fire`（重建或复用定时 Agent 实例、发事件、更新统计）。构造时注入 session 根目录、config、`agents` 注册表、Agent 工厂（或 server 提供回调）。
 3. **`tool_call.py`**：新增 `CRON_CREATE_DEF` / `CRON_LIST_DEF` / `CRON_DELETE_DEF` 三个虚拟工具定义（描述采用正向框架，见 prompts 一条）。
-4. **`permission.py`**：`BuildModePermission` / `PlanModePermission` 的 `tool_names` 增加三个 cron 工具；Explore/General 不含。
-5. **`agent.py`**：工具派发处加三个分支（`cron_create`/`cron_list`/`cron_delete`），执行逻辑调 `self._cron_service`（server 构造主 agent 时注入）；`cron_create` 按当前 permission 固化 role。
+4. **`permission.py`**：仅 `BuildModePermission` 的 `tool_names` 增加三个 cron 工具；`PlanModePermission`、Explore/General 不含。
+5. **`agent.py`**：工具派发处加三个分支（`cron_create`/`cron_list`/`cron_delete`），执行逻辑调 `self._cron_service`（server 构造主 agent 时注入）。
 6. **`server.py`**：创建 `CronService`（启动时 `load_all`，生命周期内跑 tick task）；删除 session 时联动 `remove_session`；`/message` 对定时 session 拒绝（idle 与 running 均拒，`kind == "scheduled"` 即拒）。
 7. **`prompts.py`**：`SYSTEM_PROMPT` 增加 cron 工具指引（正向框架：周期性/无人值守/提醒类任务用 cron；需要结果回填的探索用 `task`；一次性临时任务直接对话；要调整先 delete 再 create）。三个工具定义描述与之一致。
 8. **前端**：`store.ts` 处理 `cron_fire`/`cron_fire_end`/`cron_missed` 事件；侧边栏树渲染定时节点（时钟徽标、cron、运行状态、run 统计）；定时 session 视图（复用 ChatView，无输入框，运行中 ■ 停止）；`ChatView` 对定时 session 把 `compact` 分隔线渲染为"定时运行"分隔线。
 
 ## 十一、风险与决策记录
 
-- **独立 agent vs 注入主 agent**：kimi-code 把 `<cron-fire>` 注入主 agent 上下文执行（结果进主 transcript）。我们选独立定时 agent：符合"不返回结果"需求、主上下文零污染、主 agent 无需为空闲时段任务预留 token；代价是每次 fire 是完整独立 run（冷启动、无主上下文继承），且无人值守场景需自动拒绝越界。定时任务本就应自包含（prompt 携带全部所需信息），与 subagent 的上下文隔离哲学一致。
+- **独立 agent vs 注入主 agent**：kimi-code 把 `<cron-fire>` 注入主 agent 上下文执行（结果进主 transcript，无独立角色概念、权限即主 agent 当前权限）。我们选独立定时 agent：符合"不返回结果"需求、主上下文零污染、主 agent 无需为空闲时段任务预留 token；代价是每次 fire 是完整独立 run（冷启动、无主上下文继承），且无人值守场景需自动拒绝越界。定时任务本就应自包含（prompt 携带全部所需信息），与 subagent 的上下文隔离哲学一致。
+- **仅 build 暴露、一律 general**：定时 agent 结果不返回主 agent，explore 角色的只读探索产出没有出口，故不设 explore；cron 工具仅 build 模式暴露，plan 模式无法创建定时任务，只读语义不被"借壳"破坏。kimi 无此问题是因为它注入主 agent、结果与权限都跟随主 agent。
 - **fire 边界复用 CompactMarker**：`get_api_messages` 天然从最后一个 marker 裁剪，零新机制实现"每次 fire 全新上下文"；marker 之前的历史留在磁盘供前端分段展示。副作用是定时 session 若单次 fire 内触发 compaction 也正常（多插一个 marker 而已）。
 - **一次 fire 一个 session 累积 vs 每次新建 session**：选累积——树节点稳定、历史可纵向对比（"这周每天都干了什么"），且避免侧边栏被 fire 刷屏。
 - **无过期机制**：kimi 的 7 天 stale 服务于其注入式模型（需要刷新机制防累积）；我们每次 fire 独立上下文无累积问题，删除是显式操作，语义更干净。
