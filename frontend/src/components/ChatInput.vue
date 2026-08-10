@@ -12,7 +12,7 @@
     <template v-if="state.isScheduled">
       <!-- Scheduled agents are unattended: no input box, interrupt only. -->
       <div class="sealed-notice">Scheduled agent — runs on its cron schedule (view-only).</div>
-      <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop"></span></button>
+      <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop ms-fill"></span></button>
     </template>
     <div v-else-if="state.isSubagent && state.sealed" class="sealed-notice">
       This subagent has ended (view-only).
@@ -63,7 +63,7 @@
         <span class="ms ms-attach-file"></span>
       </button>
       <button @click="handleSend">Send</button>
-      <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop"></span></button>
+      <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop ms-fill"></span></button>
     </template>
   </div>
 </template>

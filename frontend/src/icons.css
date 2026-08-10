@@ -37,6 +37,13 @@
   vertical-align: middle;
 }
 
+.ms-fill {
+  /* FILL axis of the Material Symbols variable font: solid (filled) variant.
+     Only works for icons kept in the subset; the subset retains all four
+     variable axes (FILL/GRAD/opsz/wght). */
+  font-variation-settings: 'FILL' 1;
+}
+
 /* Codepoints must match the subset in fetch-material-icons.sh. */
 .ms-menu::before { content: "\e5d2"; }
 .ms-back::before { content: "\e5c4"; }
