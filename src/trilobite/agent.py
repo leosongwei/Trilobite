@@ -467,7 +467,7 @@ class Agent:
         in ``run`` notices the swap and tells the model. Subagents are fixed
         roles and ignore this.
         """
-        if self._subagent_type is not None:
+        if self._subagent_type is not None or self._scheduled:
             return
         self._permission = PlanModePermission() if mode else BuildModePermission()
 

@@ -1,7 +1,7 @@
 <template>
   <div class="input-area">
     <button
-      v-if="!state.isSubagent"
+      v-if="!state.isSubagent && !state.isScheduled"
       class="mode-toggle"
       :class="{ plan: state.planMode }"
       @click="toggleMode"

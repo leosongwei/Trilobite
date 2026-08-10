@@ -161,7 +161,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 - 顶部 bar：时钟徽标 + schedule 描述 + 返回父会话导航；运行中显示 ■ 停止按钮（走 interrupt）。
 - bar 下方的**定时信息面板**（schedule 活跃时）：cron 表达式、是否重复（重复执行/一次性）、下次执行时间（`next_fire_at`）、已运行次数，以及**完整 prompt**（首次 fire 之前即可查看任务内容）；带**取消定时任务**按钮（确认后调 `POST /api/sessions/{owner}/schedule/delete`，等效 `cron_delete`：不再触发，历史会话保留）。信息来自 session 轮询的 `_scheduled_info`。
-- **无输入框**（不支持 steering）：idle 与运行中都不显示；`POST /message` 后端拒绝（"定时 agent 不接受输入"）。
+- **无输入框**（不支持 steering）：idle 与运行中都不显示；`POST /message` 后端拒绝（"定时 agent 不接受输入"）。**无模式切换**：定时 agent 是固定角色，build/Plan 按钮与 Tab 切换均不可用，`POST /mode` 后端拒绝（"scheduled agent has no mode"），`agent.set_plan_mode` 对定时实例为 no-op。
 - fire 之间的历史以 `CompactMarker`（渲染"定时运行"分隔线）为边界分段展示；旧运行可向上翻看。实时流中的边界由 ⏰ 消息检测兜底（marker 不进入流事件）；重连重建历史时 marker 与 ⏰ 去重（只画一条线）。
 - `store.ts` 处理 `cron_fire`/`cron_fire_end`/`cron_missed` 事件，维护定时节点的 `isRunning`/`run_count`/`last_state`。
 

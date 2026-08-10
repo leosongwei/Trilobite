@@ -545,8 +545,13 @@ async def set_mode(name: str, req: ModeRequest):
     if not session_dir.exists():
         raise HTTPException(404, "Session not found")
 
-    plan_mode = req.mode == "plan"
     info = json.loads((session_dir / "session.json").read_text())
+    if info.get("kind") == "scheduled":
+        # Scheduled agents are a fixed role (CronSubagentPermission), not a
+        # mode; they must not be switchable from the UI.
+        raise HTTPException(400, "scheduled agent has no mode")
+
+    plan_mode = req.mode == "plan"
     info["plan_mode"] = plan_mode
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 

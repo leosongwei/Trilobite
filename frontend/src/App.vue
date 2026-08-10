@@ -230,7 +230,7 @@ watch(() => state.currentSession, () => {
 
 function handleKeydown(e: KeyboardEvent) {
   if (authState.value !== 'ok') return
-  if (e.key === 'Tab' && !state.isSubagent) {
+  if (e.key === 'Tab' && !state.isSubagent && !state.isScheduled) {
     e.preventDefault()
     setMode(state.planMode ? 'build' : 'plan')
   }
