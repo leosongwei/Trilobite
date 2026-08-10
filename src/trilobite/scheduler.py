@@ -314,15 +314,18 @@ class CronService:
             return "No schedules in this session. Use cron_create to add one."
         lines = []
         for s in schedules:
-            if s.completed:
+            if s.deleted:
+                # A schedule can be both completed and deleted (a one-shot
+                # finished, then cron_delete'd); deleted is the covering
+                # terminal state, so it wins the tag.
                 lines.append(
-                    f"- id={s.id} cron='{s.cron}' recurring={s.recurring} [completed] "
+                    f"- id={s.id} cron='{s.cron}' recurring={s.recurring} [deleted] "
                     f"runs={s.run_count} last={s.last_state or 'never'} desc='{s.description}'"
                 )
                 continue
-            if s.deleted:
+            if s.completed:
                 lines.append(
-                    f"- id={s.id} cron='{s.cron}' recurring={s.recurring} [deleted] "
+                    f"- id={s.id} cron='{s.cron}' recurring={s.recurring} [completed] "
                     f"runs={s.run_count} last={s.last_state or 'never'} desc='{s.description}'"
                 )
                 continue
