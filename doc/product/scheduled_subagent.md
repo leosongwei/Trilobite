@@ -15,7 +15,7 @@
 ### v1 范围（本次实现）
 
 - ✅ 三个工具 `cron_create` / `cron_list` / `cron_delete`（增删查，无修改语义）。
-- ✅ 5 字段 cron 表达式（本地时区）+ prompt（≤ 8KB）+ `recurring` 标志（默认 true；`false` 为一次性，fire 后自动删除）。
+- ✅ 5 字段 cron 表达式（本地时区）+ prompt（≤ 8KB）+ `recurring` 标志（默认 true；`false` 为一次性，fire 后标记 completed，不再触发）。
 - ✅ fire 时派生定时 agent：独立 Agent 实例、独立 session、`max_steps` 100 有界运行、结果不返回主 agent。
 - ✅ 每次 fire 全新上下文（定时 agent 实例零起点，同 subagent），运行记录跨 fire 追加落盘、可分段回看。
 - ✅ 侧边栏树状展示：主 session 下挂定时 session 节点（时钟徽标），可切入查看、可中断正在运行的 fire。
@@ -84,7 +84,7 @@
 
 ### `cron_list`
 
-无参数。返回该 session 的全部 schedule：`{id, cron, recurring, description, next_fire_at, run_count, last_state, last_fire_at, prompt 预览(≤200 字符)}`。`next_fire_at` 为 null 表示 cron 在 5 年窗口内不再匹配（recurring=false 且已 fire 的 schedule 已被自删，不会出现）。
+无参数。返回该 session 的全部活跃 schedule：`{id, cron, recurring, description, next_fire_at, run_count, last_state, last_fire_at, prompt 预览(≤200 字符)}`。`next_fire_at` 为 null 表示 cron 在 5 年窗口内不再匹配（已完成的一次性 schedule 不再列出）。
 
 ### `cron_delete`
 
@@ -103,7 +103,7 @@ cron 三工具**仅 build 模式暴露**（`BuildModePermission` 暴露 cron 工
 全局单例，server 持有：
 
 - **加载**：启动时扫描 `sessions/*/schedules.json` 载入全部 schedule（按 session 聚合）。
-- **tick**：asyncio 循环每秒一次（可配置），逐秒遍历全部 schedule，用 `croniter.match` 判断**当前时刻**是否符合 cron 表达式（5 字段 cron 为分钟粒度、忽略秒，同一匹配分钟内任意秒都命中）。符合即触发 fire；同一匹配分钟只触发一次（fire 前把 `last_fire_at` 置为当前时刻，按分钟比较防重）；一次性 schedule 首次匹配即移除自删。
+- **tick**：asyncio 循环每秒一次（可配置），逐秒遍历全部 schedule，用 `croniter.match` 判断**当前时刻**是否符合 cron 表达式（5 字段 cron 为分钟粒度、忽略秒，同一匹配分钟内任意秒都命中）。符合即触发 fire；同一匹配分钟只触发一次（fire 前把 `last_fire_at` 置为当前时刻，按分钟比较防重）；一次性 schedule 首次匹配即标记 completed（不再触发、不列出，条目保留在文件里供 session 信息读取终态）。
 - **增删**：`cron_create`/`cron_delete` 工具经 Agent 调用 service 的 `create`/`delete`，同步落盘 `schedules.json` 并更新内存表。
 - **session 删除联动**：主 session 删除时调 `remove_session(session_name)`，其 schedule 一并清除。
 
@@ -153,7 +153,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 - 定时 session 节点挂载于主 session 之下（`parent_session` 字段，与 subagent 同），带**时钟徽标**（与 EX/GE 角色徽标区分），描述显示 prompt 预览；节点信息展示 cron 表达式、`next_fire_at`、`run_count`、最近一次 `last_state`。
 - fire 运行中：running 徽标；完成后回到 idle（不显示 sealed，区别于 subagent）。
-- schedule 已删除的 session：标记"已停止"（不再有 fire），历史仍可查看。
+- schedule 已删除的 session：标记"已停止"（红点，不再有 fire），历史仍可查看；一次性 schedule 完成（completed）的 session 显示**灰点 finished**（与 subagent 结束一致），区别于删除。
 - 定时 session 不参与主 session 的自动命名；排序同 subagent（`created_at` 降序）。
 
 ### 定时 session 视图（复用 ChatView）
@@ -180,7 +180,8 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
       "created_at": "…",
       "run_count": 12,
       "last_state": "completed",   // 最近一次 fire 终态；从未 fire 为 null
-      "last_fire_at": "…"
+      "last_fire_at": "…",
+      "completed": false           // 一次性 schedule fire 后置 true（不再触发、不列出；recurring 恒为 false）
     }
   ]
 }

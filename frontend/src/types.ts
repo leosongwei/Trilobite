@@ -90,9 +90,11 @@ export interface Session {
   created_at?: number
   updated_at?: number
   // Scheduled sessions (kind === 'scheduled'): live schedule state, refreshed
-  // by the session poll; schedule_active flips false after cron_delete.
+  // by the session poll; schedule_active flips false after cron_delete or
+  // after a one-shot schedule's single fire (completed, recurring=false).
   schedule_id?: string
   schedule_active?: boolean
+  recurring?: boolean
   cron?: string
   run_count?: number
   last_state?: string

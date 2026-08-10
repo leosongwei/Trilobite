@@ -31,7 +31,8 @@
             <span v-if="c.is_running" class="running-dot" title="running"></span>
             <span v-if="c.kind === 'scheduled'" class="child-badge scheduled" title="scheduled agent">&#9200;</span>
             <span v-else class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
-            <span v-if="c.kind === 'scheduled' && c.schedule_active === false" class="stopped-dot" title="schedule deleted"></span>
+            <span v-if="c.kind === 'scheduled' && c.schedule_active === false && c.recurring === false" class="sealed-dot" title="finished"></span>
+            <span v-else-if="c.kind === 'scheduled' && c.schedule_active === false" class="stopped-dot" title="schedule deleted"></span>
             <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
             {{ c.description || c.name }}
           </span>
@@ -163,7 +164,7 @@ watch(
 function childLabel(c: Session): string {
   if (c.kind === 'scheduled') {
     const parts = [`cron: ${c.cron || ''}`, `runs: ${c.run_count ?? 0}`, `last: ${c.last_state ?? '-'}`]
-    if (c.schedule_active === false) parts.push('(schedule deleted)')
+    if (c.schedule_active === false) parts.push(c.recurring === false ? '(completed)' : '(schedule deleted)')
     return parts.join(' · ')
   }
   return c.subagent_type || ''
