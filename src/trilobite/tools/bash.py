@@ -132,6 +132,7 @@ class BashTool(Tool):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                errors="replace",
                 cwd=working_dir,
                 start_new_session=True,
             )
