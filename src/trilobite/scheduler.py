@@ -163,13 +163,38 @@ class CronService:
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
 
     def load_all(self) -> None:
-        """Reload every session's schedules from disk (startup / rescan)."""
+        """Reload every session's schedules from disk (startup / rescan).
+
+        Fires that fell during downtime are NOT caught up: each schedule's
+        ``last_fire_at`` is aligned to the most recent *past* cron match, so
+        the tick resumes from the next future match. One-shot schedules that
+        came due during downtime roll forward to their next match instead of
+        firing immediately.
+        """
         self._schedules.clear()
         if not self._sessions_dir.exists():
             return
+        now = datetime.now()
         for sd in self._sessions_dir.iterdir():
             if sd.is_dir() and (sd / SCHEDULES_FILE).is_file():
-                self._schedules[sd.name] = self._load(sd.name)
+                schedules = self._load(sd.name)
+                for s in schedules:
+                    self._align_past(s, now)
+                self._schedules[sd.name] = schedules
+
+    def _align_past(self, sched: Schedule, now: datetime) -> None:
+        """Skip fires that fell while the service was down.
+
+        Anchors ``last_fire_at`` to the most recent cron match strictly
+        before ``now`` (croniter's get_prev is strict, so the anchor is
+        always in the past), making the next ``_due_at`` a future match.
+        """
+        try:
+            prev = croniter(sched.cron, now).get_prev(datetime)
+        except (ValueError, KeyError):
+            return
+        if prev is not None:
+            sched.last_fire_at = prev.timestamp()
 
     # ── tool-facing API (called from the main agent, synchronous) ──────────
 

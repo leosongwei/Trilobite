@@ -192,7 +192,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 ### 重启恢复
 
-启动时 `load_all()` 从磁盘重载 schedule 并重新注册 tick。错过的触发点不补跑（服务恢复后从下一个未来匹配点继续）。
+启动时 `load_all()` 从磁盘重载 schedule 并重新注册 tick。**错过的触发点不补跑**：`load_all` 把每个 schedule 的 `last_fire_at` 对齐到"最近的过去匹配点"（`croniter.get_prev`，严格早于当前时刻），tick 从下一个未来匹配点继续；一次性任务在停机期间到期则顺延到下一次匹配。运行中的 fire 随进程丢失（进程内态），已落盘的历史可回看，且该触发点不会重复 fire（tick 已推进 `last_fire_at`）。
 
 ## 九、限制与安全
 
