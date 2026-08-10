@@ -684,12 +684,12 @@ document.addEventListener('visibilitychange', () => {
 async function loadSessionsRefresher() {
   try {
     const list = await api.getSessions()
-    // A scheduled agent's fire starts outside any user action (the cron
-    // tick spawns a fresh agent instance, replacing the previous one), so
-    // the SSE stream the browser holds dies with the old instance. When the
-    // session we are viewing flips to running on a poll, reconnect to follow
-    // the live fire. (Fires shorter than the poll interval are missed live
-    // but still land in history.)
+    // A scheduled agent's fire reuses the idle instance (its broker keeps the
+    // SSE stream alive), so the stream normally follows each fire live. The
+    // reconnect below is a safety net: after a restart, or if the stream was
+    // dropped for any reason, the poll catches the session flipping to
+    // running and re-attaches. (Fires shorter than the poll interval are
+    // missed live but still land in history.)
     const wasRunning = new Map(state.sessions.map((s) => [s.id, s.is_running]))
     const cur = list.find((s) => s.id === state.currentSession)
     if (

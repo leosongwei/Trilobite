@@ -491,26 +491,29 @@ class CronService:
         info = json.loads((session_dir / "session.json").read_text())
 
         agent = self._agents.get(sched.session_id)
-        if agent is not None and agent.is_running():
-            return  # a fire is already running (missed handling is in _tick)
-
-        # Every fire is a fresh agent instance -- zero API context (the
-        # CompactMarker appended by start_scheduled_fire drops the previous
-        # runs from get_api_messages, while they stay in the persisted
-        # history for viewing). It replaces the previous instance in the
-        # registry so interrupt / stream endpoints always see the live one.
-        agent = Agent(
-            name=sched.session_id,
-            working_dir=info["working_dir"],
-            session_dir=session_dir,
-            config=self._config,
-            registry=self._agents,
-            scheduled=True,
-            scheduled_allow_dirs=info.get("additional_dirs", []),
-            max_steps=int(self._config.get("subagent_max_steps", 100)),
-        )
+        if agent is not None:
+            if agent.is_running():
+                return  # a fire is already running (missed handling is in _tick)
+            # Reuse the idle instance: its broker keeps the SSE stream alive,
+            # so viewers of this session follow the fire live (no reconnect
+            # gap). Per-fire run state is reset in run(); the CompactMarker
+            # appended by start_scheduled_fire keeps the API context at this
+            # fire. The instance replaces nothing in the registry.
+        else:
+            # First fire, or the instance was dropped (restart): build one
+            # from the persisted session.
+            agent = Agent(
+                name=sched.session_id,
+                working_dir=info["working_dir"],
+                session_dir=session_dir,
+                config=self._config,
+                registry=self._agents,
+                scheduled=True,
+                scheduled_allow_dirs=info.get("additional_dirs", []),
+                max_steps=int(self._config.get("subagent_max_steps", 100)),
+            )
+            self._agents[sched.session_id] = agent
         agent.set_additional_dirs(info.get("additional_dirs", []))
-        self._agents[sched.session_id] = agent
 
         self._running[sched.id] = sched.session_id
         fire_time = datetime.now().strftime("%Y-%m-%d %H:%M")

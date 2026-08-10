@@ -55,8 +55,8 @@
 |---|---|---|
 | 派生者 | 主 agent 的 `task` 工具调用 | 调度器按 cron 到点自动触发 |
 | 结果 | `<task_result>` 回填主 agent | **不返回**，主 agent 无感知（除侧边栏） |
-| 生命周期 | 有界，结束即 sealed，不可复用 | 每次 fire 新建实例，fire 间 idle（不 sealed） |
-| 上下文 | 零起点，单次运行 | 零起点（每次 fire 新实例），历史跨 fire 累积展示 |
+| 生命周期 | 有界，结束即 sealed，不可复用 | 复用同一实例，fire 间 idle（不 sealed） |
+| 上下文 | 零起点，单次运行 | 零起点（fire 前 marker 截断），历史跨 fire 累积展示 |
 | 权限请求 | 交互式（全局横幅审批） | 无人值守，越界终止本次 fire 记 error |
 | steering | 运行中可 steer | 不支持（只可中断） |
 | 持久化 | 无（进程内，重启即失） | schedule 落盘，重启重载续跑 |
@@ -111,20 +111,20 @@ cron 三工具**仅 build 模式暴露**（`BuildModePermission` 暴露 cron 工
 ### fire 流程
 
 1. tick 命中（当前时刻符合 cron）且该 schedule 无运行中的 fire（有则跳过本匹配分钟——该分钟不会重复触发，也不补发）。
-2. **新建**定时 Agent 实例（名字 = schedule 对应 session 的 id），替换注册表里的旧实例；实例加载磁盘历史（旧 run 的消息进入内存，展示层跨 fire 累积），`start_scheduled_fire` 在历史非空时**先追加一个 `CompactMarker`** 再写本次 fire 的 system + ⏰ user 消息——`get_api_messages` 从最后一个 marker 之后投影，API 上下文只含**本次 fire** 的消息，与 subagent 启动的零起点一致，无跨 run 上下文污染、无累积 token 膨胀；marker 复用主 session 压缩的同一机制（历史内边界标记），持久化历史照常全量累积。
+2. **复用**注册表中的定时 Agent 实例（首次 fire 或重启后从磁盘新建），fire 开始时 `run()` 重置本次运行状态（`_interrupted`/`_step_count`/pending 标志）；`start_scheduled_fire` 在历史非空时**先追加一个 `CompactMarker`** 再写本次 fire 的 system + ⏰ user 消息——`get_api_messages` 从最后一个 marker 之后投影，API 上下文只含**本次 fire** 的消息，与 subagent 启动的零起点一致，无跨 run 上下文污染、无累积 token 膨胀；marker 复用主 session 压缩的同一机制（历史内边界标记），持久化历史照常全量累积。
 3. 实例的第一条 user 消息为合成消息：`⏰ 定时触发（<本地时间>）\n<prompt>`——既是本次 run 的任务说明，也是前端分段展示的 run 边界。
 4. 实例注册进 `agents` 字典（供查看/中断），以独立 asyncio task 跑 `run()`（与主 agent 运行互不阻塞）；本次 run 的消息按既有持久化路径**追加**写入该 session 的 `history.json`（`save()` 原样写回全量内存消息，与旧 run 累积在同一文件）。
-5. fire 结束（完成/中断/出错/超步数）→ 更新 `schedules.json` 的 `run_count`/`last_state`/`last_fire_at`，发 `cron_fire_end` 事件，实例留在 `agents` 字典供查看；下次 fire 新建实例覆盖注册。
+5. fire 结束（完成/中断/出错/超步数）→ 更新 `schedules.json` 的 `run_count`/`last_state`/`last_fire_at`，发 `cron_fire_end` 事件，实例留在 `agents` 字典供查看；下次 fire 复用同一 idle 实例。
 
 ### 每次 fire 全新上下文
 
 定时 agent 本质是"每次 fire 直接开一个新的 subagent"：API 上下文天然只含本次 fire（fire 前的 `CompactMarker` 让 `get_api_messages` 从本次 fire 开始），无跨 run 污染、无累积 token 膨胀。旧 run 的消息只作为展示历史累积在 `history.json`，前端以 marker（渲染"定时运行"分隔线，首次 fire 无 marker 时以"⏰ 定时触发"消息兜底）为边界分段渲染。
 
-> 前端注意：fire 开始时会用新实例替换注册表里的旧实例，正在查看该定时 session 的 SSE 连接随之失效。`store.ts` 的 session 轮询检测到"当前查看的定时 session 翻转为 running"时自动重连流（短于轮询间隔的 fire 错过实时输出，但历史完整落盘）。
+> 前端注意：fire 复用同一 idle 实例，其 broker 的 SSE 流持续有效——正在查看该定时 session 的页面**实时跟随每次 fire**（气泡逐条弹出、滚动跟随，与主 session 一致）。`store.ts` 的轮询重连保留为兜底：仅当流因重启/网络等原因断开时，检测到"当前查看的定时 session 翻转为 running"才重连（短于轮询间隔的 fire 错过实时输出，但历史完整落盘）。
 
 ### 中断与取消
 
-- **用户中断**：定时 session 视图的 ■ 走 `POST /api/sessions/{id}/interrupt`，复用 `agent.interrupt()`：kill 在飞 bash 进程组、cancel run task、产出中断总结、以 `interrupted` 终态结束本次 fire。定时 agent **不 sealed**（下次 fire 新建实例再跑）。
+- **用户中断**：定时 session 视图的 ■ 走 `POST /api/sessions/{id}/interrupt`，复用 `agent.interrupt()`：kill 在飞 bash 进程组、cancel run task、产出中断总结、以 `interrupted` 终态结束本次 fire。定时 agent **不 sealed**（下次 fire 复用实例再跑）。
 - **主 agent 停止**：定时 fire 是独立 asyncio task，不在主 run 的 `gather` 之内，主 agent 的 cancel **不传播**给它——定时任务继续跑完（"发射后不管"语义）。
 - **服务重启**：运行中的 fire 丢失（与 subagent 同，进程内态），history 已落盘可回看；schedule 重载后只计未来触发。
 
@@ -193,7 +193,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 ### 定时 session（`sessions/<uuid>/`）
 
-与 subagent 同构，`session.json` 增加：`kind: "scheduled"`、`schedule_id`；沿用 `parent_session`（主 session id）、`created_at`。一个 schedule 对应**唯一** session 目录，每次 fire 新建实例、本次 run 的消息追加写入同一 `history.json`，跨 fire 累积（每次 fire 前在历史末尾追加 `CompactMarker` 作为 run 边界与 API 上下文截断点）。
+与 subagent 同构，`session.json` 增加：`kind: "scheduled"`、`schedule_id`；沿用 `parent_session`（主 session id）、`created_at`。一个 schedule 对应**唯一** session 目录，fire 复用同一实例、本次 run 的消息追加写入同一 `history.json`，跨 fire 累积（每次 fire 前在历史末尾追加 `CompactMarker` 作为 run 边界与 API 上下文截断点）。
 
 ### 重启恢复
 
@@ -224,7 +224,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 - **独立 agent vs 注入主 agent**：kimi-code 把 `<cron-fire>` 注入主 agent 上下文执行（结果进主 transcript，无独立角色概念、权限即主 agent 当前权限）。我们选独立定时 agent：符合"不返回结果"需求、主上下文零污染、主 agent 无需为空闲时段任务预留 token；代价是每次 fire 是完整独立 run（冷启动、无主上下文继承），且无人值守场景需越界即终止（见第六节）。定时任务本就应自包含（prompt 携带全部所需信息），与 subagent 的上下文隔离哲学一致。
 - **仅 build 暴露、`CronSubagentPermission`**：定时 agent 结果不返回主 agent，explore 角色的只读探索产出没有出口，故不设 explore；定时 agent 一律 `CronSubagentPermission`（继承 `GeneralSubagentPermission`，工具白名单同 general）。cron 工具仅 build 模式暴露，plan 模式无法创建定时任务（plan 模式不能创建 cron subagent），只读语义不被"借壳"破坏。kimi 无此问题是因为它注入主 agent、结果与权限都跟随主 agent。
-- **每次 fire 新建实例（API 零起点）而非复用实例**：定时 agent 本质是"每次 fire 直接开一个新的 subagent"。新建实例（不复用）避免上次 run 的状态残留（`_interrupted`/`_step_count`/回放缓冲等），实例加载磁盘全量历史但 fire 前追加的 `CompactMarker` 让 API 投影只含当前 fire——展示层累积、API 层零起点，复用主 session 压缩的同一 marker 机制（历史内边界标记）。代价是前端 SSE 连接随实例替换失效，由轮询检测"定时 session 翻转为 running"时自动重连（短 fire 错过实时但历史完整）。
+- **每次 fire 复用 idle 实例（API 零起点）而非新建实例**：定时 agent 的实例常驻注册表，fire 复用同一实例——broker 不变，SSE 流持续，前端实时跟随（与主 session 一致）。`run()` 在 fire 开始时重置运行状态（`_interrupted`/`_step_count`/pending 标志），fire 前追加的 `CompactMarker` 让 API 投影只含当前 fire——展示层累积、API 层零起点，复用主 session 压缩的同一 marker 机制（历史内边界标记）。首次 fire 或重启后实例从磁盘新建。
 - **一次 fire 一个 session 累积 vs 每次新建 session**：选累积——树节点稳定、历史可纵向对比（"这周每天都干了什么"），且避免侧边栏被 fire 刷屏。
 - **无过期机制**：kimi 的 7 天 stale 服务于其注入式模型（需要刷新机制防累积）；我们每次 fire 独立上下文无累积问题，删除是显式操作，语义更干净。
 - **无错过补偿**：kimi 会 coalesce 停机期间错过的 fire；我们服务重启后只计未来触发。本地单用户应用错过即错过（重启恢复时立即补一次反而突兀）。

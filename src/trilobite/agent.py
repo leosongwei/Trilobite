@@ -720,6 +720,16 @@ class Agent:
         self._task = asyncio.current_task()
         self._loop = asyncio.get_running_loop()
 
+        # A scheduled agent's instance is reused across fires (its broker
+        # keeps the SSE stream alive, so viewers follow each fire live);
+        # reset the per-fire run state a previous run may have left behind.
+        if self._scheduled:
+            self._interrupted = False
+            self._step_count = 0
+            self._pending_tool_results = False
+            self._force_run = False
+            self._user_read_cursor = 0
+
         self._ensure_system_message()
         # Guard against a dangling assistant(tool_calls) lacking results left
         # behind by a crashed/interrupted run -- the API would reject it.
