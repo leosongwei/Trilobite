@@ -1,7 +1,7 @@
 <template>
   <div class="fm">
     <div class="fm-topbar">
-      <button class="fm-back" @click="tryClose">&#8592; Back</button>
+      <button class="fm-back" @click="tryClose"><span class="ms ms-back"></span> Back</button>
       <span class="fm-filepath" :title="selectedFile?.path">{{ selectedFile ? selectedFile.path : '未选择文件' }}</span>
       <span v-if="savedTick" class="fm-saved">已保存</span>
       <div class="fm-actions">

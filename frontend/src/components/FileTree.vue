@@ -2,8 +2,8 @@
   <div class="file-tree">
     <template v-for="node in displayNodes" :key="node.path">
       <div class="tree-row dir" :class="{ changed: node.changed }" @click="toggle(node)">
-        <span class="tree-arrow" :class="{ open: node.expanded }">&#9656;</span>
-        <span class="tree-icon">&#128193;</span>
+        <span class="tree-arrow ms ms-expand" :class="{ open: node.expanded }"></span>
+        <span class="tree-icon ms ms-folder"></span>
         <span class="tree-name" :title="node.path">{{ node.name }}</span>
       </div>
       <div v-if="node.expanded" class="tree-children">
@@ -32,7 +32,7 @@
           >
             <!-- Empty arrow keeps file names aligned with directory names. -->
             <span class="tree-arrow"></span>
-            <span class="tree-icon">&#128196;</span>
+            <span class="tree-icon ms ms-description"></span>
             <span class="tree-name" :title="node.path + '/' + f.name">{{ f.name }}</span>
             <span
               v-if="f.status && f.status !== 'clean'"
@@ -256,9 +256,11 @@ defineExpose({
   color: #858585;
   transition: transform 0.1s;
   flex-shrink: 0;
+  /* expand_more points down; rotate to point right when collapsed. */
+  transform: rotate(-90deg);
 }
 .tree-arrow.open {
-  transform: rotate(90deg);
+  transform: none;
 }
 .tree-icon {
   font-size: 12px;

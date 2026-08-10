@@ -27,7 +27,7 @@
     />
     <div class="sidebar-width-resizer" title="Drag to resize" @mousedown="startWidthResize"></div>
     <main class="main">
-      <button class="menu-toggle" @click="sidebarOpen = true">&#9776;</button>
+      <button class="menu-toggle" @click="sidebarOpen = true"><span class="ms ms-menu"></span></button>
       <FileManager
         v-if="showFiles && state.currentSession"
         :session-id="state.currentSession"
@@ -40,8 +40,8 @@
       />
       <template v-else>
         <div v-if="state.isSubagent || state.isScheduled" class="subagent-bar">
-          <button class="back-btn" @click="goParent">&larr; parent</button>
-          <span v-if="state.isScheduled" class="subagent-tag scheduled" title="scheduled agent">&#9200;</span>
+          <button class="back-btn" @click="goParent"><span class="ms ms-back"></span> parent</button>
+          <span v-if="state.isScheduled" class="subagent-tag scheduled" title="scheduled agent"><span class="ms ms-schedule"></span></span>
           <span v-else class="subagent-tag" :class="state.subagentType">{{ state.subagentType }}</span>
           <span class="subagent-title">{{ state.subagentDescription || state.currentSession }}</span>
           <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>

@@ -26,6 +26,10 @@ npm run build
 
 This compiles to `src/trilobite/static/` (gitignored). Runtime only needs FastAPI.
 
+The icon font (Material Symbols, Apache-2.0) is vendored as a gitignored
+subset; regenerate it with `frontend/scripts/fetch-material-icons.sh` whenever
+you add an icon (requires `curl` + `uv`).
+
 ## Install from a built wheel
 
 A built wheel (from `./build.sh`) already bundles the frontend assets, so no

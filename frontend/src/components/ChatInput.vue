@@ -12,7 +12,7 @@
     <template v-if="state.isScheduled">
       <!-- Scheduled agents are unattended: no input box, interrupt only. -->
       <div class="sealed-notice">Scheduled agent — runs on its cron schedule (view-only).</div>
-      <button @click="stop" :disabled="!state.isStreaming" title="Stop">&#9632;</button>
+      <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop"></span></button>
     </template>
     <div v-else-if="state.isSubagent && state.sealed" class="sealed-notice">
       This subagent has ended (view-only).
@@ -42,7 +42,7 @@
         <div v-if="pendingImages.length" class="image-previews">
           <div v-for="(img, idx) in pendingImages" :key="idx" class="image-preview">
             <img :src="img.preview_url" :title="img.original_name" />
-            <button class="image-remove" @click="removeImage(idx)" title="Remove">×</button>
+            <button class="image-remove" @click="removeImage(idx)" title="Remove"><span class="ms ms-close"></span></button>
           </div>
         </div>
       </div>
@@ -63,7 +63,7 @@
         📎
       </button>
       <button @click="handleSend">Send</button>
-      <button @click="stop" :disabled="!state.isStreaming" title="Stop">&#9632;</button>
+      <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop"></span></button>
     </template>
   </div>
 </template>
