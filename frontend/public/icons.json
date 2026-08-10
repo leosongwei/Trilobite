@@ -42,7 +42,8 @@
     "std": "■",
     "std_name": "black square",
     "std_codepoint": "U+25A0",
-    "class": "stop"
+    "class": "stop",
+    "fill": true
   },
   {
     "use": "close / delete",
