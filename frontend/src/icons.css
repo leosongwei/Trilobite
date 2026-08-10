@@ -40,7 +40,7 @@
 .ms-stop::before { content: "\e047"; }
 .ms-close::before { content: "\e5cd"; }
 .ms-check::before { content: "\e668"; }
-.ms-edit::before { content: "\f097"; }
+.ms-edit-square::before { content: "\f88d"; }
 .ms-expand::before { content: "\e5cf"; }
 .ms-folder::before { content: "\e2c7"; }
 .ms-description::before { content: "\e873"; }

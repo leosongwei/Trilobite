@@ -64,7 +64,7 @@
               class="icon-btn"
               title="Rename session"
               @click="startEditName"
-            ><span class="ms ms-edit"></span></button>
+            ><span class="ms ms-edit-square"></span></button>
           </template>
         </div>
         <div class="info-row">
