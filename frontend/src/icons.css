@@ -41,6 +41,7 @@
 .ms-menu::before { content: "\e5d2"; }
 .ms-back::before { content: "\e5c4"; }
 .ms-schedule::before { content: "\efd6"; }
+.ms-attach-file::before { content: "\e226"; }
 .ms-stop::before { content: "\e047"; }
 .ms-close::before { content: "\e5cd"; }
 .ms-check::before { content: "\e668"; }

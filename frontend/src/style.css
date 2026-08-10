@@ -462,7 +462,12 @@ body {
   user-select: none;
 }
 .turn-block .thinking-header:hover { color: #8bc36a; }
-.turn-block .thinking-toggle { margin-right: 4px; }
+.turn-block .thinking-toggle {
+  margin-right: 4px;
+  /* ms-expand points down; rotate to point right when collapsed. */
+  transform: rotate(-90deg);
+}
+.turn-block .thinking-toggle.open { transform: none; }
 .turn-block .thinking-body {
   position: relative;
   max-height: 4.5em; /* ~3 lines */

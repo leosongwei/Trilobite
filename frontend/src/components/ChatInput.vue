@@ -60,7 +60,7 @@
         title="Add image"
         :disabled="state.isStreaming"
       >
-        📎
+        <span class="ms ms-attach-file"></span>
       </button>
       <button @click="handleSend">Send</button>
       <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop"></span></button>

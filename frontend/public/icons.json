@@ -27,6 +27,15 @@
     "class": "schedule"
   },
   {
+    "use": "add image",
+    "name": "attach_file",
+    "codepoint": "e226",
+    "std": "📎",
+    "std_name": "paperclip",
+    "std_codepoint": "U+1F4CE",
+    "class": "attach-file"
+  },
+  {
     "use": "stop",
     "name": "stop",
     "codepoint": "e047",

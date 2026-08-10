@@ -1,7 +1,7 @@
 <template>
   <div class="user-message">
     <template v-if="!editing">
-      <button class="user-pencil" @click="startEdit" title="编辑并重发">✎</button>
+      <button class="user-pencil" @click="startEdit" title="编辑并重发"><span class="ms ms-edit-square"></span></button>
       <div class="user-content">
         <span class="message user">{{ item.content }}</span>
         <div v-if="item.images?.length" class="user-images">
@@ -16,7 +16,7 @@
         </div>
       </div>
       <div v-if="lightboxImage" class="lightbox" @click.self="closeLightbox">
-        <button class="lightbox-close" @click="closeLightbox" title="关闭">✕</button>
+        <button class="lightbox-close" @click="closeLightbox" title="关闭"><span class="ms ms-close"></span></button>
         <img class="lightbox-img" :src="lightboxImage" @click.stop />
       </div>
     </template>
@@ -29,8 +29,8 @@
         @keydown.esc="cancelEdit"
       ></textarea>
       <div class="user-edit-actions">
-        <button class="user-edit-btn" @click="confirmEdit" title="确认">✓</button>
-        <button class="user-edit-btn" @click="cancelEdit" title="取消">✗</button>
+        <button class="user-edit-btn" @click="confirmEdit" title="确认"><span class="ms ms-check"></span></button>
+        <button class="user-edit-btn" @click="cancelEdit" title="取消"><span class="ms ms-close"></span></button>
       </div>
     </div>
   </div>
