@@ -161,6 +161,9 @@ class CronService:
         self._schedules: dict[str, list[Schedule]] = {}
         #: schedule_id -> scheduled session name currently firing.
         self._running: dict[str, str] = {}
+        #: schedule_id -> minute when a skip was last announced (dedup: a
+        #: missed fire is reported at most once per matching minute).
+        self._missed_minutes: dict[str, int] = {}
         self._tick_task: asyncio.Task | None = None
 
     # ── persistence ────────────────────────────────────────────────────────
@@ -386,6 +389,7 @@ class CronService:
                     schedules.remove(s)
                     self._persist(session_name, schedules)
                     self._running.pop(s.id, None)
+                    self._missed_minutes.pop(s.id, None)
 
     # ── tick loop ──────────────────────────────────────────────────────────
 
@@ -416,11 +420,21 @@ class CronService:
         while True:
             try:
                 now = datetime.now()
+                minute = int(now.timestamp()) // 60
                 for session_name, schedules in list(self._schedules.items()):
                     for sched in list(schedules):
                         if sched.completed or sched.deleted:
                             continue
                         if sched.id in self._running:
+                            # The previous fire is still going: skip this
+                            # minute's match, announcing it once per minute.
+                            if self._matches(sched, now) and self._missed_minutes.get(sched.id) != minute:
+                                self._missed_minutes[sched.id] = minute
+                                asyncio.create_task(self._send_event(session_name, {
+                                    "type": "cron_missed",
+                                    "schedule_id": sched.id,
+                                    "session": sched.session_id,
+                                }))
                             continue
                         if not self._matches(sched, now):
                             continue

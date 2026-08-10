@@ -66,7 +66,7 @@
 
 ## 四、三个 cron 工具
 
-三个**虚拟工具**（仅 LLM 可见定义，执行逻辑在 `Agent` 内，与 `exit_plan_mode`/`task` 同路径），仅暴露给主 agent（build/plan 模式），**不暴露给子 agent 与定时 agent**。增删查三态由工具集本身表达，"不能改"没有对应的修改工具，天然不可达。
+三个**虚拟工具**（仅 LLM 可见定义，执行逻辑在 `Agent` 内，与 `exit_plan_mode`/`task` 同路径），仅暴露给 build 模式的主 agent（plan 模式不暴露，见下），**不暴露给子 agent 与定时 agent**。增删查三态由工具集本身表达，"不能改"没有对应的修改工具，天然不可达。
 
 ### `cron_create`
 
@@ -152,7 +152,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 ### 侧边栏树
 
-- 定时 session 节点挂载于主 session 之下（`parent_session` 字段，与 subagent 同），带**时钟徽标**（与 EX/GE 角色徽标区分），描述显示 prompt 预览；节点信息展示 cron 表达式、`next_fire_at`、`run_count`、最近一次 `last_state`。
+- 定时 session 节点挂载于主 session 之下（`parent_session` 字段，与 subagent 同），带**时钟徽标**（与 EX/GE 角色徽标区分），描述显示模型给的 `name`（未提供时 prompt 前 40 字符预览）；节点信息展示 cron 表达式、`next_fire_at`、`run_count`、最近一次 `last_state`。
 - fire 运行中：running 徽标（绿闪）；完成后回到 idle。节点**状态点**四态：从未 fire（pending）浅蓝点、运行中绿闪点、上次 fire 以 `error` 结束红点、正常结束（completed/interrupted）灰点（与 subagent 结束一致）。schedule 被删除后仍按最后终态显示（不因删除而变回浅蓝）。
 - **手动删除记录**：非运行状态的 subagent / 定时 session 节点 hover 显示 ×，可删除（删除定时 session 时其 schedule 一并从 owner 移除）；运行中的节点不可删除。
 - 定时 session 不参与主 session 的自动命名；排序同 subagent（`created_at` 降序）。
@@ -179,7 +179,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
       "cron": "30 9 * * *",
       "prompt": "…",
       "recurring": true,
-      "description": "…",      // prompt 前 40 字符
+      "description": "…",      // 侧边栏展示名：name 或 prompt 前 40 字符预览
       "created_at": "…",
       "run_count": 12,
       "last_state": "completed",   // 最近一次 fire 终态；从未 fire 为 null
@@ -211,7 +211,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 ## 十、实现拆解
 
 1. **`pyproject.toml`**：新增依赖 `croniter`（cron 解析与下次触发计算）。
-2. **`scheduler.py`**（新模块）：`CronService`——`load_all` / `create` / `delete` / `list` / `remove_session` / `remove_schedule_by_session` / `tick` 循环 / `_fire`（新建定时 Agent 实例、`start_scheduled_fire`、发事件、更新统计）。构造时注入 session 根目录、config、`agents` 注册表。
+2. **`scheduler.py`**（新模块）：`CronService`——`load_all` / `_create` / `_delete` / `_list`（公共入口 `handle` 按工具名分发，`delete_schedule` 供前端端点）/ `remove_session` / `remove_schedule_by_session` / `tick` 循环 / `_fire`（新建定时 Agent 实例、`start_scheduled_fire`、发事件、更新统计）。构造时注入 session 根目录、config、`agents` 注册表。
 3. **`tool_call.py`**：`CRON_CREATE_DEF` / `CRON_LIST_DEF` / `CRON_DELETE_DEF` 三个虚拟工具定义 + `CRON_TOOL_DEFS`（描述采用正向框架，见 prompts 一条）。
 4. **`permission.py`**：新增 `CronSubagentPermission`（继承 `GeneralSubagentPermission`，工具白名单同 general、不含 cron 工具，越界语义在 Agent 层区分）；`AgentPermission` 加 `exposes_cron` 标志，`BuildModePermission` 为 True（append 三个 DEF 并放行），`PlanModePermission` 为 False（不暴露、intercept 拦截），Explore/General/Cron 不含。
 5. **`history.py`**：`api_from` 投影起点（在 CompactMarker 规则之外，取两者较大值）——定时 agent 复用 session 时 API 上下文从当前 fire 开始，持久化仍写全量。
