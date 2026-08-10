@@ -137,8 +137,10 @@
 定时 agent 在无人值守环境运行，**不弹交互式权限请求**（没人审批会挂死）：
 
 - 工作区 + 继承主 session 的 `additional_dirs` 范围内：正常执行（general 角色全工具，explore 角色只读）。
-- 越界访问：工具直接返回错误（与 subagent 的交互式审批不同，定时 agent 的 `intercept` 对越界路径直接拒绝），错误信息会进入该次 fire 的历史，用户回看可知。
+- 越界访问：工具直接返回错误。与 subagent 的交互式审批不同，定时 agent 在 agent 工具派发处（`file_access` 路径解析失败后）不触发 `permission_request` 事件，直接返回拒绝，错误信息会进入该次 fire 的历史，用户回看可知。
 - 敏感文件过滤沿用 `file_access.py`。
+
+权限类直接复用 `GeneralSubagentPermission` / `ExploreSubagentPermission`（工具白名单与 `task` subagent 完全一致，不新建权限类），差异仅在越界处理路径（非交互）。实现上 Agent 增加非交互标志，在权限请求分支改为直接拒绝。
 
 ## 七、事件与前端
 
