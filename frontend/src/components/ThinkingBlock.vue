@@ -1,7 +1,7 @@
 <template>
   <div class="thinking">
     <div class="thinking-header" @click="toggle">
-      <span class="thinking-toggle">{{ open ? '▾' : '▸' }}</span>
+      <span class="thinking-toggle ms ms-expand" :class="{ open }"></span>
       <span class="thinking-label">thinking</span>
     </div>
     <div ref="bodyRef" class="thinking-body" :class="{ expanded: open }">

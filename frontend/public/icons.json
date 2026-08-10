@@ -1,0 +1,102 @@
+[
+  {
+    "use": "sidebar menu",
+    "name": "menu",
+    "codepoint": "e5d2",
+    "std": "☰",
+    "std_name": "menu",
+    "std_codepoint": "U+2630",
+    "class": "menu"
+  },
+  {
+    "use": "back",
+    "name": "arrow_back",
+    "codepoint": "e5c4",
+    "std": "←",
+    "std_name": "left arrow",
+    "std_codepoint": "U+2190",
+    "class": "back"
+  },
+  {
+    "use": "scheduled badge",
+    "name": "schedule",
+    "codepoint": "efd6",
+    "std": "⏰",
+    "std_name": "clock",
+    "std_codepoint": "U+23F0",
+    "class": "schedule"
+  },
+  {
+    "use": "add image",
+    "name": "attach_file",
+    "codepoint": "e226",
+    "std": "📎",
+    "std_name": "paperclip",
+    "std_codepoint": "U+1F4CE",
+    "class": "attach-file"
+  },
+  {
+    "use": "stop",
+    "name": "stop",
+    "codepoint": "e047",
+    "std": "■",
+    "std_name": "black square",
+    "std_codepoint": "U+25A0",
+    "class": "stop",
+    "fill": true
+  },
+  {
+    "use": "close / delete",
+    "name": "close",
+    "codepoint": "e5cd",
+    "std": "×",
+    "std_name": "multiplication sign",
+    "std_codepoint": "U+00D7",
+    "class": "close"
+  },
+  {
+    "use": "save",
+    "name": "check",
+    "codepoint": "e668",
+    "std": "✔",
+    "std_name": "check mark",
+    "std_codepoint": "U+2713",
+    "class": "check"
+  },
+  {
+    "use": "rename",
+    "name": "edit_square",
+    "codepoint": "f88d",
+    "std": "✏",
+    "std_name": "pencil",
+    "std_codepoint": "U+270F",
+    "class": "edit-square"
+  },
+  {
+    "use": "tree arrow",
+    "name": "expand_more",
+    "codepoint": "e5cf",
+    "std": "▸",
+    "std_name": "right triangle",
+    "std_codepoint": "U+25B8",
+    "class": "expand"
+  },
+  {
+    "use": "directory",
+    "name": "folder",
+    "codepoint": "e2c7",
+    "std": "📁",
+    "std_name": "folder",
+    "std_codepoint": "U+1F4C1",
+    "class": "folder"
+  },
+  {
+    "use": "file",
+    "name": "description",
+    "codepoint": "e873",
+    "std": "📄",
+    "std_name": "page",
+    "std_codepoint": "U+1F4C4",
+    "class": "description"
+  }
+]
