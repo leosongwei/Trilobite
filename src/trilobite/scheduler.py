@@ -18,9 +18,11 @@ Design notes (see ``doc/product/scheduled_subagent.md``):
   frontend's run boundary.
 - Scheduled agents are unattended: out-of-workspace access is denied
   directly (no interactive approval banner -- nobody would answer it).
-- Fires are skipped when the previous fire of the same schedule is still
-  running (a ``cron_missed`` event is emitted and the missed due time is
-  marked as fired, so the tick does not re-announce it).
+- Fires are skipped while the previous fire of the same schedule is still
+  running. Matching is minute-granular (``croniter.match`` ignores seconds):
+  each tick tests the current time against the cron expression, and the
+  minute-level ``last_fire_at`` check ensures one fire per matching minute,
+  so a missed minute is never re-announced afterwards.
 - After a server restart only future matches count; missed fires during
   downtime are not caught up.
 """
@@ -187,7 +189,9 @@ class CronService:
 
         Anchors ``last_fire_at`` to the most recent cron match strictly
         before ``now`` (croniter's get_prev is strict, so the anchor is
-        always in the past), making the next ``_due_at`` a future match.
+        always in the past). After a restart this doubles as a dedup anchor:
+        if the current minute already matches, ``_already_handled`` sees the
+        same minute and skips the fire, so downtime fires are never replayed.
         """
         try:
             prev = croniter(sched.cron, now).get_prev(datetime)
@@ -353,6 +357,16 @@ class CronService:
             self._tick_task = None
 
     async def _tick(self) -> None:
+        """Every second, walk every schedule and fire those whose cron
+        expression matches the current time.
+
+        Matching is minute-granular (``croniter.match`` ignores the seconds
+        of a 5-field expression), so any tick within the matching minute
+        qualifies -- a skipped second never loses a fire. Duplicate fires
+        within the same minute are blocked by the minute-level
+        ``last_fire_at`` check (``_already_handled``); one-shot schedules
+        leave the list on their first match, so they cannot refire.
+        """
         while True:
             try:
                 now = datetime.now()
@@ -360,11 +374,14 @@ class CronService:
                     for sched in list(schedules):
                         if sched.id in self._running:
                             continue
-                        due = self._due_at(sched, now)
-                        if due is None or due > now:
+                        if not self._matches(sched, now):
+                            continue
+                        if self._already_handled(sched, now):
                             continue
                         if sched.recurring:
-                            sched.last_fire_at = due.timestamp()
+                            # Mark this cron minute as handled before firing
+                            # so later ticks in the same minute skip it.
+                            sched.last_fire_at = now.timestamp()
                         else:
                             # One-shot: fire and self-delete.
                             schedules.remove(sched)
@@ -374,13 +391,23 @@ class CronService:
                 _log.exception("cron tick error")
             await asyncio.sleep(1)
 
-    def _due_at(self, sched: Schedule, now: datetime) -> datetime | None:
-        """The due fire time for ``sched`` at ``now``, or None when not due."""
-        base = datetime.fromtimestamp(sched.last_fire_at or sched.created_at)
+    def _matches(self, sched: Schedule, now: datetime) -> bool:
+        """True when ``now`` (minute-granular) matches the schedule's cron."""
         try:
-            return croniter(sched.cron, base).get_next(datetime)
+            return croniter.match(sched.cron, now)
         except (ValueError, KeyError):
-            return None
+            return False
+
+    def _already_handled(self, sched: Schedule, now: datetime) -> bool:
+        """True when the current cron minute was already fired (or is firing).
+
+        ``last_fire_at`` is set to the fire moment before firing; the
+        ``_fire`` completion path overwrites it with the actual completion
+        time, so the check compares minutes, not timestamps.
+        """
+        if sched.last_fire_at is None:
+            return False
+        return int(sched.last_fire_at) // 60 == int(now.timestamp()) // 60
 
     # ── firing ─────────────────────────────────────────────────────────────
 

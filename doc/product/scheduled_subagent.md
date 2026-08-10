@@ -103,13 +103,13 @@ cron 三工具**仅 build 模式暴露**（`BuildModePermission` 暴露 cron 工
 全局单例，server 持有：
 
 - **加载**：启动时扫描 `sessions/*/schedules.json` 载入全部 schedule（按 session 聚合）。
-- **tick**：asyncio 循环每秒一次（可配置），对每个 schedule 计算 `croniter` 下次触发时间，到点触发 fire。
+- **tick**：asyncio 循环每秒一次（可配置），逐秒遍历全部 schedule，用 `croniter.match` 判断**当前时刻**是否符合 cron 表达式（5 字段 cron 为分钟粒度、忽略秒，同一匹配分钟内任意秒都命中）。符合即触发 fire；同一匹配分钟只触发一次（fire 前把 `last_fire_at` 置为当前时刻，按分钟比较防重）；一次性 schedule 首次匹配即移除自删。
 - **增删**：`cron_create`/`cron_delete` 工具经 Agent 调用 service 的 `create`/`delete`，同步落盘 `schedules.json` 并更新内存表。
 - **session 删除联动**：主 session 删除时调 `remove_session(session_name)`，其 schedule 一并清除。
 
 ### fire 流程
 
-1. tick 命中且该 schedule 无运行中的 fire（有则跳过，发 `cron_missed` 事件，见第七节）。
+1. tick 命中（当前时刻符合 cron）且该 schedule 无运行中的 fire（有则跳过本匹配分钟——该分钟不会重复触发，也不补发）。
 2. **新建**定时 Agent 实例（名字 = schedule 对应 session 的 id），替换注册表里的旧实例；实例加载磁盘历史（旧 run 的消息进入内存，展示层跨 fire 累积），但 `api_from` 移到旧 run 之后——API 上下文只含**本次 fire** 的消息（system + 第一条 user），与 subagent 启动的零起点一致，无跨 run 上下文污染、无累积 token 膨胀，也不使用 `CompactMarker`（那是主 session 的压缩机制）。
 3. 实例的第一条 user 消息为合成消息：`⏰ 定时触发（<本地时间>）\n<prompt>`——既是本次 run 的任务说明，也是前端分段展示的 run 边界。
 4. 实例注册进 `agents` 字典（供查看/中断），以独立 asyncio task 跑 `run()`（与主 agent 运行互不阻塞）；本次 run 的消息按既有持久化路径**追加**写入该 session 的 `history.json`（`save()` 原样写回全量内存消息，与旧 run 累积在同一文件）。
@@ -192,7 +192,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 
 ### 重启恢复
 
-启动时 `load_all()` 从磁盘重载 schedule 并重新注册 tick。**错过的触发点不补跑**：`load_all` 把每个 schedule 的 `last_fire_at` 对齐到"最近的过去匹配点"（`croniter.get_prev`，严格早于当前时刻），tick 从下一个未来匹配点继续；一次性任务在停机期间到期则顺延到下一次匹配。运行中的 fire 随进程丢失（进程内态），已落盘的历史可回看，且该触发点不会重复 fire（tick 已推进 `last_fire_at`）。
+启动时 `load_all()` 从磁盘重载 schedule 并重新注册 tick。**错过的触发点不补跑**：`load_all` 把每个 schedule 的 `last_fire_at` 对齐到"最近的过去匹配点"（`croniter.get_prev`，严格早于当前时刻）——该对齐值兼任防重锚点，若当前分钟恰为匹配分钟则本分钟不触发，恢复后从下一个未来匹配分钟继续；一次性任务在停机期间到期则顺延到下一次匹配。运行中的 fire 随进程丢失（进程内态），已落盘的历史可回看，且该触发点不会重复 fire（tick 已推进 `last_fire_at`）。
 
 ## 九、限制与安全
 
