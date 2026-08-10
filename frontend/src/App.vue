@@ -39,9 +39,10 @@
         @update:base="(b) => { diffBase = b }"
       />
       <template v-else>
-        <div v-if="state.isSubagent" class="subagent-bar">
+        <div v-if="state.isSubagent || state.isScheduled" class="subagent-bar">
           <button class="back-btn" @click="goParent">&larr; parent</button>
-          <span class="subagent-tag" :class="state.subagentType">{{ state.subagentType }}</span>
+          <span v-if="state.isScheduled" class="subagent-tag scheduled" title="scheduled agent">&#9200;</span>
+          <span v-else class="subagent-tag" :class="state.subagentType">{{ state.subagentType }}</span>
           <span class="subagent-title">{{ state.subagentDescription || state.currentSession }}</span>
           <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>
         </div>

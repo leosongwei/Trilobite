@@ -16,6 +16,7 @@
         />
         <div v-else-if="item.kind === 'error'" data-chat-item class="message error">{{ item.content }}</div>
         <div v-else-if="item.kind === 'compact'" data-chat-item class="compact-divider" />
+        <div v-else-if="item.kind === 'divider'" data-chat-item class="run-divider">{{ item.text }}</div>
       </template>
       <div v-if="state.statusText" class="status-banner">{{ state.statusText }}</div>
     </template>

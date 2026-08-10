@@ -25,6 +25,7 @@ interface State {
   // session stops running (an unanswered request blocks its run).
   pendingRequests: PendingRequest[]
   isSubagent: boolean
+  isScheduled: boolean
   sealed: boolean
   subagentType: string | null
   subagentDescription: string
@@ -45,6 +46,7 @@ const state = reactive<State>({
   additionalDirs: [],
   pendingRequests: [],
   isSubagent: false,
+  isScheduled: false,
   sealed: false,
   subagentType: null,
   subagentDescription: '',
@@ -169,6 +171,7 @@ function handleSSEEvent(event: SSEEvent) {
       state.planMode = event.plan_mode
       state.additionalDirs = event.additional_dirs ?? []
       state.isSubagent = event.is_subagent ?? false
+      state.isScheduled = event.kind === 'scheduled'
       state.sealed = event.sealed ?? false
       state.subagentType = event.subagent_type ?? null
       state.subagentDescription = event.description ?? ''
@@ -178,6 +181,12 @@ function handleSSEEvent(event: SSEEvent) {
     }
 
     case 'user': {
+      // A scheduled agent's fire opens with the synthetic "⏰ 定时触发" line;
+      // render a run-boundary divider before it so past runs stay visually
+      // separated (matches parseHistory on reconnect).
+      if (state.isScheduled && event.text.startsWith('⏰')) {
+        state.chatItems.push({ kind: 'divider', text: '定时运行' })
+      }
       state.chatItems.push({
         kind: 'user',
         content: event.text,
@@ -361,6 +370,31 @@ function handleSSEEvent(event: SSEEvent) {
       })
       break
 
+    case 'cron_fire': {
+      // A scheduled agent started a fire; mark its sidebar node running.
+      const s = state.sessions.find((x) => x.id === event.session)
+      if (s) s.is_running = true
+      break
+    }
+
+    case 'cron_fire_end': {
+      // A scheduled fire finished; the scheduled agent may have written files.
+      state.fsRefreshTick++
+      const s = state.sessions.find((x) => x.id === event.session)
+      if (s) {
+        s.is_running = false
+        s.last_state = event.state
+        s.run_count = (s.run_count ?? 0) + 1
+      }
+      break
+    }
+
+    case 'cron_missed': {
+      // A fire was skipped because the previous one was still running; the
+      // session poll will show the fresh run count. Nothing to render.
+      break
+    }
+
     case 'done':
     case 'cancelled':
     case 'interrupted':
@@ -427,6 +461,12 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
       if (msg.is_mode_notification) {
         i++
         continue
+      }
+      // Scheduled agents: each fire opens with the synthetic "⏰ 定时触发"
+      // line -- draw a run-boundary divider before it (matches the live
+      // stream path in the 'user' case).
+      if ((msg.content || '').startsWith('⏰')) {
+        items.push({ kind: 'divider', text: '定时运行' })
       }
       items.push({
         kind: 'user',
@@ -632,7 +672,25 @@ document.addEventListener('visibilitychange', () => {
 
 async function loadSessionsRefresher() {
   try {
-    state.sessions = await api.getSessions()
+    const list = await api.getSessions()
+    // A scheduled agent's fire starts outside any user action (the cron
+    // tick spawns a fresh agent instance, replacing the previous one), so
+    // the SSE stream the browser holds dies with the old instance. When the
+    // session we are viewing flips to running on a poll, reconnect to follow
+    // the live fire. (Fires shorter than the poll interval are missed live
+    // but still land in history.)
+    const wasRunning = new Map(state.sessions.map((s) => [s.id, s.is_running]))
+    const cur = list.find((s) => s.id === state.currentSession)
+    if (
+      cur &&
+      cur.kind === 'scheduled' &&
+      cur.is_running &&
+      !wasRunning.get(cur.id) &&
+      !state.isStreaming
+    ) {
+      connectStream(cur.id)
+    }
+    state.sessions = list
   } catch {
     // transient error; the next tick retries
   }
@@ -663,6 +721,7 @@ export function useStore() {
     state.statusText = null
     state.isStreaming = false
     state.isSubagent = false
+    state.isScheduled = false
     state.sealed = false
     state.subagentType = null
     state.subagentDescription = ''

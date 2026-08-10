@@ -92,6 +92,75 @@ TASK_TOOL_DEF: dict = {
 }
 
 
+# Virtual tool: schedule a prompt to run later as an unattended scheduled
+# agent (cron). Only exposed by the primary modes (build/plan); its execution
+# -- creating the schedule, firing scheduled agents on time -- is handled by
+# the CronService via Agent, not here. There is deliberately no "edit" tool:
+# schedules are immutable once created (adjust by delete + create).
+CRON_CREATE_DEF: dict = {
+    "type": "function",
+    "function": {
+        "name": "cron_create",
+        "description": (
+            "Schedule a prompt to run later as an unattended scheduled agent. "
+            "The agent fires at the cron time with a FRESH context (only this "
+            "prompt), runs to completion, and its results are NOT returned to "
+            "you -- view runs in the sidebar under the schedule's session. "
+            "Use for periodic/unattended work: daily checks that write to a "
+            "file, reminders, recurring reports. The scheduled agent is "
+            "general-role: it can edit files in the workspace. In plan mode "
+            "this tool is blocked. Use recurring=false for a one-shot "
+            "'remind me at <time>' schedule. Adjust a schedule by deleting "
+            "and recreating it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cron": {
+                    "type": "string",
+                    "description": "5-field cron expression in local time: 'minute hour day-of-month month day-of-week' (e.g. '30 9 * * *' = every day at 09:30; '*/5 * * * *' = every 5 minutes).",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Self-contained task prompt (max 8 KiB) injected as the scheduled agent's only instruction at each fire.",
+                },
+                "recurring": {
+                    "type": "boolean",
+                    "description": "true (default) = fire on every cron match until deleted. false = fire once at the next match, then auto-delete.",
+                },
+            },
+            "required": ["cron", "prompt"],
+        },
+    },
+}
+
+CRON_LIST_DEF: dict = {
+    "type": "function",
+    "function": {
+        "name": "cron_list",
+        "description": "List this session's cron schedules (id, cron expression, recurring, run count, last state, next fire time). Use the ids with cron_delete.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+CRON_DELETE_DEF: dict = {
+    "type": "function",
+    "function": {
+        "name": "cron_delete",
+        "description": "Delete a cron schedule by id (from cron_list / cron_create). Future fires stop; the schedule's session stays in the sidebar for reviewing past runs.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Schedule id to delete."},
+            },
+            "required": ["id"],
+        },
+    },
+}
+
+CRON_TOOL_DEFS: tuple[dict, ...] = (CRON_CREATE_DEF, CRON_LIST_DEF, CRON_DELETE_DEF)
+
+
 def execute_tool(
     tool_name: str,
     arguments: dict[str, Any],
