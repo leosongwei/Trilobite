@@ -314,7 +314,17 @@ class CronService:
             return "No schedules in this session. Use cron_create to add one."
         lines = []
         for s in schedules:
-            if s.completed or s.deleted:
+            if s.completed:
+                lines.append(
+                    f"- id={s.id} cron='{s.cron}' recurring={s.recurring} [completed] "
+                    f"runs={s.run_count} last={s.last_state or 'never'} desc='{s.description}'"
+                )
+                continue
+            if s.deleted:
+                lines.append(
+                    f"- id={s.id} cron='{s.cron}' recurring={s.recurring} [deleted] "
+                    f"runs={s.run_count} last={s.last_state or 'never'} desc='{s.description}'"
+                )
                 continue
             nxt = s.next_fire_at()
             nxt_s = nxt.strftime("%Y-%m-%d %H:%M") if nxt else "none within 5y"
@@ -323,8 +333,6 @@ class CronService:
                 f"runs={s.run_count} last={s.last_state or 'never'} "
                 f"next={nxt_s} desc='{s.description}'"
             )
-        if not lines:
-            return "No schedules in this session. Use cron_create to add one."
         return "Schedules:\n" + "\n".join(lines)
 
     def _delete(self, session_name: str, args: dict[str, Any]) -> str:

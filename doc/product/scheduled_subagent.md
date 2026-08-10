@@ -84,7 +84,7 @@
 
 ### `cron_list`
 
-无参数。返回该 session 的全部活跃 schedule：`{id, cron, recurring, description, next_fire_at, run_count, last_state, last_fire_at, prompt 预览(≤200 字符)}`。`next_fire_at` 为 null 表示 cron 在 5 年窗口内不再匹配（已完成的一次性 schedule 不再列出）。
+无参数。返回该 session 的全部 schedule（含已结束的）：活跃条目带 `next_fire_at`；已完成的一次性条目标注 `[completed]`、已删除条目标注 `[deleted]`（两者均无 `next_fire_at`），run_count/last_state/description 照常返回——主 agent 创建任务后能在列表里确认其状态，不会困惑。`next_fire_at` 为 null 表示 cron 在 5 年窗口内不再匹配。
 
 ### `cron_delete`
 
@@ -103,7 +103,7 @@ cron 三工具**仅 build 模式暴露**（`BuildModePermission` 暴露 cron 工
 全局单例，server 持有：
 
 - **加载**：启动时扫描 `sessions/*/schedules.json` 载入全部 schedule（按 session 聚合）。
-- **tick**：asyncio 循环每秒一次（可配置），逐秒遍历全部 schedule，用 `croniter.match` 判断**当前时刻**是否符合 cron 表达式（5 字段 cron 为分钟粒度、忽略秒，同一匹配分钟内任意秒都命中）。符合即触发 fire；同一匹配分钟只触发一次（fire 前把 `last_fire_at` 置为当前时刻，按分钟比较防重）；一次性 schedule 首次匹配即标记 completed（不再触发、不列出，条目保留在文件里供 session 信息读取终态）；deleted/completed 条目不参与匹配。
+- **tick**：asyncio 循环每秒一次（可配置），逐秒遍历全部 schedule，用 `croniter.match` 判断**当前时刻**是否符合 cron 表达式（5 字段 cron 为分钟粒度、忽略秒，同一匹配分钟内任意秒都命中）。符合即触发 fire；同一匹配分钟只触发一次（fire 前把 `last_fire_at` 置为当前时刻，按分钟比较防重）；一次性 schedule 首次匹配即标记 completed（不再触发，条目保留在文件里供 `cron_list` 与 session 信息读取终态）；deleted/completed 条目不参与匹配。
 - **增删**：`cron_create`/`cron_delete` 工具经 Agent 调用 service 的 `create`/`delete`，同步落盘 `schedules.json` 并更新内存表。
 - **session 删除联动**：主 session 删除时调 `remove_session(session_name)`，其 schedule 一并清除。
 
@@ -181,8 +181,8 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
       "run_count": 12,
       "last_state": "completed",   // 最近一次 fire 终态；从未 fire 为 null
       "last_fire_at": "…",
-      "completed": false,          // 一次性 schedule fire 后置 true（不再触发、不列出）
-      "deleted": false             // cron_delete 标记（不再触发、不列出；终态信息保留）
+      "completed": false,          // 一次性 schedule fire 后置 true（不再触发；cron_list 标注 [completed]）
+      "deleted": false             // cron_delete 标记（不再触发；cron_list 标注 [deleted]，终态信息保留）
     }
   ]
 }
