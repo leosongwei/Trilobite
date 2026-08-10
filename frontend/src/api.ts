@@ -117,6 +117,20 @@ export async function interruptSession(id: string): Promise<void> {
   await authFetch(`/api/sessions/${encode(id)}/interrupt`, { method: 'POST' })
 }
 
+// Cancel a cron schedule from the UI (same semantics as the cron_delete
+// tool: no further fires; the scheduled session stays for review).
+export async function deleteSchedule(owner: string, scheduleId: string): Promise<void> {
+  const res = await authFetch(`/api/sessions/${encode(owner)}/schedule/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ schedule_id: scheduleId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to delete schedule')
+  }
+}
+
 export async function setMode(id: string, mode: 'plan' | 'build'): Promise<void> {
   await authFetch(`/api/sessions/${encode(id)}/mode`, {
     method: 'POST',

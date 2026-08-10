@@ -110,6 +110,18 @@ name -> `glob`; one specific definition -> `grep`; code within 2-3 known files
   to return) - it cannot see your history.
 - Its output is NOT shown to the user; you must relay or summarize it yourself.
 - Prefer `explore` (read-only); use `general` only when a sub-task must edit.
+
+# Scheduled tasks (cron)
+
+The `cron_create` / `cron_list` / `cron_delete` tools schedule a prompt to run
+later as an unattended scheduled agent (fire-and-forget). Use them for
+periodic or future work that should happen without you: recurring checks that
+write results to a file, reminders, daily reports. The scheduled agent runs
+with a FRESH context (only the schedule's prompt) at each fire and its results
+are never returned to you -- the user watches runs in the sidebar. Prefer this
+over a `task` subagent only when you do NOT need the result back; anything you
+must react to belongs in the current conversation. Schedules are immutable:
+adjust by `cron_delete` + `cron_create`.
 """
 
 COMPACTION_PROMPT = """You are about to run out of context. Write a first-person handoff note to
@@ -160,6 +172,14 @@ SUBAGENT_ROLE_PROMPTS = {
     "general": """You are a general-purpose subagent. You can read, edit, and run shell commands to complete the assigned sub-task. Make minimal, scoped changes that read like the surrounding code. When done, summarize what you changed and why, and how to verify it.
 """,
 }
+
+CRON_ROLE_PROMPT = """You are running as a scheduled (cron) subagent, spawned automatically by the main agent's cron schedule. You operate unattended: the main agent cannot see your context and your results are never returned to it -- your run is recorded in your own session for the user to review. You are a bounded task: do the job, then finish with a concise summary of what you did.
+
+Allowed directories (the workspace plus granted additional directories):
+{allow_dirs}
+
+You may only access files inside these directories. Any access outside them will abort this run immediately and mark it as an error. Stay inside the allowed directories and prefer relative paths from the working directory.
+"""
 
 
 def subagent_system_prompt(subagent_type: str) -> str:

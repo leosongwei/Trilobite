@@ -117,7 +117,7 @@ class History:
         start = 0
         for i, msg in enumerate(self._messages):
             if isinstance(msg, CompactMarker):
-                start = i + 1  # start just past the marker
+                start = max(start, i + 1)  # start just past the marker
 
         # Drop assistant turns that are truly empty -- no content, no
         # tool_calls, AND no thinking. A turn cancelled mid-stream may leave

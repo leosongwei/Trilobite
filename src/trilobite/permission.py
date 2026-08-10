@@ -38,13 +38,21 @@ enforced by :meth:`intercept`.
 
 from abc import ABC
 
-from src.trilobite.tool_call import ALL_TOOLS, EXIT_PLAN_MODE_DEF, TASK_TOOL_DEF
+from src.trilobite.tool_call import (
+    ALL_TOOLS,
+    CRON_TOOL_DEFS,
+    EXIT_PLAN_MODE_DEF,
+    TASK_TOOL_DEF,
+)
 
 #: every concrete tool name, in :data:`~src.trilobite.tool_call.ALL_TOOLS`
 #: order. The primary modes advertise this full set (see
 #: :attr:`AgentPermission.advertised_tool_names`) so the tools prefix is
 #: byte-identical across plan/build switches (cache stability).
 ALL_TOOL_NAMES: tuple[str, ...] = tuple(t.name for t in ALL_TOOLS)
+
+#: virtual cron tool names (see CRON_TOOL_DEFS in tool_call.py).
+CRON_TOOL_NAMES: tuple[str, ...] = ("cron_create", "cron_list", "cron_delete")
 
 
 class AgentPermission(ABC):
@@ -83,6 +91,13 @@ class AgentPermission(ABC):
     #: tool set, which enforces the single-layer nesting limit.
     exposes_task: bool = False
 
+    #: whether the cron tools (``cron_create``/``cron_list``/``cron_delete``)
+    #: are offered. Primary modes advertise them (for tool-prefix cache
+    #: stability); plan mode blocks calls at dispatch time (a scheduled agent
+    #: is a full-permission unattended run, so plan mode refuses to create
+    #: one -- matching the read-only semantics). Subagent roles keep them out.
+    exposes_cron: bool = False
+
     def filter_definitions(self, enable_vl: bool = False) -> list[dict]:
         """Tool definitions to send to the LLM for this policy."""
         advertised = set(self.advertised_tool_names or self.tool_names)
@@ -91,6 +106,8 @@ class AgentPermission(ABC):
             defs.append(EXIT_PLAN_MODE_DEF)
         if self.exposes_task:
             defs.append(TASK_TOOL_DEF)
+        if self.exposes_cron:
+            defs.extend(CRON_TOOL_DEFS)
         return defs
 
     def intercept(self, tool_name: str) -> str | None:
@@ -109,6 +126,8 @@ class AgentPermission(ABC):
             return None
         if tool_name == "task" and self.exposes_task:
             return None
+        if tool_name in CRON_TOOL_NAMES and self.exposes_cron:
+            return None
         return self.block_message.format(tool=tool_name)
 
 
@@ -125,6 +144,7 @@ class BuildModePermission(AgentPermission):
     tool_names = ALL_TOOL_NAMES
     exposes_exit_plan_mode = True
     exposes_task = True
+    exposes_cron = True
 
 
 class PlanModePermission(AgentPermission):
@@ -142,6 +162,10 @@ class PlanModePermission(AgentPermission):
     advertised_tool_names = ALL_TOOL_NAMES
     exposes_exit_plan_mode = True
     exposes_task = True
+    # Cron tools are build-only: plan mode never advertises them, so the
+    # model cannot even attempt to create a scheduled (full-permission,
+    # unattended) agent from the read-only mode.
+    exposes_cron = False
 
     block_message = (
         "Error: {tool} tool is blocked in plan mode. "
@@ -175,3 +199,14 @@ class GeneralSubagentPermission(AgentPermission):
     tool_names = ("read", "glob", "grep", "edit", "write", "bash", "skill")
 
     block_message = "Error: {tool} tool is not available to subagents."
+
+
+class CronSubagentPermission(GeneralSubagentPermission):
+    """Unattended scheduled (cron) agent: same tool white-list as general.
+
+    A role, like the subagent roles -- fixed at schedule creation, never
+    switched. The out-of-workspace difference is enforced in the Agent's
+    dispatch path, not here: instead of an interactive approval banner
+    (nobody would answer it), an out-of-workspace access aborts the current
+    fire with an error while the schedule itself survives.
+    """

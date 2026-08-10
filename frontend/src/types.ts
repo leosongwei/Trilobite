@@ -26,7 +26,7 @@ export interface PendingRequest {
 }
 
 export type SSEEvent =
-  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
+  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; kind?: string; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
   | { type: 'user'; text: string; user_seq: number; images?: ImageMeta[] }
   | { type: 'user_edit'; user_seq: number; text: string }
   | { type: 'turn' }
@@ -44,6 +44,9 @@ export type SSEEvent =
   | { type: 'subagents'; parent: string; children: SubagentChild[] }
   | { type: 'subagent_state'; session: string; state: string }
   | { type: 'subagent_permission_request'; child_session: string; child_type: string; child_description: string; path: string; tool: string; message: string }
+  | { type: 'cron_fire'; schedule_id: string; session: string; description: string; state: string }
+  | { type: 'cron_fire_end'; session: string; state: string }
+  | { type: 'cron_missed'; schedule_id: string; session: string }
   | { type: 'done' }
   | { type: 'cancelled' }
   | { type: 'interrupted' }
@@ -80,11 +83,26 @@ export interface Session {
   plan_mode: boolean
   parent_session?: string
   subagent_type?: string
+  kind?: string
   description?: string
   sealed?: boolean
   additional_dirs?: string[]
   created_at?: number
   updated_at?: number
+  // Scheduled sessions (kind === 'scheduled'): live schedule state, refreshed
+  // by the session poll. The sidebar dot renders from is_running/last_state:
+  // pending (never fired) -> light blue, running -> pulsing green,
+  // last_state error -> red, finished -> grey. schedule_active flips false
+  // after cron_delete or a one-shot's single fire.
+  schedule_id?: string
+  schedule_active?: boolean
+  recurring?: boolean
+  deleted?: boolean
+  cron?: string
+  run_count?: number
+  last_state?: string
+  next_fire_at?: string
+  prompt?: string
 }
 
 export interface SessionInfo {
@@ -153,4 +171,10 @@ export interface CompactItem {
   kind: 'compact'
 }
 
-export type ChatItem = UserItem | TurnItem | ErrorItem | CompactItem
+/** Run boundary inside a scheduled agent's session (a cron fire divider). */
+export interface DividerItem {
+  kind: 'divider'
+  text: string
+}
+
+export type ChatItem = UserItem | TurnItem | ErrorItem | CompactItem | DividerItem

@@ -25,6 +25,7 @@ interface State {
   // session stops running (an unanswered request blocks its run).
   pendingRequests: PendingRequest[]
   isSubagent: boolean
+  isScheduled: boolean
   sealed: boolean
   subagentType: string | null
   subagentDescription: string
@@ -45,6 +46,7 @@ const state = reactive<State>({
   additionalDirs: [],
   pendingRequests: [],
   isSubagent: false,
+  isScheduled: false,
   sealed: false,
   subagentType: null,
   subagentDescription: '',
@@ -162,7 +164,8 @@ function dropEndedSessionRequests() {
 function handleSSEEvent(event: SSEEvent) {
   switch (event.type) {
     case 'init': {
-      state.chatItems = parseHistory(event.history)
+      state.isScheduled = event.kind === 'scheduled'
+      state.chatItems = parseHistory(event.history, state.isScheduled)
       state.isStreaming = event.is_running
       state.tokenCount = event.token_count
       state.maxTokens = event.max_context_tokens
@@ -178,6 +181,12 @@ function handleSSEEvent(event: SSEEvent) {
     }
 
     case 'user': {
+      // A scheduled agent's fire opens with the synthetic "⏰ 定时触发" line;
+      // render a run-boundary divider before it so past runs stay visually
+      // separated (matches parseHistory on reconnect).
+      if (state.isScheduled && event.text.startsWith('⏰')) {
+        state.chatItems.push({ kind: 'divider', text: '定时运行' })
+      }
       state.chatItems.push({
         kind: 'user',
         content: event.text,
@@ -361,6 +370,31 @@ function handleSSEEvent(event: SSEEvent) {
       })
       break
 
+    case 'cron_fire': {
+      // A scheduled agent started a fire; mark its sidebar node running.
+      const s = state.sessions.find((x) => x.id === event.session)
+      if (s) s.is_running = true
+      break
+    }
+
+    case 'cron_fire_end': {
+      // A scheduled fire finished; the scheduled agent may have written files.
+      state.fsRefreshTick++
+      const s = state.sessions.find((x) => x.id === event.session)
+      if (s) {
+        s.is_running = false
+        s.last_state = event.state
+        s.run_count = (s.run_count ?? 0) + 1
+      }
+      break
+    }
+
+    case 'cron_missed': {
+      // A fire was skipped because the previous one was still running; the
+      // session poll will show the fresh run count. Nothing to render.
+      break
+    }
+
     case 'done':
     case 'cancelled':
     case 'interrupted':
@@ -394,19 +428,29 @@ function handleSSEEvent(event: SSEEvent) {
   state.streamTick++
 }
 
-function parseHistory(history: HistoryMessage[]): ChatItem[] {
+function parseHistory(history: HistoryMessage[], isScheduled = false): ChatItem[] {
   const items: ChatItem[] = []
   let i = 0
   let userSeq = 0
+  // A scheduled run boundary comes from a CompactMarker in the persisted
+  // history; the synthetic "⏰" user message right after it must not draw a
+  // second divider (the live-stream path still keys on "⏰" because markers
+  // are not streamed).
+  let lastWasRunBoundary = false
 
   while (i < history.length) {
     const msg = history[i]
 
     // System messages: the initial prompt is invisible; a compact marker
-    // renders as a divider line.
+    // renders as a divider line ("定时运行" for scheduled run boundaries).
     if (msg.role === 'system') {
       if (msg.compact_marker) {
-        items.push({ kind: 'compact' })
+        if (isScheduled) {
+          items.push({ kind: 'divider', text: '定时运行' })
+          lastWasRunBoundary = true
+        } else {
+          items.push({ kind: 'compact' })
+        }
       }
       i++
       continue
@@ -428,6 +472,13 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
         i++
         continue
       }
+      // Scheduled agents: each fire opens with the synthetic "⏰ 定时触发"
+      // line -- draw a run-boundary divider before it, unless the preceding
+      // CompactMarker already drew one.
+      if ((msg.content || '').startsWith('⏰')) {
+        if (!lastWasRunBoundary) items.push({ kind: 'divider', text: '定时运行' })
+      }
+      lastWasRunBoundary = false
       items.push({
         kind: 'user',
         content: msg.content || '',
@@ -632,7 +683,25 @@ document.addEventListener('visibilitychange', () => {
 
 async function loadSessionsRefresher() {
   try {
-    state.sessions = await api.getSessions()
+    const list = await api.getSessions()
+    // A scheduled agent's fire reuses the idle instance (its broker keeps the
+    // SSE stream alive), so the stream normally follows each fire live. The
+    // reconnect below is a safety net: after a restart, or if the stream was
+    // dropped for any reason, the poll catches the session flipping to
+    // running and re-attaches. (Fires shorter than the poll interval are
+    // missed live but still land in history.)
+    const wasRunning = new Map(state.sessions.map((s) => [s.id, s.is_running]))
+    const cur = list.find((s) => s.id === state.currentSession)
+    if (
+      cur &&
+      cur.kind === 'scheduled' &&
+      cur.is_running &&
+      !wasRunning.get(cur.id) &&
+      !state.isStreaming
+    ) {
+      connectStream(cur.id)
+    }
+    state.sessions = list
   } catch {
     // transient error; the next tick retries
   }
@@ -663,6 +732,7 @@ export function useStore() {
     state.statusText = null
     state.isStreaming = false
     state.isSubagent = false
+    state.isScheduled = false
     state.sealed = false
     state.subagentType = null
     state.subagentDescription = ''

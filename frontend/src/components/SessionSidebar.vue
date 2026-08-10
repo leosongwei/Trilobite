@@ -27,12 +27,17 @@
           :class="{ active: c.id === state.currentSession }"
           @click="handleSelect(c.id)"
         >
-          <span class="session-label">
+          <span class="session-label" :title="childLabel(c)">
             <span v-if="c.is_running" class="running-dot" title="running"></span>
-            <span class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
+            <span v-if="c.kind === 'scheduled'" class="child-badge scheduled" title="scheduled agent">&#9200;</span>
+            <span v-else class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
+            <span v-if="c.kind === 'scheduled' && !c.is_running && c.last_state === 'error'" class="stopped-dot" title="error"></span>
+            <span v-else-if="c.kind === 'scheduled' && !c.is_running && c.last_state" class="sealed-dot" title="finished"></span>
+            <span v-else-if="c.kind === 'scheduled' && !c.is_running" class="pending-dot" title="pending"></span>
             <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
             {{ c.description || c.name }}
           </span>
+          <span v-if="!c.is_running" class="delete" title="delete session" @click.stop="handleDelete(c.id)">&times;</span>
         </div>
       </template>
     </div>
@@ -158,6 +163,15 @@ watch(
 )
 
 // Requests list display helpers: which agent asked, and for what.
+function childLabel(c: Session): string {
+  if (c.kind === 'scheduled') {
+    const parts = [`cron: ${c.cron || ''}`, `runs: ${c.run_count ?? 0}`, `last: ${c.last_state ?? '-'}`]
+    if (c.schedule_active === false) parts.push(c.deleted ? '(schedule deleted)' : '(completed)')
+    return parts.join(' · ')
+  }
+  return c.subagent_type || ''
+}
+
 function requestAgentLabel(r: PendingRequest): string {
   if (r.childType) return `[${r.childType}: ${r.childDescription}]`
   const s = state.sessions.find((x) => x.id === r.session)
@@ -332,7 +346,7 @@ async function resetDefaults() {
 
 async function handleDelete(id: string) {
   const s = state.sessions.find((x) => x.id === id)
-  const label = s?.name ?? id
+  const label = s?.description || s?.name || id
   if (!confirm(`Delete session "${label}"?`)) return
   await deleteSession(id)
 }

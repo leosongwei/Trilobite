@@ -149,7 +149,10 @@ body {
 .session-item.child .session-label { gap: 5px; }
 .child-badge { font-size: 9px; font-weight: 600; padding: 1px 3px; border-radius: 2px; background: #3a3d3e; color: #9cdcfe; flex-shrink: 0; text-transform: uppercase; }
 .child-badge.explore { color: #d29922; }
+.child-badge.scheduled { background: #1f3a2f; color: #7ee787; font-size: 10px; padding: 0 4px; }
 .sealed-dot { width: 6px; height: 6px; border-radius: 50%; background: #6e7681; flex-shrink: 0; }
+.stopped-dot { width: 6px; height: 6px; border-radius: 50%; background: #c72e2e; flex-shrink: 0; }
+.pending-dot { width: 6px; height: 6px; border-radius: 50%; background: #58a6ff; flex-shrink: 0; }
 .session-item .session-label { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-item .running-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: trilobite-pulse 1.4s ease-in-out infinite; }
 @keyframes trilobite-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
@@ -414,12 +417,30 @@ body {
   position: absolute;
   left: 50%;
   top: 0;
-  transform: translate(-50%, -50%);
-  background: var(--bg-color, #1e1e1e);
+  transform: translate(-50%, -50%);  background: var(--bg-color, #1e1e1e);
   padding: 0 14px;
   font-size: 19px;
   color: #888;
   white-space: nowrap;
+}
+
+/* Scheduled-agent run boundary (a cron fire divider), styled like the
+   compact divider: a plain dark rule with a small centered grey label. */
+.run-divider {
+  margin: 36px 0;
+  border-top: 4px solid #474747;
+  position: relative;
+}
+.run-divider::after {
+  content: attr(data-text);
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -50%);
+  background: var(--bg-color, #1e1e1e);
+  padding: 0 14px;
+  font-size: 12px;
+  color: #888;
 }
 
 .turn-block {
@@ -555,6 +576,15 @@ body {
 .subagent-bar .interrupt-btn { background: #5a4a1f; color: #d29922; border: none; border-radius: 3px; padding: 3px 10px; cursor: pointer; font-size: 11px; }
 .subagent-bar .interrupt-btn:hover { background: #6a5a2f; }
 .sealed-notice { color: #858585; font-size: 12px; padding: 6px 0; }
+
+/* Scheduled session info panel under the subagent bar: schedule meta,
+   full prompt (visible before the first fire) and a cancel button. */
+.scheduled-info { padding: 6px 12px; background: #1e2520; border-bottom: 1px solid #3c3c3c; font-size: 12px; }
+.scheduled-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: #a0a0a0; }
+.scheduled-meta code { background: #2a2d2e; padding: 1px 4px; border-radius: 3px; color: #7ee787; }
+.scheduled-info .cancel-btn { background: #4a1f1f; color: #ff7b72; border: none; border-radius: 3px; padding: 3px 10px; cursor: pointer; font-size: 11px; margin-left: auto; }
+.scheduled-info .cancel-btn:hover { background: #5a2a2a; }
+.scheduled-prompt { margin-top: 5px; color: #cccccc; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow-y: auto; }
 
 /* ── Input ── */
 .input-area {

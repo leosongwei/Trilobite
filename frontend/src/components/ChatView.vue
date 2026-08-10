@@ -16,6 +16,7 @@
         />
         <div v-else-if="item.kind === 'error'" data-chat-item class="message error">{{ item.content }}</div>
         <div v-else-if="item.kind === 'compact'" data-chat-item class="compact-divider" />
+        <div v-else-if="item.kind === 'divider'" data-chat-item class="run-divider" :data-text="item.text" />
       </template>
       <div v-if="state.statusText" class="status-banner">{{ state.statusText }}</div>
     </template>
@@ -227,10 +228,15 @@ watch(() => state.chatItems, () => {
   resetWindow()
   nextTick(() => { scrollToBottom(); void fillViewport() })
 }, { deep: false })
-watch(() => state.chatItems.length, () => {
-  // 窗口包含末尾时新追加的消息进入窗口；用户钉底时跟随滚动，翻历史时不打扰。
-  if (windowEnd.value === state.chatItems.length - 1) {
-    windowEnd.value = state.chatItems.length
+watch(() => state.chatItems.length, (newLen, oldLen) => {
+  // 窗口紧贴末尾（追加前 windowEnd === oldLen）或初始空窗口（windowEnd 0，
+  // 新消息涌入）时，新追加的消息进入窗口；用户钉底时跟随滚动，翻历史时
+  // 不打扰。用 oldLen 而不是新 length 判断：replay 爆发式追加（SSE 重连 /
+  // 定时 fire 中途进入时 init 空历史 + 大量缓冲事件同一 tick 到达）会合并
+  // 成一次 watch，若拿新 length 比较，windowEnd 已落后多个条目，条件失效、
+  // 窗口永远停在 0,0 —— 页面空白（气泡要等刷新/下一次触发才出现）。
+  if (windowEnd.value === oldLen || (windowEnd.value === 0 && newLen > 0)) {
+    windowEnd.value = newLen
     const el = chatRef.value
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD) {
       nextTick(scrollToBottom)
