@@ -184,30 +184,33 @@ async def get_config():
 def _scheduled_info(info: dict) -> dict:
     """Live schedule state for a scheduled session, read from its owner's
     schedules.json (so a deleted schedule shows up as inactive even after a
-    restart, with no extra state to keep in sync). A one-shot schedule stays
-    in the file after its single fire, marked ``completed`` -- the frontend
-    tells "one-shot finished" (grey dot) apart from "schedule deleted"
-    (red dot) via ``recurring``."""
+    restart, with no extra state to keep in sync). One-shot schedules stay
+    in the file after their single fire (``completed``) and cron_delete
+    marks entries ``deleted`` instead of removing them, so the endpoint can
+    still report the final run state; the frontend renders the dot from
+    ``last_state`` (pending / running / error / finished)."""
     parent = info.get("parent_session")
     schedule_id = info.get("schedule_id")
     if not parent or not schedule_id:
-        return {"schedule_active": False, "cron": "", "run_count": 0, "last_state": None, "recurring": None}
+        return {"schedule_active": False, "cron": "", "run_count": 0, "last_state": None, "recurring": None, "deleted": False}
     path = get_sessions_dir() / parent / "schedules.json"
     active = False
     cron = ""
     run_count = 0
     last_state = None
     recurring = None
+    deleted = False
     if path.is_file():
         try:
             data = json.loads(path.read_text())
             for s in data.get("schedules", []):
                 if s.get("id") == schedule_id:
-                    active = not s.get("completed", False)
+                    active = not s.get("completed", False) and not s.get("deleted", False)
                     cron = s.get("cron", "")
                     run_count = s.get("run_count", 0)
                     last_state = s.get("last_state")
                     recurring = bool(s.get("recurring", True))
+                    deleted = bool(s.get("deleted", False))
                     break
         except Exception:
             pass
@@ -217,6 +220,7 @@ def _scheduled_info(info: dict) -> dict:
         "run_count": run_count,
         "last_state": last_state,
         "recurring": recurring,
+        "deleted": deleted,
     }
 
 

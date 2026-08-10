@@ -88,7 +88,7 @@
 
 ### `cron_delete`
 
-参数：`{id}`。删除 schedule 并停止未来触发。**历史 session 保留**（可继续查看过去的运行记录，节点标记为已删除不再触发），用户可另行删除 session。删除不存在的 id 返回错误。
+参数：`{id}`。删除 schedule 并停止未来触发。**历史 session 保留**（可继续查看过去的运行记录，节点标记为已删除不再触发），用户可另行删除 session。条目在 `schedules.json` 中标记 `deleted`（不物理移除），session 信息接口仍返回其最后终态，侧边栏点色不因删除而变成"未运行"。删除不存在的 id 返回错误。
 
 ### 暴露与角色
 
@@ -103,7 +103,7 @@ cron 三工具**仅 build 模式暴露**（`BuildModePermission` 暴露 cron 工
 全局单例，server 持有：
 
 - **加载**：启动时扫描 `sessions/*/schedules.json` 载入全部 schedule（按 session 聚合）。
-- **tick**：asyncio 循环每秒一次（可配置），逐秒遍历全部 schedule，用 `croniter.match` 判断**当前时刻**是否符合 cron 表达式（5 字段 cron 为分钟粒度、忽略秒，同一匹配分钟内任意秒都命中）。符合即触发 fire；同一匹配分钟只触发一次（fire 前把 `last_fire_at` 置为当前时刻，按分钟比较防重）；一次性 schedule 首次匹配即标记 completed（不再触发、不列出，条目保留在文件里供 session 信息读取终态）。
+- **tick**：asyncio 循环每秒一次（可配置），逐秒遍历全部 schedule，用 `croniter.match` 判断**当前时刻**是否符合 cron 表达式（5 字段 cron 为分钟粒度、忽略秒，同一匹配分钟内任意秒都命中）。符合即触发 fire；同一匹配分钟只触发一次（fire 前把 `last_fire_at` 置为当前时刻，按分钟比较防重）；一次性 schedule 首次匹配即标记 completed（不再触发、不列出，条目保留在文件里供 session 信息读取终态）；deleted/completed 条目不参与匹配。
 - **增删**：`cron_create`/`cron_delete` 工具经 Agent 调用 service 的 `create`/`delete`，同步落盘 `schedules.json` 并更新内存表。
 - **session 删除联动**：主 session 删除时调 `remove_session(session_name)`，其 schedule 一并清除。
 
@@ -152,8 +152,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 ### 侧边栏树
 
 - 定时 session 节点挂载于主 session 之下（`parent_session` 字段，与 subagent 同），带**时钟徽标**（与 EX/GE 角色徽标区分），描述显示 prompt 预览；节点信息展示 cron 表达式、`next_fire_at`、`run_count`、最近一次 `last_state`。
-- fire 运行中：running 徽标；完成后回到 idle（不显示 sealed，区别于 subagent）。
-- schedule 已删除的 session：标记"已停止"（红点，不再有 fire），历史仍可查看；一次性 schedule 完成（completed）的 session 显示**灰点 finished**（与 subagent 结束一致），区别于删除。
+- fire 运行中：running 徽标（绿闪）；完成后回到 idle。节点**状态点**四态：从未 fire（pending）浅蓝点、运行中绿闪点、上次 fire 以 `error` 结束红点、正常结束（completed/interrupted）灰点（与 subagent 结束一致）。schedule 被删除后仍按最后终态显示（不因删除而变回浅蓝）。
 - 定时 session 不参与主 session 的自动命名；排序同 subagent（`created_at` 降序）。
 
 ### 定时 session 视图（复用 ChatView）
@@ -181,7 +180,8 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
       "run_count": 12,
       "last_state": "completed",   // 最近一次 fire 终态；从未 fire 为 null
       "last_fire_at": "…",
-      "completed": false           // 一次性 schedule fire 后置 true（不再触发、不列出；recurring 恒为 false）
+      "completed": false,          // 一次性 schedule fire 后置 true（不再触发、不列出）
+      "deleted": false             // cron_delete 标记（不再触发、不列出；终态信息保留）
     }
   ]
 }

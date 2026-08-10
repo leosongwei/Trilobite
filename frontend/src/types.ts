@@ -90,11 +90,14 @@ export interface Session {
   created_at?: number
   updated_at?: number
   // Scheduled sessions (kind === 'scheduled'): live schedule state, refreshed
-  // by the session poll; schedule_active flips false after cron_delete or
-  // after a one-shot schedule's single fire (completed, recurring=false).
+  // by the session poll. The sidebar dot renders from is_running/last_state:
+  // pending (never fired) -> light blue, running -> pulsing green,
+  // last_state error -> red, finished -> grey. schedule_active flips false
+  // after cron_delete or a one-shot's single fire.
   schedule_id?: string
   schedule_active?: boolean
   recurring?: boolean
+  deleted?: boolean
   cron?: string
   run_count?: number
   last_state?: string

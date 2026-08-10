@@ -72,6 +72,7 @@ class Schedule:
         last_state: str | None = None,
         last_fire_at: float | None = None,
         completed: bool = False,
+        deleted: bool = False,
     ):
         self.id = id
         #: The scheduled agent's session id (one session per schedule).
@@ -89,6 +90,10 @@ class Schedule:
         #: tell "one-shot finished" apart from "schedule deleted". Completed
         #: entries never match or fire again and are hidden from cron_list.
         self.completed = completed
+        #: cron_delete marks the entry deleted instead of removing it, so the
+        #: session info endpoint keeps reporting the schedule's final state
+        #: (the sidebar dot shows the last run's outcome, not "pending").
+        self.deleted = deleted
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -103,6 +108,7 @@ class Schedule:
             "last_state": self.last_state,
             "last_fire_at": self.last_fire_at,
             "completed": self.completed,
+            "deleted": self.deleted,
         }
 
     @classmethod
@@ -119,6 +125,7 @@ class Schedule:
             last_state=d.get("last_state"),
             last_fire_at=d.get("last_fire_at"),
             completed=bool(d.get("completed", False)),
+            deleted=bool(d.get("deleted", False)),
         )
 
     def next_fire_at(self, after: datetime | None = None) -> datetime | None:
@@ -201,7 +208,7 @@ class CronService:
         if the current minute already matches, ``_already_handled`` sees the
         same minute and skips the fire, so downtime fires are never replayed.
         """
-        if sched.completed:
+        if sched.completed or sched.deleted:
             return
         try:
             prev = croniter(sched.cron, now).get_prev(datetime)
@@ -250,7 +257,7 @@ class CronService:
         if schedules is None:
             schedules = self._load(session_name)
             self._schedules[session_name] = schedules
-        if sum(1 for s in schedules if not s.completed) >= MAX_SCHEDULES_PER_SESSION:
+        if sum(1 for s in schedules if not s.completed and not s.deleted) >= MAX_SCHEDULES_PER_SESSION:
             return f"Error: schedule limit reached ({MAX_SCHEDULES_PER_SESSION} per session). Delete one first."
 
         now = datetime.now()
@@ -307,7 +314,7 @@ class CronService:
             return "No schedules in this session. Use cron_create to add one."
         lines = []
         for s in schedules:
-            if s.completed:
+            if s.completed or s.deleted:
                 continue
             nxt = s.next_fire_at()
             nxt_s = nxt.strftime("%Y-%m-%d %H:%M") if nxt else "none within 5y"
@@ -326,9 +333,13 @@ class CronService:
         if schedules is None:
             schedules = self._load(session_name)
             self._schedules[session_name] = schedules
-        for i, s in enumerate(schedules):
+        for s in schedules:
             if s.id == sched_id:
-                schedules.pop(i)
+                # Mark deleted (keep the entry) so the owning session's info
+                # endpoint can still report the schedule's final state and
+                # one-shot-ness; the sidebar keeps showing the last run's
+                # outcome instead of a misleading "pending" dot.
+                s.deleted = True
                 self._persist(session_name, schedules)
                 return (
                     f"Schedule {sched_id} deleted; no further fires. "
@@ -386,7 +397,7 @@ class CronService:
                 now = datetime.now()
                 for session_name, schedules in list(self._schedules.items()):
                     for sched in list(schedules):
-                        if sched.completed:
+                        if sched.completed or sched.deleted:
                             continue
                         if sched.id in self._running:
                             continue
