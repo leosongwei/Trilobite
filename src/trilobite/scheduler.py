@@ -315,13 +315,8 @@ class CronService:
         lines = []
         for s in schedules:
             if s.deleted:
-                # A schedule can be both completed and deleted (a one-shot
-                # finished, then cron_delete'd); deleted is the covering
-                # terminal state, so it wins the tag.
-                lines.append(
-                    f"- id={s.id} cron='{s.cron}' recurring={s.recurring} [deleted] "
-                    f"runs={s.run_count} last={s.last_state or 'never'} desc='{s.description}'"
-                )
+                # Deleted schedules leave the listing: cron_delete is an
+                # explicit action, so the entry vanishing is the feedback.
                 continue
             if s.completed:
                 lines.append(
@@ -336,6 +331,8 @@ class CronService:
                 f"runs={s.run_count} last={s.last_state or 'never'} "
                 f"next={nxt_s} desc='{s.description}'"
             )
+        if not lines:
+            return "No schedules in this session. Use cron_create to add one."
         return "Schedules:\n" + "\n".join(lines)
 
     def _delete(self, session_name: str, args: dict[str, Any]) -> str:

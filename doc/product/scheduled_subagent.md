@@ -84,7 +84,7 @@
 
 ### `cron_list`
 
-无参数。返回该 session 的全部 schedule（含已结束的）：活跃条目带 `next_fire_at`；已完成的一次性条目标注 `[completed]`、已删除条目标注 `[deleted]`（两者均无 `next_fire_at`），run_count/last_state/description 照常返回——主 agent 创建任务后能在列表里确认其状态，不会困惑。`next_fire_at` 为 null 表示 cron 在 5 年窗口内不再匹配。
+无参数。返回该 session 的活跃 + 已完成 schedule：活跃条目带 `next_fire_at`；已完成的一次性条目标注 `[completed]`（无 `next_fire_at`），run_count/last_state/description 照常返回——主 agent 创建任务后能在列表里确认状态，不会困惑。`cron_delete` 删除的条目**不再列出**（主动删除，列表消失即反馈）。`next_fire_at` 为 null 表示 cron 在 5 年窗口内不再匹配。
 
 ### `cron_delete`
 
@@ -182,7 +182,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
       "last_state": "completed",   // 最近一次 fire 终态；从未 fire 为 null
       "last_fire_at": "…",
       "completed": false,          // 一次性 schedule fire 后置 true（不再触发；cron_list 标注 [completed]）
-      "deleted": false             // cron_delete 标记（不再触发；cron_list 标注 [deleted]，终态信息保留）
+      "deleted": false             // cron_delete 标记（不再触发；从 cron_list 消失，终态信息保留）
     }
   ]
 }
