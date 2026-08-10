@@ -158,6 +158,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 ### 定时 session 视图（复用 ChatView）
 
 - 顶部 bar：时钟徽标 + schedule 描述 + 返回父会话导航；运行中显示 ■ 停止按钮（走 interrupt）。
+- bar 下方的**定时信息面板**（schedule 活跃时）：cron 表达式、是否重复（重复执行/一次性）、下次执行时间（`next_fire_at`）、已运行次数，以及**完整 prompt**（首次 fire 之前即可查看任务内容）；带**取消定时任务**按钮（确认后调 `POST /api/sessions/{owner}/schedule/delete`，等效 `cron_delete`：不再触发，历史会话保留）。信息来自 session 轮询的 `_scheduled_info`。
 - **无输入框**（不支持 steering）：idle 与运行中都不显示；`POST /message` 后端拒绝（"定时 agent 不接受输入"）。
 - fire 之间的历史以"⏰ 定时触发"消息为边界分段展示；旧运行可向上翻看。
 - `store.ts` 处理 `cron_fire`/`cron_fire_end`/`cron_missed` 事件，维护定时节点的 `isRunning`/`run_count`/`last_state`。
@@ -212,7 +213,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 4. **`permission.py`**：新增 `CronSubagentPermission`（继承 `GeneralSubagentPermission`，工具白名单同 general、不含 cron 工具，越界语义在 Agent 层区分）；`AgentPermission` 加 `exposes_cron` 标志，`BuildModePermission` 为 True（append 三个 DEF 并放行），`PlanModePermission` 为 False（不暴露、intercept 拦截），Explore/General/Cron 不含。
 5. **`history.py`**：`api_from` 投影起点（在 CompactMarker 规则之外，取两者较大值）——定时 agent 复用 session 时 API 上下文从当前 fire 开始，持久化仍写全量。
 6. **`agent.py`**：工具派发处加三个分支（`cron_create`/`cron_list`/`cron_delete`），执行逻辑调 `self._cron_service`（server 构造主 agent 时注入）；`start_scheduled_fire`（append system + ⏰ user 消息、设 `api_from`、set_running、发 user 事件）；越界分支对定时 agent（`_scheduled`）不发 `permission_request`、把拒绝文本记为工具结果后抛 `CronBoundaryError` 终止本次 run 记 error；scheduled 构造参数（system prompt = `SYSTEM_PROMPT` + `SUBAGENT_ROLE_PREFIX` + `CRON_ROLE_PROMPT`(含允许目录)，permission = `CronSubagentPermission`，run 结束不 sealed、不注入模式通知）。
-7. **`server.py`**：创建 `CronService`（startup 时 `load_all` + 启动 tick，shutdown 取消）；删除 session 时联动 `remove_session`/`remove_schedule_by_session`；`/message` 对定时 session 拒绝（`is_scheduled()` 即拒）；`_get_or_create_agent` 的 scheduled 分支（磁盘重建 idle 实例）；`list_sessions` 对 scheduled session 附加 `schedule_active`/`cron`/`run_count`/`last_state`（读 owner 的 `schedules.json`，删除后自动反映）。
+7. **`server.py`**：创建 `CronService`（startup 时 `load_all` + 启动 tick，shutdown 取消）；删除 session 时联动 `remove_session`/`remove_schedule_by_session`；`/message` 对定时 session 拒绝（`is_scheduled()` 即拒）；`_get_or_create_agent` 的 scheduled 分支（磁盘重建 idle 实例）；`list_sessions` 对 scheduled session 附加 `schedule_active`/`cron`/`run_count`/`last_state`/`recurring`/`deleted`/`next_fire_at`/`prompt`（读 owner 的 `schedules.json`，删除后自动反映）；`POST /api/sessions/{name}/schedule/delete` 端点（前端取消定时任务，等效 `cron_delete`）。
 8. **`prompts.py`**：`SYSTEM_PROMPT` 增加 cron 工具指引（正向框架：周期性/无人值守/提醒类任务用 cron；需要结果回填的探索用 `task`；一次性临时任务直接对话；要调整先 delete 再 create）；新增 `CRON_ROLE_PROMPT`（注入允许目录列表 + 越界终止说明，见第六节）。三个工具定义描述与之一致。
 9. **前端**：`store.ts` 处理 `cron_fire`/`cron_fire_end`/`cron_missed` 事件 + 定时 session 翻转为 running 时重连流；侧边栏树渲染定时节点（时钟徽标、cron、运行状态、run 统计、schedule 已删除标记）；定时 session 视图（复用 ChatView，无输入框，运行中 ■ 停止走 interrupt）；`ChatView` 对定时 session 以"⏰ 定时触发"user 消息为 run 边界渲染分隔线。
 

@@ -101,6 +101,8 @@ export interface Session {
   cron?: string
   run_count?: number
   last_state?: string
+  next_fire_at?: string
+  prompt?: string
 }
 
 export interface SessionInfo {

@@ -569,6 +569,15 @@ body {
 .subagent-bar .interrupt-btn:hover { background: #6a5a2f; }
 .sealed-notice { color: #858585; font-size: 12px; padding: 6px 0; }
 
+/* Scheduled session info panel under the subagent bar: schedule meta,
+   full prompt (visible before the first fire) and a cancel button. */
+.scheduled-info { padding: 6px 12px; background: #1e2520; border-bottom: 1px solid #3c3c3c; font-size: 12px; }
+.scheduled-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: #a0a0a0; }
+.scheduled-meta code { background: #2a2d2e; padding: 1px 4px; border-radius: 3px; color: #7ee787; }
+.scheduled-info .cancel-btn { background: #4a1f1f; color: #ff7b72; border: none; border-radius: 3px; padding: 3px 10px; cursor: pointer; font-size: 11px; margin-left: auto; }
+.scheduled-info .cancel-btn:hover { background: #5a2a2a; }
+.scheduled-prompt { margin-top: 5px; color: #cccccc; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow-y: auto; }
+
 /* ── Input ── */
 .input-area {
   padding: 12px 16px;

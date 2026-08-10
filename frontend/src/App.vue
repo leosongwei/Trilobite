@@ -46,6 +46,16 @@
           <span class="subagent-title">{{ state.subagentDescription || state.currentSession }}</span>
           <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>
         </div>
+        <div v-if="state.isScheduled && currentSessionInfo" class="scheduled-info">
+          <div class="scheduled-meta">
+            <span class="meta-item">cron: <code>{{ currentSessionInfo.cron || '-' }}</code></span>
+            <span class="meta-item">{{ currentSessionInfo.recurring ? '重复执行' : '一次性' }}</span>
+            <span v-if="currentSessionInfo.schedule_active" class="meta-item">下次执行: {{ currentSessionInfo.next_fire_at || '-' }}</span>
+            <span class="meta-item">已运行: {{ currentSessionInfo.run_count ?? 0 }} 次</span>
+            <button v-if="currentSessionInfo.schedule_active" class="cancel-btn" title="取消定时任务（历史会话保留）" @click="cancelSchedule">取消定时任务</button>
+          </div>
+          <div v-if="currentSessionInfo.prompt" class="scheduled-prompt">{{ currentSessionInfo.prompt }}</div>
+        </div>
         <ChatView />
         <template v-if="state.currentSession">
           <div v-if="bannerRequest" class="plan-exit-banner">
@@ -80,6 +90,26 @@ import type { PendingRequest } from './types'
 import { findSessionRoot } from './utils/sessions'
 
 const { state, loadSessions, setMode, approveRequest, rejectRequest, selectSession } = useStore()
+
+// The current session's full record from the session poll; scheduled
+// sessions carry their schedule state (cron, recurring, next fire time,
+// prompt) which the subagent bar renders.
+const currentSessionInfo = computed(() =>
+  state.sessions.find((s) => s.id === state.currentSession) ?? null,
+)
+
+async function cancelSchedule() {
+  const info = currentSessionInfo.value
+  if (!info || !info.schedule_active) return
+  if (!confirm(`取消定时任务？不再触发。\n历史会话保留，可继续查看过去的运行记录。`)) return
+  if (!info.parent_session || !info.schedule_id) return
+  try {
+    await api.deleteSchedule(info.parent_session, info.schedule_id)
+    await loadSessions()
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
+  }
+}
 const sidebarOpen = ref(false)
 // Sidebar width, draggable on desktop and persisted across reloads. On mobile
 // the CSS overrides the width (drawer) and the resizer is hidden.

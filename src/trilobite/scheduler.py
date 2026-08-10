@@ -357,6 +357,10 @@ class CronService:
             except OSError:
                 pass
 
+    def delete_schedule(self, session_name: str, sched_id: str) -> str:
+        """UI-facing cancel: same semantics as the cron_delete tool."""
+        return self._delete(session_name, {"id": sched_id})
+
     def remove_schedule_by_session(self, sched_session_id: str) -> None:
         """Drop the schedule owning a deleted scheduled session (cascade)."""
         for session_name, schedules in list(self._schedules.items()):

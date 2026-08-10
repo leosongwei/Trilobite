@@ -18,7 +18,7 @@ from src.trilobite.file_access import detect_line_ending, materialize, resolve_f
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
-from src.trilobite.scheduler import CronService
+from src.trilobite.scheduler import CronService, Schedule
 from src.trilobite.version import get_version as get_pkg_version
 
 app = FastAPI(title="Trilobite")
@@ -192,7 +192,7 @@ def _scheduled_info(info: dict) -> dict:
     parent = info.get("parent_session")
     schedule_id = info.get("schedule_id")
     if not parent or not schedule_id:
-        return {"schedule_active": False, "cron": "", "run_count": 0, "last_state": None, "recurring": None, "deleted": False}
+        return {"schedule_active": False, "cron": "", "run_count": 0, "last_state": None, "recurring": None, "deleted": False, "next_fire_at": None, "prompt": ""}
     path = get_sessions_dir() / parent / "schedules.json"
     active = False
     cron = ""
@@ -200,6 +200,8 @@ def _scheduled_info(info: dict) -> dict:
     last_state = None
     recurring = None
     deleted = False
+    next_fire_at = None
+    prompt = ""
     if path.is_file():
         try:
             data = json.loads(path.read_text())
@@ -211,6 +213,11 @@ def _scheduled_info(info: dict) -> dict:
                     last_state = s.get("last_state")
                     recurring = bool(s.get("recurring", True))
                     deleted = bool(s.get("deleted", False))
+                    prompt = s.get("prompt", "")
+                    if active:
+                        nxt = Schedule.from_dict(s).next_fire_at()
+                        if nxt is not None:
+                            next_fire_at = nxt.strftime("%Y-%m-%d %H:%M")
                     break
         except Exception:
             pass
@@ -221,6 +228,8 @@ def _scheduled_info(info: dict) -> dict:
         "last_state": last_state,
         "recurring": recurring,
         "deleted": deleted,
+        "next_fire_at": next_fire_at,
+        "prompt": prompt,
     }
 
 
@@ -438,6 +447,10 @@ class RevertRequest(BaseModel):
     message: str
 
 
+class ScheduleDeleteRequest(BaseModel):
+    schedule_id: str
+
+
 @app.post("/api/sessions/{name}/revert")
 async def revert_message(name: str, req: RevertRequest):
     agent = _get_or_create_agent(name)
@@ -487,6 +500,18 @@ async def cancel_session(name: str):
     if agent and agent.is_running():
         agent.cancel()
     return {"status": "ok"}
+
+
+@app.post("/api/sessions/{name}/schedule/delete")
+async def delete_schedule(name: str, req: ScheduleDeleteRequest):
+    """Cancel a cron schedule from the UI (same semantics as cron_delete:
+    no further fires, the scheduled session stays for review)."""
+    if cron_service is None:
+        raise HTTPException(status_code=500, detail="cron service not ready")
+    result = cron_service.delete_schedule(name, req.schedule_id)
+    if result.startswith("Error"):
+        raise HTTPException(status_code=404, detail=result)
+    return {"status": "ok", "detail": result}
 
 
 @app.post("/api/sessions/{name}/interrupt")
