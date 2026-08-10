@@ -164,14 +164,14 @@ function dropEndedSessionRequests() {
 function handleSSEEvent(event: SSEEvent) {
   switch (event.type) {
     case 'init': {
-      state.chatItems = parseHistory(event.history)
+      state.isScheduled = event.kind === 'scheduled'
+      state.chatItems = parseHistory(event.history, state.isScheduled)
       state.isStreaming = event.is_running
       state.tokenCount = event.token_count
       state.maxTokens = event.max_context_tokens
       state.planMode = event.plan_mode
       state.additionalDirs = event.additional_dirs ?? []
       state.isSubagent = event.is_subagent ?? false
-      state.isScheduled = event.kind === 'scheduled'
       state.sealed = event.sealed ?? false
       state.subagentType = event.subagent_type ?? null
       state.subagentDescription = event.description ?? ''
@@ -428,19 +428,29 @@ function handleSSEEvent(event: SSEEvent) {
   state.streamTick++
 }
 
-function parseHistory(history: HistoryMessage[]): ChatItem[] {
+function parseHistory(history: HistoryMessage[], isScheduled = false): ChatItem[] {
   const items: ChatItem[] = []
   let i = 0
   let userSeq = 0
+  // A scheduled run boundary comes from a CompactMarker in the persisted
+  // history; the synthetic "⏰" user message right after it must not draw a
+  // second divider (the live-stream path still keys on "⏰" because markers
+  // are not streamed).
+  let lastWasRunBoundary = false
 
   while (i < history.length) {
     const msg = history[i]
 
     // System messages: the initial prompt is invisible; a compact marker
-    // renders as a divider line.
+    // renders as a divider line ("定时运行" for scheduled run boundaries).
     if (msg.role === 'system') {
       if (msg.compact_marker) {
-        items.push({ kind: 'compact' })
+        if (isScheduled) {
+          items.push({ kind: 'divider', text: '定时运行' })
+          lastWasRunBoundary = true
+        } else {
+          items.push({ kind: 'compact' })
+        }
       }
       i++
       continue
@@ -463,11 +473,12 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
         continue
       }
       // Scheduled agents: each fire opens with the synthetic "⏰ 定时触发"
-      // line -- draw a run-boundary divider before it (matches the live
-      // stream path in the 'user' case).
+      // line -- draw a run-boundary divider before it, unless the preceding
+      // CompactMarker already drew one.
       if ((msg.content || '').startsWith('⏰')) {
-        items.push({ kind: 'divider', text: '定时运行' })
+        if (!lastWasRunBoundary) items.push({ kind: 'divider', text: '定时运行' })
       }
+      lastWasRunBoundary = false
       items.push({
         kind: 'user',
         content: msg.content || '',

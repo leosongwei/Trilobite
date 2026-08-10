@@ -1363,14 +1363,16 @@ class Agent:
     async def start_scheduled_fire(self, prompt_text: str) -> None:
         """Open a new fire of this scheduled agent: fresh API context + run.
 
-        The persisted history accumulates across fires (the in-memory history
-        keeps every earlier run), but ``api_from`` is moved past the previous
-        runs so the API context starts at this fire's synthetic user message.
-        That message doubles as the frontend run boundary.
+        A :class:`CompactMarker` is appended before this fire's messages when
+        the session already holds earlier runs: ``get_api_messages()`` starts
+        just past the last marker, so the API context covers only this fire,
+        while the persisted history keeps every earlier run (the marker is
+        what the frontend renders as the run boundary divider).
         """
+        if self.history.raw:
+            self.history.append(CompactMarker())
         self.history.append(SystemMessage(self.system_prompt + self.working_context))
         self.history.append(UserMessage(prompt_text))
-        self.history.api_from = len(self.history.raw) - 2
         self._broker.set_running(True)
         await self._send_stream_event({
             "type": "user",

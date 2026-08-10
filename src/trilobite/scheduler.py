@@ -11,10 +11,11 @@ Design notes (see ``doc/product/scheduled_subagent.md``):
 
 - Each schedule owns one session (``kind: "scheduled"`` in session.json).
   Every fire REUSES that session: the agent instance is recreated (or
-  reused if already in the registry) with ``api_from`` set past the
-  previous runs' messages, so the API context is fresh while the persisted
-  history accumulates across fires. The first user message of each run is
-  the synthetic ``⏰ 定时触发（<time>）`` line, which doubles as the
+  reused if already in the registry) and a :class:`CompactMarker` is
+  appended before the fire's messages, so the API context is fresh (the
+  marker restarts ``get_api_messages``) while the persisted history
+  accumulates across fires. The first user message of each run is the
+  synthetic ``⏰ 定时触发（<time>）`` line, which doubles as the
   frontend's run boundary.
 - Scheduled agents are unattended: out-of-workspace access is denied
   directly (no interactive approval banner -- nobody would answer it).
@@ -493,8 +494,9 @@ class CronService:
         if agent is not None and agent.is_running():
             return  # a fire is already running (missed handling is in _tick)
 
-        # Every fire is a fresh agent instance -- zero API context (api_from
-        # skips the previous runs' messages, which stay in the persisted
+        # Every fire is a fresh agent instance -- zero API context (the
+        # CompactMarker appended by start_scheduled_fire drops the previous
+        # runs from get_api_messages, while they stay in the persisted
         # history for viewing). It replaces the previous instance in the
         # registry so interrupt / stream endpoints always see the live one.
         agent = Agent(

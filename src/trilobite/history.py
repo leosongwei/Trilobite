@@ -34,25 +34,10 @@ class History:
     same-role messages.
     """
 
-    def __init__(self, path: Path, api_from: int = 0):
+    def __init__(self, path: Path):
         self._path = path
         self._messages: list[Message] = []
-        #: Index into :attr:`_messages` before which nothing is projected to
-        #: the API (in addition to the CompactMarker rule). Lets a scheduled
-        #: agent reuse a session whose persisted history holds earlier runs:
-        #: its in-memory history keeps the full file (so saves are appends),
-        #: while the API context starts fresh at the current run.
-        self._api_from = api_from
         self._load()
-
-    @property
-    def api_from(self) -> int:
-        """Index before which nothing is projected to the API."""
-        return self._api_from
-
-    @api_from.setter
-    def api_from(self, value: int) -> None:
-        self._api_from = value
 
     def _load(self) -> None:
         if not self._path.exists():
@@ -129,7 +114,7 @@ class History:
         model. When false, images are stripped from the API payload but kept
         in the persisted history.
         """
-        start = self._api_from
+        start = 0
         for i, msg in enumerate(self._messages):
             if isinstance(msg, CompactMarker):
                 start = max(start, i + 1)  # start just past the marker
