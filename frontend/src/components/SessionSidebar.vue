@@ -77,7 +77,7 @@
           <div v-if="groupDirs.length === 0" class="requests-empty">
             No allowed directories
           </div>
-          <div v-for="entry in groupDirs" :key="entry.sessionId + entry.path" class="dir-item">
+          <div v-for="entry in groupDirs" :key="entry.path" class="dir-item">
             <span class="dir-path" :title="entry.path">
               <span v-if="entry.source" class="dir-source">{{ entry.source }}</span>
               {{ entry.path }}
@@ -143,7 +143,7 @@ const emit = defineEmits<{
 // highlighting always compares the working tree against it.
 const props = defineProps<{ base: string; requestsTick?: number; sidebarWidth: number }>()
 
-const { state, selectSession, createSession, deleteSession, addDir, removeDir, renameSession, approveRequest, rejectRequest } = useStore()
+const { state, selectSession, createSession, deleteSession, addDir, renameSession, approveRequest, rejectRequest } = useStore()
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
@@ -367,20 +367,27 @@ async function handleAddDir() {
   newDir.value = ''
 }
 
-async function handleRemoveDir(path: string) {
-  await removeDir(path)
-}
-
 // ── allowed directories (group-scoped) ─────────────────────────────────────
-// Allowed directories are per-session, but a subagent's grants (made from
-// its own permission requests) are invisible while browsing the main
-// session. Show the union of the current main-session group instead, with
-// the owning session labelled on entries that do not belong to the session
-// being viewed. The + box still adds to the viewed session only.
+// Allowed directories are per-session, but a subagent inherits the parent's
+// grants and may add its own, so the same path can legitimately live in
+// several sessions of the group. Show the union of the current main-session
+// group deduped by path instead, with the owning session labelled on entries
+// that do not belong to the session being viewed. The + box still adds to
+// the viewed session only.
 interface GroupDirEntry {
   sessionId: string
   path: string
   source: string | null
+}
+
+// Trailing slashes are stripped so `/foo/` and `/foo` (legacy data written
+// before dirs were canonicalized server-side) collapse into one entry.
+function dirKey(p: string): string {
+  return p.replace(/\/+$/, '') || p
+}
+
+function sessionLabel(s: Session): string {
+  return s.subagent_type ? `[${s.subagent_type}: ${s.description || s.id}]` : s.name
 }
 
 const groupDirs = computed<GroupDirEntry[]>(() => {
@@ -389,28 +396,47 @@ const groupDirs = computed<GroupDirEntry[]>(() => {
   const root = findSessionRoot(state.sessions, cur)
   if (!root) return []
   const group = state.sessions.filter((s) => s.id === root || s.parent_session === root)
+  const byPath = new Map<string, GroupDirEntry>()
   const entries: GroupDirEntry[] = []
   for (const s of group) {
-    let source: string | null = null
-    if (s.id !== cur) {
-      source = s.subagent_type
-        ? `[${s.subagent_type}: ${s.description || s.id}]`
-        : s.name
-    }
     for (const p of s.additional_dirs ?? []) {
-      entries.push({ sessionId: s.id, path: p, source })
+      const key = dirKey(p)
+      const existing = byPath.get(key)
+      if (existing) {
+        // Same directory granted to several sessions: prefer the entry owned
+        // by the viewed session (no badge); otherwise merge the owner label.
+        if (s.id === cur) {
+          existing.sessionId = s.id
+          existing.source = null
+        } else if (existing.sessionId !== cur && existing.source) {
+          existing.source += ` + ${sessionLabel(s)}`
+        }
+        continue
+      }
+      const entry: GroupDirEntry = {
+        sessionId: s.id,
+        path: key,
+        source: s.id === cur ? null : sessionLabel(s),
+      }
+      byPath.set(key, entry)
+      entries.push(entry)
     }
   }
   return entries
 })
 
 async function handleRemoveGroupDir(entry: GroupDirEntry) {
-  if (entry.sessionId === state.currentSession) {
-    await handleRemoveDir(entry.path)
-    return
+  // The entry may represent the same dir granted to several sessions in the
+  // group; remove it from every session that holds it so it does not
+  // reappear through another owner. The server canonicalizes paths, so a
+  // legacy `/foo/` entry is matched and removed too.
+  const root = findSessionRoot(state.sessions, state.currentSession)
+  if (!root) return
+  const group = state.sessions.filter((s) => s.id === root || s.parent_session === root)
+  for (const s of group) {
+    const dirs = await apiRemoveDir(s.id, entry.path)
+    if (s.id === state.currentSession) state.additionalDirs = dirs
+    else s.additional_dirs = dirs
   }
-  const dirs = await apiRemoveDir(entry.sessionId, entry.path)
-  const s = state.sessions.find((x) => x.id === entry.sessionId)
-  if (s) s.additional_dirs = dirs
 }
 </script>
