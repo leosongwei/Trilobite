@@ -48,7 +48,7 @@ body {
 .sidebar-width-resizer:hover { background: #0e639c; }
 .sidebar-header {
   padding: 16px;
-  border-bottom: 1px solid #5a5a5a;
+  border-bottom: 2px solid #5a5a5a;
 }
 .sidebar-header h1 {
   font-size: 15px;
@@ -195,7 +195,7 @@ body {
 /* Current session: name / cwd / allowed dirs */
 .session-info {
   padding: 8px 16px;
-  border-top: 1px solid #5a5a5a;
+  border-top: 2px solid #5a5a5a;
 }
 .session-info .info-row {
   display: flex;
