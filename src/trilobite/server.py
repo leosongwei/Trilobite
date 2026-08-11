@@ -18,6 +18,7 @@ from src.trilobite.file_access import detect_line_ending, materialize, normalize
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
+from src.trilobite.projects import create_project as projects_create, delete_project as projects_delete, load_projects
 from src.trilobite.scheduler import CronService, Schedule
 from src.trilobite.version import get_version as get_pkg_version
 
@@ -108,6 +109,14 @@ async def auth_login(request: Request, req: AuthRequest):
 class SessionCreate(BaseModel):
     name: str
     working_dir: str
+    project_id: str | None = None
+
+class ProjectCreate(BaseModel):
+    name: str
+    working_dir: str
+
+class SessionProjectRequest(BaseModel):
+    project_id: str | None = None
 
 class RenameRequest(BaseModel):
     name: str
@@ -281,8 +290,15 @@ async def create_session(req: SessionCreate):
     session_id = uuid.uuid4().hex
     session_dir = get_sessions_dir() / session_id
 
+    if req.project_id is not None:
+        projects = load_projects(get_sessions_dir())
+        if not any(p.get("id") == req.project_id for p in projects):
+            raise HTTPException(404, "Project not found")
+
     session_dir.mkdir(parents=True, exist_ok=True)
     info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": time.time()}
+    if req.project_id:
+        info["project_id"] = req.project_id
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 
     agent = Agent(
@@ -343,6 +359,57 @@ async def delete_session(name: str):
             shutil.rmtree(sd)
     if cron_service is not None:
         cron_service.remove_session(name)
+    return {"status": "ok"}
+
+
+@app.get("/api/projects")
+async def list_projects():
+    return load_projects(get_sessions_dir())
+
+
+@app.post("/api/projects")
+async def create_project(req: ProjectCreate):
+    project = projects_create(get_sessions_dir(), req.name, req.working_dir)
+    return {"status": "ok", "id": project["id"], "name": project["name"]}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    sessions_dir = get_sessions_dir()
+    if not projects_delete(sessions_dir, project_id):
+        raise HTTPException(404, "Project not found")
+    # The project is a grouping only: member sessions are kept and become
+    # unassigned (their working_dir is untouched).
+    if sessions_dir.exists():
+        for sd in sessions_dir.iterdir():
+            if sd.is_dir() and (sd / "session.json").exists():
+                try:
+                    info = json.loads((sd / "session.json").read_text())
+                    if info.get("project_id") == project_id:
+                        info.pop("project_id", None)
+                        (sd / "session.json").write_text(json.dumps(info, indent=2))
+                except Exception:
+                    pass
+    return {"status": "ok"}
+
+
+@app.put("/api/sessions/{name}/project")
+async def set_session_project(name: str, req: SessionProjectRequest):
+    """Assign a session to a project (or unassign with null). This only
+    changes the sidebar grouping; the session's working_dir is untouched."""
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    if req.project_id is not None:
+        projects = load_projects(get_sessions_dir())
+        if not any(p.get("id") == req.project_id for p in projects):
+            raise HTTPException(404, "Project not found")
+    info = json.loads((session_dir / "session.json").read_text())
+    if req.project_id is None:
+        info.pop("project_id", None)
+    else:
+        info["project_id"] = req.project_id
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
     return {"status": "ok"}
 
 

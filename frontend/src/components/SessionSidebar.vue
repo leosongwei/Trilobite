@@ -2,30 +2,50 @@
   <aside class="sidebar" :style="{ '--sidebar-width': sidebarWidth + 'px' }">
     <div class="sidebar-header">
       <h1>Trilobite<span v-if="version" class="version"> v{{ version }}</span></h1>
-      <input v-model="name" type="text" placeholder="Session name" />
+      <input v-model="name" type="text" placeholder="Session / Project name" />
       <label>Working directory:</label>
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
-      <button @click="handleCreate">+ New Session</button>
+      <div class="header-buttons">
+        <button @click="handleCreate">+ New Session</button>
+        <button class="secondary" @click="handleCreateProject">+ New Project</button>
+      </div>
     </div>
     <div class="sessions" :style="{ height: sessionsHeight + 'px' }">
-      <template v-for="s in sessionTree" :key="s.id">
+      <template v-for="item in sessionRows" :key="item.key">
         <div
-          class="session-item"
-          :class="{ active: s.id === state.currentSession }"
-          @click="handleSelect(s.id)"
+          v-if="item.kind === 'project'"
+          class="session-item project-row"
+          :title="item.project.working_dir"
+          @click="toggleProject(item.project.id)"
         >
           <span class="session-label">
-            <span v-if="s.is_running" class="running-dot" title="running"></span>
-            <span v-else-if="s.has_schedule" class="pending-dot" title="cron scheduled"></span>
-            {{ s.name }}
+            <span class="tree-arrow ms ms-expand" :class="{ open: !isProjectCollapsed(item.project.id) }"></span>
+            <span class="tree-icon ms ms-folder"></span>
+            <span class="project-name">{{ item.project.name }}</span>
           </span>
-          <span class="delete" @click.stop="handleDelete(s.id)"><span class="ms ms-close"></span></span>
+          <span class="project-actions">
+            <span class="project-add" title="New session in project" @click.stop="handleCreateInProject(item.project)">+</span>
+            <span class="delete" title="Delete project" @click.stop="handleDeleteProject(item.project)"><span class="ms ms-close"></span></span>
+          </span>
         </div>
         <div
-          v-for="c in s.children"
+          v-else-if="item.kind === 'session'"
+          class="session-item"
+          :class="[item.project ? 'project-session' : '', { active: item.session.id === state.currentSession }]"
+          @click="handleSelect(item.session.id)"
+        >
+          <span class="session-label">
+            <span v-if="item.session.is_running" class="running-dot" title="running"></span>
+            <span v-else-if="item.session.has_schedule" class="pending-dot" title="cron scheduled"></span>
+            {{ item.session.name }}
+          </span>
+          <span class="delete" @click.stop="handleDelete(item.session.id)"><span class="ms ms-close"></span></span>
+        </div>
+        <div
+          v-for="c in item.children"
           :key="c.id"
           class="session-item child"
-          :class="{ active: c.id === state.currentSession }"
+          :class="[item.project ? 'project-child' : '', { active: c.id === state.currentSession }]"
           @click="handleSelect(c.id)"
         >
           <span class="session-label" :title="childLabel(c)">
@@ -71,6 +91,18 @@
         <div class="info-row">
           <span class="info-label">cwd:</span>
           <span class="info-value" :title="currentSessionCwd">{{ currentSessionCwd }}</span>
+        </div>
+        <div v-if="projectSelectorVisible" class="info-row">
+          <span class="info-label">project:</span>
+          <select
+            :value="projectSelValue"
+            class="info-select"
+            title="Sidebar grouping only; does not change cwd"
+            @change="handleProjectChange"
+          >
+            <option value="">(none)</option>
+            <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
         </div>
         <details>
           <summary>Allowed directories ({{ groupDirs.length }})</summary>
@@ -128,7 +160,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useStore } from '../store'
 import { getCwd, getVersion, removeDir as apiRemoveDir } from '../api'
-import type { Session, PendingRequest } from '../types'
+import type { Session, PendingRequest, Project } from '../types'
 import { findSessionRoot } from '../utils/sessions'
 import FileTree from './FileTree.vue'
 import type { FsRoot } from './FileTree.vue'
@@ -143,7 +175,7 @@ const emit = defineEmits<{
 // highlighting always compares the working tree against it.
 const props = defineProps<{ base: string; requestsTick?: number; sidebarWidth: number }>()
 
-const { state, selectSession, createSession, deleteSession, addDir, renameSession, approveRequest, rejectRequest } = useStore()
+const { state, selectSession, createSession, deleteSession, addDir, renameSession, approveRequest, rejectRequest, createProject, deleteProject, setSessionProject } = useStore()
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
@@ -153,6 +185,8 @@ const editName = ref('')
 const sessionsHeight = ref(300)
 const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const requestsDetails = ref<HTMLDetailsElement | null>(null)
+// Expanded/collapsed state of project folders (in-memory only, not persisted).
+const collapsedProjects = ref(new Set<string>())
 
 // The aggregated banner's Review button bumps requestsTick to open the
 // Requests list (the user can still collapse/expand it freely afterwards).
@@ -196,6 +230,25 @@ const currentSessionName = computed(() => {
   return currentSessionObj.value?.name ?? state.currentSession ?? ''
 })
 const currentSessionCwd = computed(() => currentSessionObj.value?.working_dir ?? '')
+
+// The project selector only makes sense for top-level main sessions: a
+// subagent/scheduled session is nested under its parent and never rendered
+// as an independent row.
+const projectSelectorVisible = computed(() => {
+  if (state.isSubagent || state.isScheduled) return false
+  const cur = currentSessionObj.value
+  return !!cur && !cur.parent_session
+})
+const projectSelValue = computed(() => currentSessionObj.value?.project_id ?? '')
+
+async function handleProjectChange(e: Event) {
+  const v = (e.target as HTMLSelectElement).value
+  try {
+    await setSessionProject(v || null)
+  } catch (err) {
+    alert(err instanceof Error ? err.message : String(err))
+  }
+}
 
 // File tree roots: the session's working dir plus the authorized dirs. The
 // key is a joined string so the tree only rebuilds when they actually change
@@ -265,9 +318,26 @@ interface SessionNode extends Session {
   children: Session[]
 }
 
-// Build a one-level tree: top-level sessions with their subagent children
-// nested under them.
-const sessionTree = computed<SessionNode[]>(() => {
+// Flat render list for the sidebar: a project folder row (with its member
+// sessions nested under it when expanded) followed by every top-level
+// session and its subagent children. Projects come first, in creation
+// order; unassigned sessions follow.
+type SessionRow =
+  | { key: string; kind: 'project'; project: Project; children: Session[] }
+  | { key: string; kind: 'session'; session: SessionNode; children: Session[]; project: boolean }
+
+function isProjectCollapsed(id: string): boolean {
+  return collapsedProjects.value.has(id)
+}
+
+function toggleProject(id: string) {
+  const s = new Set(collapsedProjects.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  collapsedProjects.value = s
+}
+
+const sessionRows = computed<SessionRow[]>(() => {
   const all = state.sessions
   const childrenByParent = new Map<string, Session[]>()
   for (const s of all) {
@@ -277,13 +347,20 @@ const sessionTree = computed<SessionNode[]>(() => {
       childrenByParent.set(s.parent_session, arr)
     }
   }
-  return all
-    .filter((s) => !s.parent_session)
-    // Running sessions first, then sessions with a schedule still to fire
-    // (blue dot), then by last activity (updated_at descending, history.json
-    // mtime set by the server; missing timestamps of legacy sessions count
-    // as zero), then by name.
-    .sort((a, b) => {
+  const toNode = (s: Session): SessionNode => ({
+    ...s,
+    children: (childrenByParent.get(s.id) ?? []).slice().sort((a, b) => {
+      // Newest subagents on top: descending by created_at, with missing
+      // timestamps (legacy sessions) pushed to the bottom.
+      return (b.created_at ?? 0) - (a.created_at ?? 0)
+    }),
+  })
+  // Running sessions first, then sessions with a schedule still to fire
+  // (blue dot), then by last activity (updated_at descending, history.json
+  // mtime set by the server; missing timestamps of legacy sessions count
+  // as zero), then by name.
+  const sortTop = (list: Session[]) =>
+    list.slice().sort((a, b) => {
       const rank = (s: Session) => (s.is_running ? 2 : s.has_schedule ? 1 : 0)
       const byRank = rank(b) - rank(a)
       if (byRank !== 0) return byRank
@@ -291,14 +368,28 @@ const sessionTree = computed<SessionNode[]>(() => {
       if (byTime !== 0) return byTime
       return a.name.localeCompare(b.name)
     })
-    .map((s) => ({
-      ...s,
-      children: (childrenByParent.get(s.id) ?? []).slice().sort((a, b) => {
-        // Newest subagents on top: descending by created_at, with missing
-        // timestamps (legacy sessions) pushed to the bottom.
-        return (b.created_at ?? 0) - (a.created_at ?? 0)
-      }),
-    }))
+
+  const rows: SessionRow[] = []
+  const projectIds = new Set(state.projects.map((p) => p.id))
+  for (const p of state.projects.slice().sort((a, b) =>
+    (a.created_at ?? 0) - (b.created_at ?? 0) || a.name.localeCompare(b.name),
+  )) {
+    rows.push({ key: 'p:' + p.id, kind: 'project', project: p, children: [] })
+    if (!isProjectCollapsed(p.id)) {
+      const members = all.filter((s) => !s.parent_session && s.project_id === p.id)
+      for (const node of sortTop(members).map(toNode)) {
+        rows.push({ key: node.id, kind: 'session', session: node, children: node.children, project: true })
+      }
+    }
+  }
+  // Sessions referencing a deleted/unknown project render as unassigned.
+  const free = all.filter(
+    (s) => !s.parent_session && !(s.project_id && projectIds.has(s.project_id)),
+  )
+  for (const node of sortTop(free).map(toNode)) {
+    rows.push({ key: node.id, kind: 'session', session: node, children: node.children, project: false })
+  }
+  return rows
 })
 
 onMounted(() => {
@@ -337,6 +428,40 @@ async function handleCreate() {
   try {
     await createSession(name.value.trim(), workingDir.value.trim())
     resetDefaults()
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
+  }
+}
+
+// Projects reuse the header's name + working directory fields.
+async function handleCreateProject() {
+  if (!name.value.trim() || !workingDir.value.trim()) {
+    alert('Please fill in both fields')
+    return
+  }
+  try {
+    await createProject(name.value.trim(), workingDir.value.trim())
+    resetDefaults()
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
+  }
+}
+
+// Create a session that belongs to the project, using the project's folder
+// and name as the defaults.
+async function handleCreateInProject(p: Project) {
+  try {
+    await createSession(p.name, p.working_dir, p.id)
+    resetDefaults()
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function handleDeleteProject(p: Project) {
+  if (!confirm(`Delete project "${p.name}"? Its sessions are kept (unassigned).`)) return
+  try {
+    await deleteProject(p.id)
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
   }

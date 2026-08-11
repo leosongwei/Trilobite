@@ -5,7 +5,7 @@
 Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 DeepSeek），分为 **后端 (Python/FastAPI)** 和 **前端 (Vue 3/TypeScript)** 两部分。
 ## 后端 (`src/trilobite/`)
 
-* `server.py` - FastAPI 应用入口。会话级 REST API：`POST /api/sessions/{name}/message` 启动/转向 agent（返回 JSON，agent 作为独立 asyncio task 运行，关闭浏览器不取消）、`GET /api/sessions/{name}/stream` SSE 订阅实时输出；另有会话 CRUD、mode 切换、permission/plan_exit 审批、`/revert`、`/compact`、`/interrupt`、additional_dirs 增删、`/history`、`/info`、图片 serve、文件管理器 `fs/list`/`fs/file`/`fs/diff`/`fs/file`(PUT) 等端点；挂载静态前端文件。token 访问控制：启动时生成随机 key（写入配置目录 `token` 文件并打印带 `?token=` 的链接），`/api/auth/status`、`/api/auth/login` 换取 HttpOnly cookie，其余 `/api/*` 由中间件校验。`main()` 用 argparse 分发：`-t`/`-c` 进入 CLI 模式，默认 `-s` 启动 uvicorn (0.0.0.0:2345)，关闭 access log。详见 `doc/product/security.md`、`doc/product/file_manager.md`。
+* `server.py` - FastAPI 应用入口。会话级 REST API：`POST /api/sessions/{name}/message` 启动/转向 agent（返回 JSON，agent 作为独立 asyncio task 运行，关闭浏览器不取消）、`GET /api/sessions/{name}/stream` SSE 订阅实时输出；另有会话 CRUD、mode 切换、permission/plan_exit 审批、`/revert`、`/compact`、`/interrupt`、additional_dirs 增删、`/history`、`/info`、图片 serve、文件管理器 `fs/list`/`fs/file`/`fs/diff`/`fs/file`(PUT)、项目 `projects` CRUD 与 session 归属等端点；挂载静态前端文件。token 访问控制：启动时生成随机 key（写入配置目录 `token` 文件并打印带 `?token=` 的链接），`/api/auth/status`、`/api/auth/login` 换取 HttpOnly cookie，其余 `/api/*` 由中间件校验。`main()` 用 argparse 分发：`-t`/`-c` 进入 CLI 模式，默认 `-s` 启动 uvicorn (0.0.0.0:2345)，关闭 access log。详见 `doc/product/security.md`、`doc/product/file_manager.md`、`doc/product/projects.md`。
 * `cli.py` -- 命令行交互模式（`trilobite -t [dir]` 新建 / `-c` 续接当前目录最新主 session / `-s` 服务器为默认）。纯订阅者 + 渲染器：实例化 `Agent`、`attach_subscriber()` 订阅 broker 队列（与 SSE `/stream` 同构），把事件渲染到终端。类 bash 行式 REPL：IDLE 用 `input()` 读输入、RUNNING 消费 broker 事件到结束（Ctrl+C 中断 cancel），运行中不做 steering。`-c` 按 `history.json` 的 mtime 找当前目录最新主 session 续接（加载历史、不回显）。不改动 agent/broker/工具层。详见 `doc/product/cli.md`。
 * `agent.py` -- 核心 Agent 类。管理会话生命周期：构建 system 消息（env 块 + `SYSTEM_PROMPT` + 工作目录 `AGENTS.md` + skills 清单），与 LLM 流式对话，循环执行 tool calls，支持 plan/build 双模式切换、用户 steering、上下文压缩、subagent 派生（`task` 工具）和 VLM 图片输入。详见 `doc/product/context_building.md`、`doc/product/streaming.md`、`doc/product/subagent.md`、`doc/product/skills.md`。
 * `messages.py` -- 类型化对话消息层（v2 内存表示）。`Message` 基类及 `SystemMessage`/`UserMessage`/`AssistantMessage`/`CompactMarker`/`Image`/`ToolCall`/`ToolResult` 子类，每个对象三向投影：`to_api_dicts`（发 LLM）、`to_storage_dict`（持久化 v2 JSON）、`to_frontend_dicts`（v1 兼容扁平 dict 给前端）。`AssistantMessage` 自包含一个 turn（thinking+content+tool_calls+tool_results），保证 steering 消息只能落在整个 turn 之后、API 消息序列永远合法。`from_v1` 把旧扁平格式惰性升级。详见 `doc/product/history.md`。
@@ -23,6 +23,7 @@ Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 
 * `tokens.py` -- 简易 token 估算（字符级，区分 ASCII/CJK）。
 * `file_access.py` -- 文件路径解析和安全检查（敏感文件过滤）。详见 `doc/product/file_access.md`。
 * `file_discovery.py` - 文件发现（glob/grep 共用）：git 仓库用 `git ls-files` 尊重 .gitignore，否则 `os.walk` 跳过噪音目录；不依赖 ripgrep。
+* `projects.py` - 项目（session 分组）持久化：`projects.json`（与 session 目录同级）存储项目列表（id/name/working_dir/created_at），提供增删查；session 归属通过 `session.json` 的 `project_id` 字段记录，删除项目只解除归属不删 session。详见 `doc/product/projects.md`。
 * `git_ops.py` - 文件管理器的 git 封装：`list_dir`（单目录条目 + porcelain 变更状态，被 ignore 目录不出现）、`list_branches`/`current_branch`、`show_base_content`（`git show <base>:<path>`，文件不在基线返回空）、`build_diff_rows`（difflib 全文件对比生成 DiffRow）。
 * `tools/` -- 八个具体工具（均继承 `tools/tool.py`）：
   * `read.py` -- 读取文件（支持 start_line/limit_lines/limit_chars 分页）；`enable_vl` 时读图片存入 session images 目录并返回 `<image/>` marker
@@ -43,7 +44,7 @@ Vue 3 + TypeScript，构建后输出到 `src/trilobite/static/`，由 FastAPI �
 * `store.ts` - 全局状态：sessions、chat items、SSE 订阅流处理（`init` 重建对话、事件驱动 isStreaming、断线自动重连）、plan mode、subagent 状态、VLM 开关；session 列表 3s 轮询
 * `api.ts` -- HTTP API 封装（会话 CRUD、消息/图片、mode、permission、revert、interrupt、stream 订阅等）
 * `types.ts` -- TypeScript 类型定义（SSEEvent 联合、HistoryMessage、SubagentChild、DiffRow 等）
-* `components/` -- ChatView（窗口化渲染长历史）、ChatInput（自适应 textarea、`/compact` 补全、图片粘贴上传、模式切换）、SessionSidebar（会话列表 + subagent 子树 + 信息面板 + 文件管理器入口）、TokenBar、TurnBlock、ThinkingBlock（可折叠、活气泡 tail-f 跟随）、ToolEntry（task 工具显示 subagent 树、read 可折叠、diff 展示）、DiffView（分屏/统一双视图响应式切换）、UserMessage（编辑重发 revert、图片缩略图 + lightbox）、FileManager（文件管理器面板：查看/diff/编辑三视图，highlight.js 只读高亮）、FileTree（懒加载目录树，展开时按目录请求、git 状态徽章）
+* `components/` -- ChatView（窗口化渲染长历史）、ChatInput（自适应 textarea、`/compact` 补全、图片粘贴上传、模式切换）、SessionSidebar（会话列表 + 项目分组 + subagent 子树 + 信息面板 + 文件管理器入口）、TokenBar、TurnBlock、ThinkingBlock（可折叠、活气泡 tail-f 跟随）、ToolEntry（task 工具显示 subagent 树、read 可折叠、diff 展示）、DiffView（分屏/统一双视图响应式切换）、UserMessage（编辑重发 revert、图片缩略图 + lightbox）、FileManager（文件管理器面板：查看/diff/编辑三视图，highlight.js 只读高亮）、FileTree（懒加载目录树，展开时按目录请求、git 状态徽章）
 * `utils/markdown.ts` -- Markdown 渲染（marked + GFM，LaTeX 占位符保护）
 * `utils/mathjax.ts` -- 数学公式渲染（懒加载 vendored MathJax）
 
