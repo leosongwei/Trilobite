@@ -16,6 +16,7 @@
         >
           <span class="session-label">
             <span v-if="s.is_running" class="running-dot" title="running"></span>
+            <span v-else-if="s.has_schedule" class="pending-dot" title="cron scheduled"></span>
             {{ s.name }}
           </span>
           <span class="delete" @click.stop="handleDelete(s.id)"><span class="ms ms-close"></span></span>
@@ -278,10 +279,18 @@ const sessionTree = computed<SessionNode[]>(() => {
   }
   return all
     .filter((s) => !s.parent_session)
-    // Most recently active sessions on top: descending by updated_at
-    // (history.json mtime, set by the server), with missing timestamps
-    // (legacy sessions) pushed to the bottom.
-    .sort((a, b) => (b.updated_at ?? b.created_at ?? 0) - (a.updated_at ?? a.created_at ?? 0))
+    // Running sessions first, then sessions with a schedule still to fire
+    // (blue dot), then by last activity (updated_at descending, history.json
+    // mtime set by the server; missing timestamps of legacy sessions count
+    // as zero), then by name.
+    .sort((a, b) => {
+      const rank = (s: Session) => (s.is_running ? 2 : s.has_schedule ? 1 : 0)
+      const byRank = rank(b) - rank(a)
+      if (byRank !== 0) return byRank
+      const byTime = (b.updated_at ?? b.created_at ?? 0) - (a.updated_at ?? a.created_at ?? 0)
+      if (byTime !== 0) return byTime
+      return a.name.localeCompare(b.name)
+    })
     .map((s) => ({
       ...s,
       children: (childrenByParent.get(s.id) ?? []).slice().sort((a, b) => {

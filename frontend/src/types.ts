@@ -89,6 +89,10 @@ export interface Session {
   additional_dirs?: string[]
   created_at?: number
   updated_at?: number
+  // Main sessions: whether the session owns a schedule that still needs to
+  // fire (completed one-shots and deleted schedules don't count). The
+  // sidebar shows a blue dot and sorts such sessions to the top.
+  has_schedule?: boolean
   // Scheduled sessions (kind === 'scheduled'): live schedule state, refreshed
   // by the session poll. The sidebar dot renders from is_running/last_state:
   // pending (never fired) -> light blue, running -> pulsing green,
