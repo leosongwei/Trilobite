@@ -1,4 +1,4 @@
-import type { Session, SessionInfo, HistoryMessage, SSEEvent, DiffRow } from './types'
+import type { Session, SessionInfo, HistoryMessage, SSEEvent, DiffRow, Project } from './types'
 
 export interface ImageAttachment {
   mime_type: string
@@ -53,11 +53,15 @@ export async function getSessions(): Promise<Session[]> {
   return res.json()
 }
 
-export async function createSession(name: string, workingDir: string): Promise<string> {
+export async function createSession(
+  name: string,
+  workingDir: string,
+  projectId?: string,
+): Promise<string> {
   const res = await authFetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, working_dir: workingDir }),
+    body: JSON.stringify({ name, working_dir: workingDir, project_id: projectId ?? null }),
   })
   if (!res.ok) {
     const err = await res.json()
@@ -65,6 +69,41 @@ export async function createSession(name: string, workingDir: string): Promise<s
   }
   const data = await res.json()
   return data.id
+}
+
+// ── projects (session grouping folders) ─────────────────────────────────────
+
+export async function getProjects(): Promise<Project[]> {
+  const res = await authFetch('/api/projects')
+  return res.json()
+}
+
+export async function createProject(
+  name: string,
+  workingDir: string,
+): Promise<{ id: string }> {
+  const res = await authFetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, working_dir: workingDir }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to create project')
+  }
+  return res.json()
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await authFetch(`/api/projects/${encode(id)}`, { method: 'DELETE' })
+}
+
+export async function setSessionProject(id: string, projectId: string | null): Promise<void> {
+  await authFetch(`/api/sessions/${encode(id)}/project`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId }),
+  })
 }
 
 export async function renameSession(id: string, name: string): Promise<void> {

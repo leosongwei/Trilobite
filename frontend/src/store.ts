@@ -1,9 +1,10 @@
 import { reactive } from 'vue'
-import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem, PendingRequest } from './types'
+import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem, PendingRequest, Project } from './types'
 import * as api from './api'
 
 interface State {
   sessions: Session[]
+  projects: Project[]
   currentSession: string | null
   chatItems: ChatItem[]
   isStreaming: boolean
@@ -34,6 +35,7 @@ interface State {
 
 const state = reactive<State>({
   sessions: [],
+  projects: [],
   currentSession: null,
   chatItems: [],
   isStreaming: false,
@@ -683,7 +685,7 @@ document.addEventListener('visibilitychange', () => {
 
 async function loadSessionsRefresher() {
   try {
-    const list = await api.getSessions()
+    const [list, projects] = await Promise.all([api.getSessions(), api.getProjects()])
     // A scheduled agent's fire reuses the idle instance (its broker keeps the
     // SSE stream alive), so the stream normally follows each fire live. The
     // reconnect below is a safety net: after a restart, or if the stream was
@@ -702,6 +704,7 @@ async function loadSessionsRefresher() {
       connectStream(cur.id)
     }
     state.sessions = list
+    state.projects = projects
   } catch {
     // transient error; the next tick retries
   }
@@ -721,7 +724,9 @@ function ensureSessionPolling() {
 
 export function useStore() {
   async function loadSessions() {
-    state.sessions = await api.getSessions()
+    const [list, projects] = await Promise.all([api.getSessions(), api.getProjects()])
+    state.sessions = list
+    state.projects = projects
     ensureSessionPolling()
   }
 
@@ -740,8 +745,8 @@ export function useStore() {
     connectStream(id)
   }
 
-  async function createSession(name: string, workingDir: string) {
-    const actualId = await api.createSession(name, workingDir)
+  async function createSession(name: string, workingDir: string, projectId?: string) {
+    const actualId = await api.createSession(name, workingDir, projectId)
     state.currentSession = actualId
     closeTurn()
     state.chatItems = []
@@ -752,6 +757,26 @@ export function useStore() {
     state.isStreaming = false
     await loadSessions()
     connectStream(actualId)
+  }
+
+  async function createProject(name: string, workingDir: string) {
+    await api.createProject(name, workingDir)
+    await loadSessions()
+  }
+
+  async function deleteProject(id: string) {
+    await api.deleteProject(id)
+    await loadSessions()
+  }
+
+  async function setSessionProject(projectId: string | null) {
+    if (!state.currentSession) return
+    await api.setSessionProject(state.currentSession, projectId)
+    const s = state.sessions.find((x) => x.id === state.currentSession)
+    if (s) {
+      if (projectId) s.project_id = projectId
+      else delete s.project_id
+    }
   }
 
   async function deleteSession(id: string) {
@@ -875,6 +900,9 @@ export function useStore() {
     loadSessions,
     selectSession,
     createSession,
+    createProject,
+    deleteProject,
+    setSessionProject,
     deleteSession,
     sendMessage,
     stopAgent,

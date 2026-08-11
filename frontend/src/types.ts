@@ -5,6 +5,17 @@ export interface ImageMeta {
   date?: string
 }
 
+// A session-grouping folder. Projects are lightweight: they only record a
+// name and a working directory (the default for sessions created from the
+// project); member sessions keep their own working_dir and reference the
+// project by id.
+export interface Project {
+  id: string
+  name: string
+  working_dir: string
+  created_at?: number
+}
+
 // A pending approval request: a directory grant (main session or subagent)
 // or a plan-exit switch request. Multiple requests can be pending at once
 // (main session + several subagents), so they live in a list keyed by
@@ -87,6 +98,8 @@ export interface Session {
   description?: string
   sealed?: boolean
   additional_dirs?: string[]
+  /** Project (sidebar grouping) this main session belongs to. */
+  project_id?: string
   created_at?: number
   updated_at?: number
   // Main sessions: whether the session owns a schedule that still needs to
