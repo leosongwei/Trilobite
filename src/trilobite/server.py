@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
 from src.trilobite.config import init_config, get_config_dir, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
-from src.trilobite.file_access import detect_line_ending, materialize, resolve_file_path
+from src.trilobite.file_access import detect_line_ending, materialize, normalize_dir, resolve_file_path
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
@@ -574,9 +574,14 @@ async def add_dir(name: str, req: AddDirRequest):
         raise HTTPException(404, "Session not found")
 
     info = json.loads((session_dir / "session.json").read_text())
-    dirs = info.get("additional_dirs", [])
-    if req.path not in dirs:
-        dirs.append(req.path)
+    base = Path(info["working_dir"])
+    # Grants are stored canonicalized (normalize_dir) so `/foo/`, `/foo` and
+    # `~/foo` collapse into one entry; the string-level dedup below then
+    # actually works.
+    dirs = [str(normalize_dir(d, base)) for d in info.get("additional_dirs", [])]
+    path = str(normalize_dir(req.path, base))
+    if path not in dirs:
+        dirs.append(path)
     info["additional_dirs"] = dirs
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 
@@ -594,8 +599,11 @@ async def remove_dir(name: str, req: AddDirRequest):
         raise HTTPException(404, "Session not found")
 
     info = json.loads((session_dir / "session.json").read_text())
-    dirs = info.get("additional_dirs", [])
-    dirs = [d for d in dirs if d != req.path]
+    base = Path(info["working_dir"])
+    path = str(normalize_dir(req.path, base))
+    # Compare canonical forms: legacy entries like `/foo/` are removed by a
+    # `/foo` request (and rewritten in canonical form).
+    dirs = [d for d in info.get("additional_dirs", []) if str(normalize_dir(d, base)) != path]
     info["additional_dirs"] = dirs
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
 

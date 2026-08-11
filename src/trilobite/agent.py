@@ -17,6 +17,7 @@ from typing import Any
 from src.trilobite.broker import StreamBroker
 from src.trilobite.compaction import should_compact, build_compact_prompt
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS
+from src.trilobite.file_access import normalize_dir
 from src.trilobite.history import History
 from src.trilobite.messages import (
     AssistantMessage,
@@ -556,7 +557,37 @@ class Agent:
         return _on_output
 
     def set_additional_dirs(self, dirs: list[str]):
-        self._additional_dirs = [Path(d).resolve() for d in dirs]
+        """Replace the allowed-directory grants, canonicalized and deduped.
+
+        Grants are normalized (``~`` expanded, symlinks resolved, relative
+        paths against the working dir) so the same directory can never be
+        listed twice under different spellings. When this session's grants
+        change, running subagents are kept in sync: they inherit the new
+        grants (so they stop re-requesting what the user already allowed for
+        the group) and lose the ones this session dropped.
+        """
+        old = self._additional_dirs
+        new: list[Path] = []
+        for d in dirs:
+            resolved = normalize_dir(d, self.working_dir)
+            if resolved not in new:
+                new.append(resolved)
+        self._additional_dirs = new
+        if self._children and new != old:
+            removed = [d for d in old if d not in new]
+            for c in list(self._children):
+                # Keep the child's own grants, drop what the parent removed,
+                # then add the parent's current grants (union semantics).
+                merged = [d for d in c._additional_dirs if d not in removed]
+                for d in new:
+                    if d not in merged:
+                        merged.append(d)
+                c.set_additional_dirs([str(d) for d in merged])
+
+    def _add_additional_dir(self, path: str):
+        """Grant one more directory, persist it, and share it with children."""
+        self.set_additional_dirs([str(d) for d in self._additional_dirs] + [path])
+        self._persist_additional_dirs()
 
     def resolve_plan_exit(self, approved: bool):
         self._plan_exit_approved = approved
@@ -1007,12 +1038,9 @@ class Agent:
                             await self._permission_event.wait()
                             if self._permission_approved:
                                 # The frontend also calls addDir (persisting to
-                                # session.json); dedupe so the approved path is
-                                # never listed twice.
-                                resolved = Path(perm_path).resolve()
-                                if resolved not in self._additional_dirs:
-                                    self._additional_dirs.append(resolved)
-                                self._persist_additional_dirs()
+                                # session.json); set_additional_dirs dedupes so
+                                # the approved path is never listed twice.
+                                self._add_additional_dir(perm_path)
                                 # Retry the tool with updated additional_dirs
                                 on_output = self._make_output_callback(tc.id)
                                 tool_result = await asyncio.to_thread(

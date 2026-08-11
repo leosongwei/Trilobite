@@ -85,6 +85,20 @@ def is_sensitive_file(path: Path) -> bool:
     return False
 
 
+def normalize_dir(path: str, base: Path | None = None) -> Path:
+    """Canonicalize an allowed-directory grant to its absolute form.
+
+    ``~`` is expanded and symlinks resolved; relative paths resolve against
+    *base* (the session's working dir) instead of the server's CWD. Grants
+    are persisted and compared in this canonical form so that ``/foo/``,
+    ``/foo`` and ``~/foo`` can never coexist as separate entries.
+    """
+    p = Path(path).expanduser()
+    if not p.is_absolute():
+        p = (base or Path.cwd()) / p
+    return p.resolve()
+
+
 def resolve_file_path(
     filename: str,
     working_dir: Path,

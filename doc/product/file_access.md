@@ -44,6 +44,10 @@ Content-Type: application/json
 
 添加后，`read`、`edit`、`write` 工具可以自由访问该目录，与主工作目录无区别。
 
+**规范化存储**：`additional_dirs` 以规范化形式（`~` 展开、符号链接解析、相对路径基于工作目录解析，见 `normalize_dir`）持久化。手工添加 `/foo/`、`/foo`、`~/foo` 会被折叠为同一条 `/foo`，字符串级去重因此始终有效；历史遗留的 `/foo/` 写法在下次添加/删除时被自动改写。
+
+**组级语义**：子 agent（subagent）在 spawn 时继承主 session 的授权目录；主 session 的授权目录在运行中发生变化（手工添加、权限审批）时，会同步传播到所有运行中的子 agent（保留子 agent 自己单独获批的目录），因此已经对主 session 授权过的目录不会再向子 agent 重复请求权限。侧边栏 Allowed directories 展示的是整个组（主 session + 子 agent）按路径去重后的并集，同一目录只出现一次。
+
 ## 路径规范化与边界检查
 
 ### 规范化流程
