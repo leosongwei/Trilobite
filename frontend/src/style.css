@@ -186,6 +186,7 @@ body {
 .sealed-dot { width: 6px; height: 6px; border-radius: 50%; background: #6e7681; flex-shrink: 0; }
 .stopped-dot { width: 6px; height: 6px; border-radius: 50%; background: #c72e2e; flex-shrink: 0; }
 .pending-dot { width: 6px; height: 6px; border-radius: 50%; background: #58a6ff; flex-shrink: 0; }
+.idle-dot { width: 6px; height: 6px; border-radius: 50%; background: #6e7681; flex-shrink: 0; }
 .session-item .session-label { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-item .running-dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: trilobite-pulse 1.4s ease-in-out infinite; }
 @keyframes trilobite-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }

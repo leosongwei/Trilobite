@@ -19,6 +19,7 @@
           @click="toggleProject(item.project.id)"
         >
           <span class="session-label">
+            <span class="status-dot" :class="statusDot(item.dot).cls" :title="statusDot(item.dot).title"></span>
             <span class="tree-arrow ms ms-expand" :class="{ open: !isProjectCollapsed(item.project.id) }"></span>
             <span class="tree-icon ms ms-folder"></span>
             <span class="project-name">{{ item.project.name }}</span>
@@ -35,8 +36,7 @@
           @click="handleSelect(item.session.id)"
         >
           <span class="session-label">
-            <span v-if="item.session.is_running" class="running-dot" title="running"></span>
-            <span v-else-if="item.session.has_schedule" class="pending-dot" title="cron scheduled"></span>
+            <span class="status-dot" :class="statusDot(item.dot).cls" :title="statusDot(item.dot).title"></span>
             {{ item.session.name }}
           </span>
           <span class="delete" @click.stop="handleDelete(item.session.id)"><span class="ms ms-close"></span></span>
@@ -162,6 +162,8 @@ import { useStore } from '../store'
 import { getCwd, getVersion, removeDir as apiRemoveDir } from '../api'
 import type { Session, PendingRequest, Project } from '../types'
 import { findSessionRoot } from '../utils/sessions'
+import { projectStatus, sessionStatus, statusDot } from '../utils/sessionStatus'
+import type { SessionStatus } from '../utils/sessionStatus'
 import FileTree from './FileTree.vue'
 import type { FsRoot } from './FileTree.vue'
 
@@ -321,10 +323,11 @@ interface SessionNode extends Session {
 // Flat render list for the sidebar: a project folder row (with its member
 // sessions nested under it when expanded) followed by every top-level
 // session and its subagent children. Projects come first, in creation
-// order; unassigned sessions follow.
+// order; unassigned sessions follow. Each row carries its persistent
+// status dot (running > pending cron > idle).
 type SessionRow =
-  | { key: string; kind: 'project'; project: Project; children: Session[] }
-  | { key: string; kind: 'session'; session: SessionNode; children: Session[]; project: boolean }
+  | { key: string; kind: 'project'; project: Project; children: Session[]; dot: SessionStatus }
+  | { key: string; kind: 'session'; session: SessionNode; children: Session[]; project: boolean; dot: SessionStatus }
 
 function isProjectCollapsed(id: string): boolean {
   return collapsedProjects.value.has(id)
@@ -374,11 +377,11 @@ const sessionRows = computed<SessionRow[]>(() => {
   for (const p of state.projects.slice().sort((a, b) =>
     (a.created_at ?? 0) - (b.created_at ?? 0) || a.name.localeCompare(b.name),
   )) {
-    rows.push({ key: 'p:' + p.id, kind: 'project', project: p, children: [] })
+    const members = all.filter((s) => !s.parent_session && s.project_id === p.id)
+    rows.push({ key: 'p:' + p.id, kind: 'project', project: p, children: [], dot: projectStatus(members) })
     if (!isProjectCollapsed(p.id)) {
-      const members = all.filter((s) => !s.parent_session && s.project_id === p.id)
       for (const node of sortTop(members).map(toNode)) {
-        rows.push({ key: node.id, kind: 'session', session: node, children: node.children, project: true })
+        rows.push({ key: node.id, kind: 'session', session: node, children: node.children, project: true, dot: sessionStatus(node) })
       }
     }
   }
@@ -387,7 +390,7 @@ const sessionRows = computed<SessionRow[]>(() => {
     (s) => !s.parent_session && !(s.project_id && projectIds.has(s.project_id)),
   )
   for (const node of sortTop(free).map(toNode)) {
-    rows.push({ key: node.id, kind: 'session', session: node, children: node.children, project: false })
+    rows.push({ key: node.id, kind: 'session', session: node, children: node.children, project: false, dot: sessionStatus(node) })
   }
   return rows
 })
