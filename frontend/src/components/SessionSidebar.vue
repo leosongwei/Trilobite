@@ -33,7 +33,7 @@
             <span v-if="c.kind === 'scheduled'" class="child-badge scheduled" title="scheduled agent"><span class="ms ms-schedule"></span></span>
             <span v-else class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
             <span v-if="c.kind === 'scheduled' && !c.is_running && c.last_state === 'error'" class="stopped-dot" title="error"></span>
-            <span v-else-if="c.kind === 'scheduled' && !c.is_running && c.last_state" class="sealed-dot" title="finished"></span>
+            <span v-else-if="c.kind === 'scheduled' && !c.is_running && (c.last_state || c.deleted)" class="sealed-dot" :title="c.last_state ? 'finished' : 'schedule deleted'"></span>
             <span v-else-if="c.kind === 'scheduled' && !c.is_running" class="pending-dot" title="pending"></span>
             <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
             {{ c.description || c.name }}

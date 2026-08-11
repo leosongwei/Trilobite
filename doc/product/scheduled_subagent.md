@@ -153,7 +153,7 @@ fire 事件**只进主 session 的 broker**（主时间线不注入任何聊天�
 ### 侧边栏树
 
 - 定时 session 节点挂载于主 session 之下（`parent_session` 字段，与 subagent 同），带**时钟徽标**（与 EX/GE 角色徽标区分），描述显示模型给的 `name`（未提供时 prompt 前 40 字符预览）；节点信息展示 cron 表达式、`next_fire_at`、`run_count`、最近一次 `last_state`。
-- fire 运行中：running 徽标（绿闪）；完成后回到 idle。节点**状态点**四态：从未 fire（pending）浅蓝点、运行中绿闪点、上次 fire 以 `error` 结束红点、正常结束（completed/interrupted）灰点（与 subagent 结束一致）。schedule 被删除后仍按最后终态显示（不因删除而变回浅蓝）。
+- fire 运行中：running 徽标（绿闪）；完成后回到 idle。节点**状态点**：从未 fire 且 schedule 仍活跃（pending）浅蓝点、运行中绿闪点、上次 fire 以 `error` 结束红点、正常结束（completed/interrupted）灰点（与 subagent 结束一致）。schedule 被删除后仍按最后终态显示（不因删除而变回浅蓝）；被删除且从未 fire 的节点显示灰点（不再触发，不显示误导性的 pending 浅蓝点）。
 - **主 session 列表**：拥有仍待触发 schedule 的主 session（`completed` 一次性与 `deleted` 不计）名字前显示浅蓝点（与定时节点 pending 点同色）；运行中绿闪点优先（运行中不显示蓝点）。主 session 排序：运行中 > 有待触发 schedule > 最近活动（`updated_at` 降序）> 名字。
 - **手动删除记录**：非运行状态的 subagent / 定时 session 节点 hover 显示 ×，可删除（删除定时 session 时其 schedule 一并从 owner 移除）；运行中的节点不可删除。
 - 定时 session 不参与主 session 的自动命名；排序同 subagent（`created_at` 降序）。
