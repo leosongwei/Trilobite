@@ -161,8 +161,8 @@ body {
 }
 .session-item.project-row .tree-arrow.open { transform: none; }
 .session-item.project-row .tree-icon { color: #d29922; flex-shrink: 0; }
-.session-item.project-session { padding-left: 48px; font-size: 12px; color: #a0a0a0; }
-.session-item.project-child { padding-left: 72px; font-size: 12px; color: #a0a0a0; }
+.session-item.project-session { padding-left: 48px; }
+.session-item.project-child { padding-left: 72px; }
 .session-item.project-child .session-label { gap: 5px; }
 .session-item .project-actions {
   display: flex;
