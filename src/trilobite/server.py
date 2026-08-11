@@ -255,6 +255,11 @@ async def list_sessions():
                     if info.get("kind") == "scheduled":
                         sched_info = _scheduled_info(info)
                         info.update(sched_info)
+                    else:
+                        # Main sessions: whether the session owns any schedule
+                        # that still needs to fire. Feeds the sidebar's blue
+                        # dot and top-of-list sorting.
+                        info["has_schedule"] = cron_service.has_active(sd.name) if cron_service else False
                     # Last activity: history.json mtime (written at the end of
                     # each run); never-messaged sessions fall back to created_at.
                     hist = sd / "history.json"

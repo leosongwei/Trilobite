@@ -392,6 +392,20 @@ class CronService:
                     self._running.pop(s.id, None)
                     self._missed_minutes.pop(s.id, None)
 
+    # ── session-facing API (called from the server) ────────────────────────
+
+    def has_active(self, session_name: str) -> bool:
+        """True when the session owns a schedule that still needs to fire.
+
+        Completed one-shots and deleted schedules do not count, so their
+        owning session loses the sidebar's blue dot.
+        """
+        schedules = self._schedules.get(session_name)
+        if schedules is None:
+            schedules = self._load(session_name)
+            self._schedules[session_name] = schedules
+        return any(not s.completed and not s.deleted for s in schedules)
+
     # ── tick loop ──────────────────────────────────────────────────────────
 
     def start(self) -> None:
