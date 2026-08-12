@@ -1640,12 +1640,16 @@ class Agent:
         reconnect (rerun rebuilds from the truncated history) or just apply a
         local text update (queued).
         """
-        # Locate the user_seq-th real user message (compact summaries excluded,
-        # matching _count_user_messages).
+        # Locate the user_seq-th real user message (compact summaries and mode
+        # notices excluded, matching _count_user_messages).
         target = -1
         count = 0
         for i, msg in enumerate(self.history.raw):
-            if isinstance(msg, UserMessage) and not msg.compact_summary:
+            if (
+                isinstance(msg, UserMessage)
+                and not msg.compact_summary
+                and not msg.is_mode_notification
+            ):
                 if count == user_seq:
                     target = i
                     break

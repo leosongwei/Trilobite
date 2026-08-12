@@ -161,7 +161,7 @@ steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写�
 * **rerun**（`user_seq < _user_read_cursor`，或 agent 当前不在运行）：若正在运行先 `stop()`，用 `history.truncate(target)` 丢弃该 user 消息及其后所有内容，把 `_user_read_cursor` 对齐到截断后的历史（否则截断后 cursor 仍指向旧的大值，`start()` 追加的新消息会被判为「已读」、run 空转直接结束），`broker.commit(target)` 重置回放基准，再 `start(message)` 重新推理。端点返回 `rerun`，前端重连 SSE。
 * **queued**（steer 尚未被读取且 agent 正在运行，`user_seq >= _user_read_cursor`）：直接改 history 中该 `UserMessage.content`，**不中断运行**，广播 `user_edit` 事件让前端就地更新。端点返回 `queued`，前端无需重连。若 agent 已不在运行，即使消息未读也走 rerun（否则没有 run 来消费这条就地改动）。
 
-`user_seq` 计数排除 `compact_summary`（与 `_count_user_messages` 一致），定位 target 时同样排除，避免了旧设计中两处计数基准不一致的 bug。
+`user_seq` 计数排除 `compact_summary` 和 `is_mode_notification`（与 `_count_user_messages` 一致），定位 target 时同样排除，避免了旧设计中两处计数基准不一致的 bug。
 
 ## 前端协议不变
 
