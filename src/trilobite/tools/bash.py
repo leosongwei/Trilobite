@@ -2,10 +2,86 @@ import os
 import signal
 import subprocess
 import threading
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
 from src.trilobite.tools.tool import Tool
+
+#: Bubblewrap sandbox for bash: the whole tree is mounted read-only, then the
+#: working directory and granted additional directories are rebound writable.
+#: /tmp and /dev/shm get tmpfs/bind so tools that need scratch space keep
+#: working; /dev and /proc must be mounted explicitly inside the sandbox.
+#: See doc/product/file_access.md for the full design.
+_BWRAP_BASE_ARGS = (
+    "--ro-bind", "/", "/",
+    "--dev", "/dev",
+    "--proc", "/proc",
+    "--tmpfs", "/tmp",
+    "--bind", "/dev/shm", "/dev/shm",
+)
+
+#: Denial dialect bubblewrap's kernel speaks when the sandbox blocks a write
+#: (EROFS). We append a hint so the model knows the refusal is the sandbox's,
+#: not the command's, and how to request write access. Matched in the common
+#: locales (bash localizes these messages, e.g. zh_CN "只读文件系统").
+_SANDBOX_DENIAL_MARKERS = (
+    "Read-only file system",
+    "Read-only filesystem",
+    "只读文件系统",
+)
+
+_SANDBOX_DENIAL_HINT = (
+    "\n[sandbox] A write outside the working directory was blocked: bash runs "
+    "in a sandbox where everything except the working directory and granted "
+    "additional directories is read-only. To write there, first read the "
+    "target file with the read tool -- that requests user approval, and once "
+    "the directory is granted it becomes writable for bash too."
+)
+
+
+@lru_cache(maxsize=1)
+def _bwrap_available() -> bool:
+    """Probe whether a working bubblewrap sandbox is available (cached).
+
+    The probe mirrors the real invocation minus the writable bind mounts, so a
+    sandbox that passes here is expected to work for actual commands.
+    """
+    try:
+        result = subprocess.run(
+            ["bwrap", *_BWRAP_BASE_ARGS, "--die-with-parent", "--", "true"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _build_bwrap_argv(command: str, writable_dirs: list[Path]) -> list[str]:
+    """Build the bwrap argv that runs ``command`` under the bash sandbox.
+
+    Mount order matters: the read-only root bind comes first, then each
+    writable directory is rebound (later binds override earlier ones). Missing
+    or duplicate directories are skipped -- bubblewrap requires bind targets
+    to exist. ``--die-with-parent`` guarantees the sandboxed process tree is
+    torn down when the bwrap process itself dies (e.g. our SIGKILL on
+    interrupt/timeout).
+    """
+    argv = ["bwrap", *_BWRAP_BASE_ARGS]
+    seen: set[str] = set()
+    for directory in writable_dirs:
+        try:
+            resolved = directory.resolve()
+        except OSError:
+            continue
+        key = str(resolved)
+        if key in seen or not resolved.is_dir():
+            continue
+        seen.add(key)
+        argv += ["--bind", key, key]
+    argv += ["--die-with-parent", "--", "bash", "-c", command]
+    return argv
 
 
 def kill_process_group(proc: subprocess.Popen) -> None:
@@ -109,6 +185,7 @@ class BashTool(Tool):
         timeout: int = 10,
         max_output_lines: int = 100,
         max_output_chars: int = 10000,
+        config: dict | None = None,
         on_proc: Callable[[subprocess.Popen | None], None] | None = None,
         on_output: Callable[[str, str], None] | None = None,
         **kwargs: Any,
@@ -124,11 +201,44 @@ class BashTool(Tool):
         # each line so the frontend sees live output; lines are also collected
         # so the final returned string still carries the [stderr]/[exit code]
         # markers the model expects.
+
+        # Bash sandboxing (config key ``bash_sandbox``):
+        #   auto (default) - use bubblewrap when it probes OK, otherwise run
+        #                    unsandboxed with a warning in the result;
+        #   on             - require the sandbox; refuse to run without it;
+        #   off            - never sandbox.
+        # Only the working directory plus granted additional_dirs are writable
+        # inside the sandbox; everything else is read-only.
+        sandbox_mode = (config or {}).get("bash_sandbox", "auto")
+        sandbox_warning = ""
+        use_sandbox = False
+        if sandbox_mode != "off":
+            if _bwrap_available():
+                use_sandbox = True
+            elif sandbox_mode == "on":
+                return (
+                    "Error: bash_sandbox=on but bubblewrap (bwrap) is not "
+                    "available or failed to probe. Install bubblewrap or set "
+                    "bash_sandbox to auto/off in config.yaml."
+                )
+            else:
+                sandbox_warning = (
+                    "[sandbox] bubblewrap (bwrap) is not available; bash runs "
+                    "without workspace isolation. Install bubblewrap to "
+                    "sandbox bash.\n"
+                )
+
         proc: subprocess.Popen | None = None
         try:
+            if use_sandbox:
+                argv = _build_bwrap_argv(command, [working_dir] + list(additional_dirs or []))
+                shell = False
+            else:
+                argv = command
+                shell = True
             proc = subprocess.Popen(
-                command,
-                shell=True,
+                argv,
+                shell=shell,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -182,7 +292,15 @@ class BashTool(Tool):
             if proc.returncode != 0:
                 output += f"\n[exit code: {proc.returncode}]"
             output = output or "(no output)"
-            return truncate_output(output, max_output_lines, max_output_chars)
+            output = truncate_output(output, max_output_lines, max_output_chars)
+            if use_sandbox and any(marker in output for marker in _SANDBOX_DENIAL_MARKERS):
+                # The kernel's EROFS is the sandbox's refusal, not the
+                # command's: tell the model what happened and how to get
+                # write access (read tool -> user approval -> additional_dirs).
+                output += _SANDBOX_DENIAL_HINT
+            elif sandbox_warning:
+                output = sandbox_warning + output
+            return output
         except Exception as e:
             return f"Error: {e}"
         finally:

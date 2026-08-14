@@ -1004,7 +1004,7 @@ class Agent:
                             tool_result = await asyncio.to_thread(
                                 execute_tool, tool_name, args, self.working_dir,
                                 self.session_dir, self._additional_dirs,
-                                self._register_proc, on_output)
+                                self.config, self._register_proc, on_output)
                             if "image" in tool_result and self.config.get("enable_vl", False):
                                 await self._append_image_user_message(tool_result["image"])
 
@@ -1046,7 +1046,7 @@ class Agent:
                                 tool_result = await asyncio.to_thread(
                                     execute_tool, tool_name, args, self.working_dir,
                                     self.session_dir, self._additional_dirs,
-                                    self._register_proc, on_output)
+                                    self.config, self._register_proc, on_output)
                                 if "image" in tool_result and self.config.get("enable_vl", False):
                                     await self._append_image_user_message(tool_result["image"])
                             # else: keep original error result

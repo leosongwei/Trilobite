@@ -18,6 +18,7 @@ DEFAULT_CONFIG = {
     "compaction_trigger_ratio": "0.7",
     "enable_vl": False,
     "skill_dirs": [],
+    "bash_sandbox": "auto",
 }
 
 
