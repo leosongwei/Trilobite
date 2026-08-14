@@ -9,7 +9,7 @@ Access key: <token>
 Access key saved to ~/.config/trilobite/access_token.txt
 ```
 
-监听地址与端口由 config.yaml 的 `host`/`port` 配置，默认 `127.0.0.1:2345`（仅本机可访问）；需要局域网访问时把 `host` 设为 `0.0.0.0`（仍受 token 保护）。绑定通配地址（`0.0.0.0`/`::`）时，banner 链接显示本机回环地址 `127.0.0.1`。
+监听地址与端口由 config.yaml 的 `host`/`port` 配置，默认 `127.0.0.1:2345`（仅本机可访问）；需要局域网访问时把 `host` 设为 `0.0.0.0`（仍受 token 保护）。banner 链接展示配置的监听地址与端口。
 
 `Trilobite <version>` 版本横幅与 CLI 模式共用 `src/trilobite/version.py` 的 `get_version()`（读 `importlib.metadata` 的 `trilobite-code` 包版本）。
 

@@ -891,10 +891,8 @@ def main():
     token_path = get_config_dir() / TOKEN_FILE
     host = str(cfg.get("host", "127.0.0.1")).strip()
     port = int(cfg.get("port", 2345))
-    # 绑定通配地址时，banner 展示本机回环可访问的地址
-    banner_host = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
     print(f"Trilobite {get_pkg_version()}")
-    print(f"Trilobite web UI: http://{banner_host}:{port}/?token={token}")
+    print(f"Trilobite web UI: http://{host}:{port}/?token={token}")
     print(f"Access key: {token}")
     print(f"Access key saved to {token_path}")
     uvicorn.run(
