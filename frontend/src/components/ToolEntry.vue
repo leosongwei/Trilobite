@@ -93,7 +93,7 @@ const command = computed(() => {
 // white-space: pre-wrap) so the model's exact wording is preserved.
 const bashLabel = computed(() => {
   const desc = bashDescription.value
-  if (desc) return `${desc}\n  command: ${command.value}`
+  if (desc) return `${desc}\n    cmd: ${command.value}`
   return command.value
 })
 
