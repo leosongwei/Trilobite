@@ -194,7 +194,7 @@ body {
 .session-item .project-actions .delete {
   display: inline-flex;
   align-items: center;
-  background: #633131;
+  background: #933636;
   color: #ffffff;
   font-size: 12px;
   line-height: 1;
@@ -204,7 +204,7 @@ body {
   cursor: pointer;
   opacity: 1;
 }
-.session-item .project-actions .delete:hover { background: #753737; }
+.session-item .project-actions .delete:hover { background: #a84848; }
 .child-badge { font-size: 9px; font-weight: 600; padding: 1px 3px; border-radius: 2px; background: #3a3d3e; color: #9cdcfe; flex-shrink: 0; text-transform: uppercase; }
 .child-badge.explore { color: #d29922; }
 .child-badge.scheduled { background: #1f3a2f; color: #7ee787; font-size: 10px; padding: 0 4px; }
