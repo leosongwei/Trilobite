@@ -14,6 +14,7 @@
       v-for="(tool, idx) in turn.tools"
       :key="idx"
       :tool="tool"
+      :latest="latest"
     />
   </div>
 </template>
@@ -25,7 +26,7 @@ import ThinkingBlock from './ThinkingBlock.vue'
 import ToolEntry from './ToolEntry.vue'
 import { renderMarkdown } from '../utils/markdown'
 
-const props = defineProps<{ turn: TurnItem; streaming?: boolean; live?: boolean }>()
+const props = defineProps<{ turn: TurnItem; streaming?: boolean; live?: boolean; latest?: boolean }>()
 
 const renderedText = computed(() => renderMarkdown(props.turn.text))
 </script>

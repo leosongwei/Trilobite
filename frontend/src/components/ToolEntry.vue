@@ -18,12 +18,27 @@
         </div>
       </div>
     </template>
-    <details v-else-if="isRead" class="tool-collapsible">
-      <summary class="tool-action">
+    <div v-else-if="isRead">
+      <div class="tool-action toggle-header" @click="readOpen = !readOpen">
+        <span class="ms ms-expand" :class="{ open: readOpen }"></span>
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
-      </summary>
-      <pre class="tool-result">{{ displayContent }}</pre>
-    </details>
+      </div>
+      <pre v-if="readOpen" class="tool-result">{{ displayContent }}</pre>
+    </div>
+    <template v-else-if="isBash">
+      <div class="tool-action bash-action toggle-header" @click="toggleCollapsed">
+        <span v-if="collapsible" class="ms ms-expand" :class="{ open: expanded }"></span>
+        [<span v-if="bashDescription" class="ms ms-build ms-fill"></span>bash: {{ bashLabel }}]<span v-if="tool.status === 'running'"> running...</span>
+      </div>
+      <pre ref="outputPre" class="tool-result">{{ collapsedContent }}</pre>
+    </template>
+    <template v-else-if="isSearch">
+      <div class="tool-action toggle-header" @click="toggleCollapsed">
+        <span v-if="collapsible" class="ms ms-expand" :class="{ open: expanded }"></span>
+        [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
+      </div>
+      <pre ref="outputPre" class="tool-result">{{ collapsedContent }}</pre>
+    </template>
     <template v-else>
       <div class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
@@ -41,7 +56,7 @@ import type { ToolDisplay } from '../types'
 import { useStore } from '../store'
 import DiffView from './DiffView.vue'
 
-const props = defineProps<{ tool: ToolDisplay }>()
+const props = defineProps<{ tool: ToolDisplay; latest?: boolean }>()
 const { selectSession } = useStore()
 
 const outputPre = ref<HTMLPreElement | null>(null)
@@ -67,6 +82,30 @@ watch(
 
 const isRead = computed(() => props.tool.name === 'read')
 const isTask = computed(() => props.tool.name === 'task')
+const isBash = computed(() => props.tool.name === 'bash')
+const isSearch = computed(() => props.tool.name === 'grep' || props.tool.name === 'glob')
+
+// Model-supplied purpose of a bash call (required param), shown on the first
+// line of the bash block so the user can tell what it is for at a glance.
+const bashDescription = computed(() => {
+  if (props.tool.name !== 'bash') return ''
+  const d = props.tool.startArgs?.description
+  return typeof d === 'string' ? d : ''
+})
+
+const command = computed(() => {
+  const c = props.tool.startArgs?.command
+  return typeof c === 'string' ? c : ''
+})
+
+// Two-line bash header: description first, then the command indented under
+// it. Newline + indent live in the string (rendered via .bash-action's
+// white-space: pre-wrap) so the model's exact wording is preserved.
+const bashLabel = computed(() => {
+  const desc = bashDescription.value
+  if (desc) return `${desc}\n    cmd: ${command.value}`
+  return command.value
+})
 
 const subagents = computed(() => props.tool.subagents ?? [])
 
@@ -92,9 +131,6 @@ const label = computed(() => {
   if (!args) return props.tool.name
   if (props.tool.name === 'read' && args.filename) {
     return `read: ${args.filename}`
-  }
-  if (props.tool.name === 'bash' && args.command) {
-    return `bash: ${args.command}`
   }
   if (props.tool.name === 'edit' && args.filename) {
     return `edit: ${args.filename}`
@@ -126,5 +162,29 @@ const displayContent = computed(() => {
     return props.tool.liveOutput
   }
   return props.tool.args || 'running...'
+})
+
+// Non-latest turns collapse bash / grep / glob output to the last 3 lines so
+// old tool results don't eat the whole viewport; the latest bubble keeps the
+// full streaming output. The header always stays visible, and clicking it
+// (when collapsible) expands the full output on demand.
+const expanded = ref(false)
+const readOpen = ref(false)
+
+const collapsible = computed(() => {
+  if (props.latest) return false
+  return displayContent.value.split('\n').length > 3
+})
+
+function toggleCollapsed() {
+  if (collapsible.value) expanded.value = !expanded.value
+}
+
+const collapsedContent = computed(() => {
+  const full = displayContent.value
+  if (props.latest || expanded.value) return full
+  const lines = full.split('\n')
+  if (lines.length <= 3) return full
+  return lines.slice(-3).join('\n')
 })
 </script>
