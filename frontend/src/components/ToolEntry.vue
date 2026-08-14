@@ -24,8 +24,13 @@
       </summary>
       <pre class="tool-result">{{ displayContent }}</pre>
     </details>
+    <template v-else-if="isBash">
+      <div class="tool-action bash-action">
+        [<span v-if="bashDescription" class="ms ms-build ms-fill"></span>bash: {{ bashLabel }}]<span v-if="tool.status === 'running'"> running...</span>
+      </div>
+      <pre ref="outputPre" class="tool-result">{{ displayContent }}</pre>
+    </template>
     <template v-else>
-      <div v-if="bashDescription" class="bash-description"><span class="ms ms-build"></span>{{ bashDescription }}</div>
       <div class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
@@ -68,13 +73,28 @@ watch(
 
 const isRead = computed(() => props.tool.name === 'read')
 const isTask = computed(() => props.tool.name === 'task')
+const isBash = computed(() => props.tool.name === 'bash')
 
-// Model-supplied purpose of a bash call (required param), shown above the
-// command so the user can tell what it is for at a glance.
+// Model-supplied purpose of a bash call (required param), shown on the first
+// line of the bash block so the user can tell what it is for at a glance.
 const bashDescription = computed(() => {
   if (props.tool.name !== 'bash') return ''
   const d = props.tool.startArgs?.description
   return typeof d === 'string' ? d : ''
+})
+
+const command = computed(() => {
+  const c = props.tool.startArgs?.command
+  return typeof c === 'string' ? c : ''
+})
+
+// Two-line bash header: description first, then the command indented under
+// it. Newline + indent live in the string (rendered via .bash-action's
+// white-space: pre-wrap) so the model's exact wording is preserved.
+const bashLabel = computed(() => {
+  const desc = bashDescription.value
+  if (desc) return `${desc}\n  command: ${command.value}`
+  return command.value
 })
 
 const subagents = computed(() => props.tool.subagents ?? [])
@@ -101,9 +121,6 @@ const label = computed(() => {
   if (!args) return props.tool.name
   if (props.tool.name === 'read' && args.filename) {
     return `read: ${args.filename}`
-  }
-  if (props.tool.name === 'bash' && args.command) {
-    return `bash: ${args.command}`
   }
   if (props.tool.name === 'edit' && args.filename) {
     return `edit: ${args.filename}`

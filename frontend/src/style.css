@@ -570,14 +570,9 @@ body {
 }
 
 .tool-entry { margin: 4px 0 8px 8px; }
-.bash-description {
-  color: #6a9955;
-  font-size: 12px;
-  margin-bottom: 1px;
-}
-.bash-description .ms {
-  font-size: 11px;
-  margin-right: 3px;
+.bash-action {
+  /* preserve the "description\n  command:" two-line layout */
+  white-space: pre-wrap;
 }
 .tool-action {
   color: #ce9178;
