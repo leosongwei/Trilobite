@@ -134,8 +134,8 @@ trilobite   # entry point，启动 uvicorn (0.0.0.0:2345)
 
 一般用户在github上合并PR到master后会需要发布release。
 
-1. 切到master, git pull，应该能看到分支合并了
-2. 全量构建
+1. git checkout master && git pull，就应该能看到分支合并了
+2. 基于master分支全量构建
 3. gh上传构建产物发布release
 4. 询问用户是否安装新版
 
