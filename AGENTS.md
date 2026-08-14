@@ -5,7 +5,7 @@
 Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 DeepSeek），分为 **后端 (Python/FastAPI)** 和 **前端 (Vue 3/TypeScript)** 两部分。
 ## 后端 (`src/trilobite/`)
 
-* `server.py` - FastAPI 应用入口。会话级 REST API：`POST /api/sessions/{name}/message` 启动/转向 agent（返回 JSON，agent 作为独立 asyncio task 运行，关闭浏览器不取消）、`GET /api/sessions/{name}/stream` SSE 订阅实时输出；另有会话 CRUD、mode 切换、permission/plan_exit 审批、`/revert`、`/compact`、`/interrupt`、additional_dirs 增删、`/history`、`/info`、图片 serve、文件管理器 `fs/list`/`fs/file`/`fs/diff`/`fs/file`(PUT)、项目 `projects` CRUD 与 session 归属等端点；挂载静态前端文件。token 访问控制：启动时生成随机 key（写入配置目录 `token` 文件并打印带 `?token=` 的链接），`/api/auth/status`、`/api/auth/login` 换取 HttpOnly cookie，其余 `/api/*` 由中间件校验。`main()` 用 argparse 分发：`-t`/`-c` 进入 CLI 模式，默认 `-s` 启动 uvicorn (0.0.0.0:2345)，关闭 access log。详见 `doc/product/security.md`、`doc/product/file_manager.md`、`doc/product/projects.md`。
+* `server.py` - FastAPI 应用入口。会话级 REST API：`POST /api/sessions/{name}/message` 启动/转向 agent（返回 JSON，agent 作为独立 asyncio task 运行，关闭浏览器不取消）、`GET /api/sessions/{name}/stream` SSE 订阅实时输出；另有会话 CRUD、mode 切换、permission/plan_exit 审批、`/revert`、`/compact`、`/interrupt`、additional_dirs 增删、`/history`、`/info`、图片 serve、文件管理器 `fs/list`/`fs/file`/`fs/diff`/`fs/file`(PUT)、项目 `projects` CRUD 与 session 归属等端点；挂载静态前端文件。token 访问控制：启动时生成随机 key（写入配置目录 `token` 文件并打印带 `?token=` 的链接），`/api/auth/status`、`/api/auth/login` 换取 HttpOnly cookie，其余 `/api/*` 由中间件校验。`main()` 用 argparse 分发：`-t`/`-c` 进入 CLI 模式，默认 `-s` 启动 uvicorn（监听地址/端口由配置 `host`/`port` 决定，默认 127.0.0.1:2345），关闭 access log。详见 `doc/product/security.md`、`doc/product/file_manager.md`、`doc/product/projects.md`。
 * `cli.py` -- 命令行交互模式（`trilobite -t [dir]` 新建 / `-c` 续接当前目录最新主 session / `-s` 服务器为默认）。纯订阅者 + 渲染器：实例化 `Agent`、`attach_subscriber()` 订阅 broker 队列（与 SSE `/stream` 同构），把事件渲染到终端。类 bash 行式 REPL：IDLE 用 `input()` 读输入、RUNNING 消费 broker 事件到结束（Ctrl+C 中断 cancel），运行中不做 steering。`-c` 按 `history.json` 的 mtime 找当前目录最新主 session 续接（加载历史、不回显）。不改动 agent/broker/工具层。详见 `doc/product/cli.md`。
 * `agent.py` -- 核心 Agent 类。管理会话生命周期：构建 system 消息（env 块 + `SYSTEM_PROMPT` + 工作目录 `AGENTS.md` + skills 清单），与 LLM 流式对话，循环执行 tool calls，支持 plan/build 双模式切换、用户 steering、上下文压缩、subagent 派生（`task` 工具）和 VLM 图片输入。详见 `doc/product/context_building.md`、`doc/product/streaming.md`、`doc/product/subagent.md`、`doc/product/skills.md`。
 * `messages.py` -- 类型化对话消息层（v2 内存表示）。`Message` 基类及 `SystemMessage`/`UserMessage`/`AssistantMessage`/`CompactMarker`/`Image`/`ToolCall`/`ToolResult` 子类，每个对象三向投影：`to_api_dicts`（发 LLM）、`to_storage_dict`（持久化 v2 JSON）、`to_frontend_dicts`（v1 兼容扁平 dict 给前端）。`AssistantMessage` 自包含一个 turn（thinking+content+tool_calls+tool_results），保证 steering 消息只能落在整个 turn 之后、API 消息序列永远合法。`from_v1` 把旧扁平格式惰性升级。详见 `doc/product/history.md`。
@@ -78,7 +78,7 @@ Token 超过 `compaction_trigger_ratio` 阈值时触发压缩：插入 `CompactM
 
 ## 配置 (`src/trilobite/config_example/`)
 
-* `config.yaml` -- `model`、`api_key`、`api_url`、`reasoning_effort`、`max_context_tokens`（上下文窗口）、`max_tokens`（单次输出上限）、`log_level`、`compaction_trigger_ratio`、`enable_vl`、`skill_dirs`（额外的 skill 搜索目录，相对路径基于工作目录，支持 `~` 展开）
+* `config.yaml` -- `model`、`api_key`、`api_url`、`reasoning_effort`、`max_context_tokens`（上下文窗口）、`max_tokens`（单次输出上限）、`log_level`、`compaction_trigger_ratio`、`enable_vl`、`host`（服务监听地址，默认 127.0.0.1 仅本机可访问）、`port`（服务监听端口）、`skill_dirs`（额外的 skill 搜索目录，相对路径基于工作目录，支持 `~` 展开）
 
 提示词（系统提示词、压缩摘要、subagent 角色）不在配置里，而是硬编码在 `src/trilobite/prompts.py`，不可配置。
 
@@ -108,7 +108,7 @@ Token 超过 `compaction_trigger_ratio` 阈值时触发压缩：插入 `CompactM
 
 ```bash
 uv tool install dist/trilobite_code-1.1.2-py3-none-any.whl
-trilobite   # entry point，启动 uvicorn (0.0.0.0:2345)
+trilobite   # entry point，启动 uvicorn（默认 127.0.0.1:2345）
 ```
 
 首次运行会从包内 `config_example/` 把默认配置 seed 到 `~/.config/trilobite/`。
