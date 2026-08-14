@@ -171,6 +171,7 @@ def execute_tool(
     working_dir: Path,
     session_dir: Path,
     additional_dirs: list[Path] | None = None,
+    config: dict | None = None,
     on_proc: Callable[[Any], None] | None = None,
     on_output: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
@@ -183,16 +184,22 @@ def execute_tool(
     caller (Agent) can kill the process on interrupt; other tools ignore it.
     ``on_output`` is forwarded to bash so each stdout/stderr line can be
     streamed to the frontend in real time; other tools ignore it.
+    ``config`` is forwarded to bash so it can honor the ``bash_sandbox``
+    setting; other tools ignore it.
     """
     tool = _TOOL_MAP.get(tool_name)
     if tool is None:
         return {"result": f"Unknown tool: {tool_name}"}
+    kwargs: dict[str, Any] = {}
+    if tool_name == "bash":
+        kwargs["config"] = config
     result = tool.execute(
         working_dir=working_dir,
         session_dir=session_dir,
         additional_dirs=additional_dirs or [],
         on_proc=on_proc,
         on_output=on_output,
+        **kwargs,
         **arguments,
     )
     if isinstance(result, dict):

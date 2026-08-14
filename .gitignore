@@ -36,3 +36,5 @@ frontend/public/vendor/material-symbols/
 
 # project
 /config
+# cron heartbeat log
+.cron-heartbeat.log

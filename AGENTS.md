@@ -31,7 +31,7 @@ Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 
   * `grep.py` -- 正则搜索文件内容（content/files_with_matches/count 模式、上下文行、glob/路径过滤）
   * `edit.py` -- 精确字符串替换（行尾归一化检测、replace_all、上下文 diff）
   * `write.py` -- 整文件创建/覆盖/追加（overwrite/append，自动建父目录）
-  * `bash.py` -- 执行 shell 命令（进程组 + reader 线程逐行流式输出，输出默认截断尾部 100 行/10k 字符）
+  * `bash.py` -- 执行 shell 命令（进程组 + reader 线程逐行流式输出，输出默认截断尾部 100 行/10k 字符；Linux 上默认套 bubblewrap 沙箱，工作区 + 授权目录外只读，被拒时附 `[sandbox]` 提示引导走 read 审批）
   * `todo.py` -- 任务列表管理（JSON 持久化在 session 目录 `todos.json`）
   * `skill.py` -- 按名加载 skill 的 SKILL.md 全文（`<skill_content>` 输出，含 base 目录说明）；调用时重新发现，会话中途新增的 skill 也可加载
 
@@ -66,7 +66,7 @@ Agent 有两种运行模式：
 
 ## 文件访问权限
 
-`read`/`edit`/`write`/`glob`/`grep` 工具在 working_dir（存于 `session.json`）范围内操作；访问工作区以外路径时前端弹出权限请求横幅（Grant/Deny）。批准后目录加入 `additional_dirs` 并持久化到 `session.json`，重启保留。`bash` 不强制路径限制，靠系统提示词引导。敏感文件直接拒绝。详见 `doc/product/file_access.md`。
+`read`/`edit`/`write`/`glob`/`grep` 工具在 working_dir（存于 `session.json`）范围内操作；访问工作区以外路径时前端弹出权限请求横幅（Grant/Deny）。批准后目录加入 `additional_dirs` 并持久化到 `session.json`，重启保留。`bash` 在 Linux 上默认套 bubblewrap 沙箱（config `bash_sandbox`：auto/on/off），沙箱内仅工作区 + 授权目录可写。敏感文件直接拒绝。详见 `doc/product/file_access.md`。
 
 ## 文件管理器
 
@@ -129,6 +129,15 @@ trilobite   # entry point，启动 uvicorn (0.0.0.0:2345)
 * 修改后，如果流程发生变更，记得更新产品文件：每次修改agent的工作方式后，需要在`doc/product`的相应文件中说明
 * 更新完功能后，修改pyproject.toml中包版本的第三个数字。比如当前是1.1.2，那就改为1.1.3。注意，版本号需要相对于最新版master进行bump，避免一个PR内多次bump。
 * 完成后提交PR
+
+## 发布release
+
+一般用户在github上合并PR到master后会需要发布release。
+
+1. 切到master, git pull，应该能看到分支合并了
+2. 全量构建
+3. gh上传构建产物发布release
+4. 询问用户是否安装新版
 
 ## 后端
 

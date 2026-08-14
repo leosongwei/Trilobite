@@ -4,7 +4,7 @@
 
 Trilobite 的每个 session 有一个工作目录（working directory）。文件工具（`read`、`glob`、`grep`、`edit`、`write`）在该目录范围内操作。工作目录外的访问需要通过额外授权目录（additional directories）机制显式开放。
 
-`bash` 工具不强制路径限制（和 kimi-code 一致），通过系统提示词引导模型自觉遵守边界。
+`bash` 工具在 Linux 上默认运行在 bubblewrap（`bwrap`）沙箱中：整个文件系统只读挂载，仅工作目录和已授权目录（additional directories）可写。这样 bash 无法在工作区外写入文件，与文件工具的边界一致（详见下文「bash 沙箱」）。
 
 为了让模型知道边界在哪、从而优先用相对路径工作而不是猜测绝对路径飘到工作目录外，Agent 会在 system 消息最前面注入一个动态的 `<env>` 块，给出工作目录的绝对路径、是否 git 仓库、平台等信息（详见 [context_building.md](./context_building.md)）。系统提示词的 Permissions 段也指示模型默认在工作目录内用相对路径工作，仅在任务确实需要时才用绝对路径访问外部并走授权流程。
 
@@ -171,14 +171,25 @@ def is_within_directory(candidate: str, base: str) -> bool:
 
 ### bash 工具
 
-**不强制路径限制。** bash 工具的 `cwd` 默认为 session 工作目录，但命令本身可以访问任何路径。
+**沙箱隔离（Linux）。** bash 工具默认运行在 bubblewrap 沙箱中（config 的 `bash_sandbox` 键：`auto` 为默认，探测到 `bwrap` 可用就启用，否则裸跑并在结果中提示；`on` 强制启用，不可用则拒绝执行；`off` 关闭沙箱）。沙箱挂载布局：
+
+```
+bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp \
+      --bind /dev/shm /dev/shm --bind <working_dir> <working_dir> \
+      [--bind <additional_dir> <additional_dir> ...] \
+      --die-with-parent -- bash -c <command>
+```
+
+整个文件系统只读，仅工作目录和已授权目录（additional directories，与文件工具的授权集一致）可写；`/tmp` 为 tmpfs、`/dev/shm` 继承宿主。可写目录中缺失或不存在的路径会被跳过（bwrap 要求挂载目标存在）。沙箱探测结果在进程内缓存。`bwrap` 不可用或非 Linux 平台时，bash 退化为普通执行（`auto` 模式带提示；`on` 模式直接拒绝），行为与未启用沙箱一致。
+
+**被拒反馈。** 沙箱拦截工作区外写入时内核返回只读文件系统错误，工具结果会附带 `[sandbox]` 提示，说明写入被沙箱阻止、并引导模型先用 `read` 工具读取目标文件以发起权限请求——用户批准后该目录加入 additional directories，bash 沙箱随即允许写入（复用现有审批流程，无新机制）。
 
 **输出截断。** 命令输出默认截断为**尾部** 100 行 / 10000 字符（双限制--bash 输出尾部通常含错误信息和最终结果）。模型可通过 `max_output_lines` / `max_output_chars` 调整，传 `-1` 关闭对应限制（两者都为 `-1` 时返回完整输出）。截断发生时在输出开头插入提示行，引导模型按需放宽限制或分页查看。
 
 系统提示词引导模型：
 > "除非用户明确指示，不要访问工作目录以外的文件。"
 
-这与 kimi-code 的设计一致--bash 命令的路径检查在实践中不可行（命令可以是任意 shell 脚本），依赖模型自觉和用户监督。
+沙箱保证的是**写入边界**（与文件工具一致）；读取工作区外文件在沙箱内仍然允许（只读挂载），由文件工具的敏感文件保护（见上）和用户审批约束。
 
 ### TodoList 工具
 
@@ -237,7 +248,7 @@ read("/home/user/other/file.txt")          -> 权限提示（不在额外目录�
 | 符号链接保护 | agent 工具层无，REST API 层有 | 暂无（未来可加） |
 | 敏感文件 | 硬阻止 + 审批策略双层 | 硬阻止（单层） |
 | 工作目录外访问 | 绝对路径允许但需审批 | 权限提示（Grant/Deny），批准后自动加入白名单 |
-| bash 路径限制 | 无 | 无 |
+| bash 路径限制 | 无 | bwrap 沙箱（Linux，工作区 + 授权目录可写） |
 | 额外目录添加 | CLI flag + slash command + config | 权限提示自动添加 + API |
 | 审批系统 | 完整（manual/yolo/auto 模式 + 规则链） | 已实现（SSE 事件暂停 + 前端横幅） |
 

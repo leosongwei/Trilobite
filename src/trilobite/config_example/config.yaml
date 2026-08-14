@@ -9,3 +9,6 @@ compaction_trigger_ratio: 0.7
 enable_vl: false
 # 额外的 skill 搜索目录（相对路径基于工作目录，支持 ~ 展开），如 ["~/team-skills"]
 skill_dirs: []
+# bash 沙箱（仅 Linux，依赖 bubblewrap/bwrap）：auto=探测到就用、否则裸跑并提示；
+# on=强制沙箱、不可用则拒绝执行；off=关闭沙箱。沙箱内仅工作目录和已授权目录可写。
+bash_sandbox: auto
