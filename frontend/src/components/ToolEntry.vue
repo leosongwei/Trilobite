@@ -28,7 +28,7 @@
       <div class="tool-action bash-action">
         [<span v-if="bashDescription" class="ms ms-build ms-fill"></span>bash: {{ bashLabel }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
-      <pre ref="outputPre" class="tool-result">{{ displayContent }}</pre>
+      <pre ref="outputPre" class="tool-result">{{ bashContent }}</pre>
     </template>
     <template v-else>
       <div class="tool-action">
@@ -47,7 +47,7 @@ import type { ToolDisplay } from '../types'
 import { useStore } from '../store'
 import DiffView from './DiffView.vue'
 
-const props = defineProps<{ tool: ToolDisplay }>()
+const props = defineProps<{ tool: ToolDisplay; latest?: boolean }>()
 const { selectSession } = useStore()
 
 const outputPre = ref<HTMLPreElement | null>(null)
@@ -152,5 +152,16 @@ const displayContent = computed(() => {
     return props.tool.liveOutput
   }
   return props.tool.args || 'running...'
+})
+
+// Non-latest turns collapse bash output to the last 3 lines so old tool
+// results don't eat the whole viewport; the latest bubble keeps the full
+// streaming output. The header (description + cmd) always stays visible.
+const bashContent = computed(() => {
+  const full = displayContent.value
+  if (props.latest) return full
+  const lines = full.split('\n')
+  if (lines.length <= 3) return full
+  return lines.slice(-3).join('\n')
 })
 </script>

@@ -13,6 +13,7 @@
           :turn="item"
           :streaming="state.isStreaming && idx === visibleItems.length - 1"
           :live="idx === liveIdx"
+          :latest="idx === visibleItems.length - 1"
         />
         <div v-else-if="item.kind === 'error'" data-chat-item class="message error">{{ item.content }}</div>
         <div v-else-if="item.kind === 'compact'" data-chat-item class="compact-divider" />
