@@ -889,8 +889,8 @@ def main():
     cfg = init_config()
     token = ensure_auth_token()
     token_path = get_config_dir() / TOKEN_FILE
-    host = str(cfg.get("host", "127.0.0.1")).strip()
-    port = int(cfg.get("port", 2345))
+    host = str(cfg["host"]).strip()
+    port = int(cfg["port"])
     print(f"Trilobite {get_pkg_version()}")
     print(f"Trilobite web UI: http://{host}:{port}/?token={token}")
     print(f"Access key: {token}")
