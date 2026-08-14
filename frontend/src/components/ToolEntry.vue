@@ -28,6 +28,9 @@
       <div class="tool-action bash-action">
         [<span v-if="bashDescription" class="ms ms-build ms-fill"></span>bash: {{ bashLabel }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
+      <div v-if="collapsible" class="bash-toggle" @click="expanded = !expanded">
+        <span class="ms ms-expand" :class="{ open: expanded }"></span>{{ expanded ? '收起' : '展开全文' }}
+      </div>
       <pre ref="outputPre" class="tool-result">{{ bashContent }}</pre>
     </template>
     <template v-else>
@@ -156,10 +159,18 @@ const displayContent = computed(() => {
 
 // Non-latest turns collapse bash output to the last 3 lines so old tool
 // results don't eat the whole viewport; the latest bubble keeps the full
-// streaming output. The header (description + cmd) always stays visible.
+// streaming output. The header (description + cmd) always stays visible, and
+// a toggle expands the full output on demand.
+const expanded = ref(false)
+
+const collapsible = computed(() => {
+  if (props.latest) return false
+  return displayContent.value.split('\n').length > 3
+})
+
 const bashContent = computed(() => {
   const full = displayContent.value
-  if (props.latest) return full
+  if (props.latest || expanded.value) return full
   const lines = full.split('\n')
   if (lines.length <= 3) return full
   return lines.slice(-3).join('\n')

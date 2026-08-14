@@ -574,6 +574,20 @@ body {
   /* preserve the "description\n  command:" two-line layout */
   white-space: pre-wrap;
 }
+.bash-toggle {
+  cursor: pointer;
+  color: #ce9178;
+  font-size: 12px;
+  margin: 2px 0;
+  user-select: none;
+}
+.bash-toggle:hover { color: #e0a87a; }
+.bash-toggle .ms {
+  margin-right: 4px;
+  /* ms-expand points down; rotate to point right when collapsed. */
+  transform: rotate(-90deg);
+}
+.bash-toggle .ms.open { transform: none; }
 .tool-action {
   color: #ce9178;
   font-size: 12px;
