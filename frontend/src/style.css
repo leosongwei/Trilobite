@@ -575,6 +575,10 @@ body {
   font-size: 12px;
   margin-bottom: 1px;
 }
+.bash-description .ms {
+  font-size: 11px;
+  margin-right: 3px;
+}
 .tool-action {
   color: #ce9178;
   font-size: 12px;

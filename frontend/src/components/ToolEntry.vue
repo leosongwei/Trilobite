@@ -25,7 +25,7 @@
       <pre class="tool-result">{{ displayContent }}</pre>
     </details>
     <template v-else>
-      <div v-if="bashDescription" class="bash-description">{{ bashDescription }}</div>
+      <div v-if="bashDescription" class="bash-description"><span class="ms ms-build"></span>{{ bashDescription }}</div>
       <div class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>

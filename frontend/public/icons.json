@@ -18,6 +18,15 @@
     "class": "back"
   },
   {
+    "use": "bash description",
+    "name": "build",
+    "codepoint": "f8cd",
+    "std": "🔧",
+    "std_name": "wrench",
+    "std_codepoint": "U+1F527",
+    "class": "build"
+  },
+  {
     "use": "scheduled badge",
     "name": "schedule",
     "codepoint": "efd6",
