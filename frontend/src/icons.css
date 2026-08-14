@@ -52,6 +52,7 @@
 .ms-stop::before { content: "\e047"; }
 .ms-close::before { content: "\e5cd"; }
 .ms-check::before { content: "\e668"; }
+.ms-add::before { content: "\e145"; }
 .ms-edit-square::before { content: "\f88d"; }
 .ms-expand::before { content: "\e5cf"; }
 .ms-folder::before { content: "\e2c7"; }

@@ -25,8 +25,8 @@
             <span class="project-name">{{ item.project.name }}</span>
           </span>
           <span class="project-actions">
-            <span class="project-add" title="New session in project" @click.stop="handleCreateInProject(item.project)">+</span>
-            <span class="delete" title="Delete project" @click.stop="handleDeleteProject(item.project)"><span class="ms ms-close"></span></span>
+            <button class="project-add" type="button" title="New session in project" @click.stop="handleCreateInProject(item.project)"><span class="ms ms-add"></span></button>
+            <button class="delete" type="button" title="Delete project" @click.stop="handleDeleteProject(item.project)"><span class="ms ms-close"></span></button>
           </span>
         </div>
         <div
@@ -37,29 +37,39 @@
         >
           <span class="session-label">
             <span class="status-dot" :class="statusDot(item.dot).cls" :title="statusDot(item.dot).title"></span>
+            <span
+              v-if="item.kind === 'session' && item.children.length"
+              class="tree-arrow ms ms-expand"
+              :class="{ open: isSessionExpanded(item.session.id) }"
+              :title="isSessionExpanded(item.session.id) ? 'Collapse subagents' : `Expand subagents (${item.children.length})`"
+              @click.stop="toggleSessionChildren(item.session.id)"
+            ></span>
+            <span v-if="item.kind === 'session' && item.children.length && !isSessionExpanded(item.session.id)" class="child-count">{{ item.children.length }}</span>
             {{ item.session.name }}
           </span>
           <span class="delete" @click.stop="handleDelete(item.session.id)"><span class="ms ms-close"></span></span>
         </div>
-        <div
-          v-for="c in item.children"
-          :key="c.id"
-          class="session-item child"
-          :class="[item.project ? 'project-child' : '', { active: c.id === state.currentSession }]"
-          @click="handleSelect(c.id)"
-        >
-          <span class="session-label" :title="childLabel(c)">
-            <span v-if="c.is_running" class="running-dot" title="running"></span>
-            <span v-if="c.kind === 'scheduled'" class="child-badge scheduled" title="scheduled agent"><span class="ms ms-schedule"></span></span>
-            <span v-else class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
-            <span v-if="c.kind === 'scheduled' && !c.is_running && c.last_state === 'error'" class="stopped-dot" title="error"></span>
-            <span v-else-if="c.kind === 'scheduled' && !c.is_running && c.last_state" class="sealed-dot" title="finished"></span>
-            <span v-else-if="c.kind === 'scheduled' && !c.is_running" class="pending-dot" title="pending"></span>
-            <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
-            {{ c.description || c.name }}
-          </span>
-          <span v-if="!c.is_running" class="delete" title="delete session" @click.stop="handleDelete(c.id)"><span class="ms ms-close"></span></span>
-        </div>
+        <template v-if="sessionChildrenExpanded(item)">
+          <div
+            v-for="c in item.children"
+            :key="c.id"
+            class="session-item child"
+            :class="[item.project ? 'project-child' : '', { active: c.id === state.currentSession }]"
+            @click="handleSelect(c.id)"
+          >
+            <span class="session-label" :title="childLabel(c)">
+              <span v-if="c.is_running" class="running-dot" title="running"></span>
+              <span v-if="c.kind === 'scheduled'" class="child-badge scheduled" title="scheduled agent"><span class="ms ms-schedule"></span></span>
+              <span v-else class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
+              <span v-if="c.kind === 'scheduled' && !c.is_running && c.last_state === 'error'" class="stopped-dot" title="error"></span>
+              <span v-else-if="c.kind === 'scheduled' && !c.is_running && c.last_state" class="sealed-dot" title="finished"></span>
+              <span v-else-if="c.kind === 'scheduled' && !c.is_running" class="pending-dot" title="pending"></span>
+              <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
+              {{ c.description || c.name }}
+            </span>
+            <span v-if="!c.is_running" class="delete" title="delete session" @click.stop="handleDelete(c.id)"><span class="ms ms-close"></span></span>
+          </div>
+        </template>
       </template>
     </div>
     <div class="sidebar-resizer" title="Drag to resize" @mousedown="startResize"></div>
@@ -189,6 +199,9 @@ const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const requestsDetails = ref<HTMLDetailsElement | null>(null)
 // Expanded/collapsed state of project folders (in-memory only, not persisted).
 const collapsedProjects = ref(new Set<string>())
+// Subagent lists collapse per session; expanded only while explicitly
+// toggled, so new sessions are collapsed by default (in-memory only).
+const expandedSessions = ref(new Set<string>())
 
 // The aggregated banner's Review button bumps requestsTick to open the
 // Requests list (the user can still collapse/expand it freely afterwards).
@@ -338,6 +351,23 @@ function toggleProject(id: string) {
   if (s.has(id)) s.delete(id)
   else s.add(id)
   collapsedProjects.value = s
+}
+
+function isSessionExpanded(id: string): boolean {
+  return expandedSessions.value.has(id)
+}
+
+// Type-guard variant for templates, where vue-tsc loses the v-else-if
+// narrowing on union rows inside nested v-if elements.
+function sessionChildrenExpanded(item: SessionRow): boolean {
+  return item.kind === 'session' && isSessionExpanded(item.session.id)
+}
+
+function toggleSessionChildren(id: string) {
+  const s = new Set(expandedSessions.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  expandedSessions.value = s
 }
 
 const sessionRows = computed<SessionRow[]>(() => {
