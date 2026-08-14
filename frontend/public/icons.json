@@ -64,6 +64,15 @@
     "class": "check"
   },
   {
+    "use": "add session to project",
+    "name": "add",
+    "codepoint": "e145",
+    "std": "➕",
+    "std_name": "plus sign",
+    "std_codepoint": "U+2795",
+    "class": "add"
+  },
+  {
     "use": "rename",
     "name": "edit_square",
     "codepoint": "f88d",

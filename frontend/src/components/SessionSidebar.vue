@@ -25,7 +25,7 @@
             <span class="project-name">{{ item.project.name }}</span>
           </span>
           <span class="project-actions">
-            <button class="project-add" type="button" title="New session in project" @click.stop="handleCreateInProject(item.project)">+</button>
+            <button class="project-add" type="button" title="New session in project" @click.stop="handleCreateInProject(item.project)"><span class="ms ms-add"></span></button>
             <button class="delete" type="button" title="Delete project" @click.stop="handleDeleteProject(item.project)"><span class="ms ms-close"></span></button>
           </span>
         </div>
