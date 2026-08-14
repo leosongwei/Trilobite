@@ -14,6 +14,8 @@ DEFAULT_CONFIG = {
     "reasoning_effort": "max",
     "max_context_tokens": str(DEFAULT_MAX_CONTEXT_TOKENS),
     "max_tokens": str(DEFAULT_MAX_TOKENS),
+    "host": "127.0.0.1",
+    "port": "2345",
     "log_level": "WARNING",
     "compaction_trigger_ratio": "0.7",
     "enable_vl": False,

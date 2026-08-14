@@ -7,6 +7,10 @@ max_tokens: 65536
 log_level: WARNING
 compaction_trigger_ratio: 0.7
 enable_vl: false
+# 服务监听地址：127.0.0.1 仅本机可访问；0.0.0.0 开放所有网卡（局域网内可访问，受 token 保护）
+host: "127.0.0.1"
+# 服务监听端口
+port: 2345
 # 额外的 skill 搜索目录（相对路径基于工作目录，支持 ~ 展开），如 ["~/team-skills"]
 skill_dirs: []
 # bash 沙箱（仅 Linux，依赖 bubblewrap/bwrap）：auto=探测到就用、否则裸跑并提示；

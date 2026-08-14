@@ -889,14 +889,16 @@ def main():
     cfg = init_config()
     token = ensure_auth_token()
     token_path = get_config_dir() / TOKEN_FILE
+    host = str(cfg["host"]).strip()
+    port = int(cfg["port"])
     print(f"Trilobite {get_pkg_version()}")
-    print(f"Trilobite web UI: http://127.0.0.1:2345/?token={token}")
+    print(f"Trilobite web UI: http://{host}:{port}/?token={token}")
     print(f"Access key: {token}")
     print(f"Access key saved to {token_path}")
     uvicorn.run(
         app,
-        host="0.0.0.0",
-        port=2345,
+        host=host,
+        port=port,
         access_log=False,
         log_level=str(cfg.get("log_level", "WARNING")).lower(),
     )
