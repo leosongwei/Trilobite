@@ -542,7 +542,8 @@ body {
 }
 .turn-block .thinking-header:hover { color: #8bc36a; }
 .turn-block .thinking-toggle {
-  margin-right: 4px;
+  /* same tight spacing as .toggle-header .ms-expand */
+  margin-right: -2px;
   /* ms-expand points down; rotate to point right when collapsed. */
   transform: rotate(-90deg);
 }
@@ -579,7 +580,9 @@ body {
 .toggle-header { cursor: pointer; user-select: none; }
 .toggle-header:hover { color: #e0a87a; }
 .toggle-header .ms-expand {
-  margin-right: 4px;
+  /* negative margin offsets the icon font's built-in right side bearing,
+     keeping the gap to the label a single space */
+  margin-right: -2px;
   /* ms-expand points down; rotate to point right when collapsed. */
   transform: rotate(-90deg);
 }
