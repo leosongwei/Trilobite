@@ -18,18 +18,17 @@
         </div>
       </div>
     </template>
-    <details v-else-if="isRead" class="tool-collapsible">
-      <summary class="tool-action">
+    <div v-else-if="isRead">
+      <div class="tool-action toggle-header" @click="readOpen = !readOpen">
+        <span class="ms ms-expand" :class="{ open: readOpen }"></span>
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
-      </summary>
-      <pre class="tool-result">{{ displayContent }}</pre>
-    </details>
-    <template v-else-if="isBash">
-      <div class="tool-action bash-action">
-        [<span v-if="bashDescription" class="ms ms-build ms-fill"></span>bash: {{ bashLabel }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
-      <div v-if="collapsible" class="bash-toggle" @click="expanded = !expanded">
-        <span class="ms ms-expand" :class="{ open: expanded }"></span>{{ expanded ? '收起' : '展开全文' }}
+      <pre v-if="readOpen" class="tool-result">{{ displayContent }}</pre>
+    </div>
+    <template v-else-if="isBash">
+      <div class="tool-action bash-action toggle-header" @click="toggleBash">
+        <span v-if="collapsible" class="ms ms-expand" :class="{ open: expanded }"></span>
+        [<span v-if="bashDescription" class="ms ms-build ms-fill"></span>bash: {{ bashLabel }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
       <pre ref="outputPre" class="tool-result">{{ bashContent }}</pre>
     </template>
@@ -160,13 +159,18 @@ const displayContent = computed(() => {
 // Non-latest turns collapse bash output to the last 3 lines so old tool
 // results don't eat the whole viewport; the latest bubble keeps the full
 // streaming output. The header (description + cmd) always stays visible, and
-// a toggle expands the full output on demand.
+// clicking it (when collapsible) expands the full output on demand.
 const expanded = ref(false)
+const readOpen = ref(false)
 
 const collapsible = computed(() => {
   if (props.latest) return false
   return displayContent.value.split('\n').length > 3
 })
+
+function toggleBash() {
+  if (collapsible.value) expanded.value = !expanded.value
+}
 
 const bashContent = computed(() => {
   const full = displayContent.value

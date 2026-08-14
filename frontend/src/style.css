@@ -574,20 +574,16 @@ body {
   /* preserve the "description\n  command:" two-line layout */
   white-space: pre-wrap;
 }
-.bash-toggle {
-  cursor: pointer;
-  color: #ce9178;
-  font-size: 12px;
-  margin: 2px 0;
-  user-select: none;
-}
-.bash-toggle:hover { color: #e0a87a; }
-.bash-toggle .ms {
+/* Collapsible tool headers (read / bash): clicking toggles the body, with
+   the same expand arrow as the thinking block. */
+.toggle-header { cursor: pointer; user-select: none; }
+.toggle-header:hover { color: #e0a87a; }
+.toggle-header .ms-expand {
   margin-right: 4px;
   /* ms-expand points down; rotate to point right when collapsed. */
   transform: rotate(-90deg);
 }
-.bash-toggle .ms.open { transform: none; }
+.toggle-header .ms-expand.open { transform: none; }
 .tool-action {
   color: #ce9178;
   font-size: 12px;
@@ -612,10 +608,6 @@ body {
 .subagent-state.completed { color: #858585; }
 .subagent-state.interrupted { color: #d29922; }
 .subagent-state.error { color: #c72e2e; }
-.tool-collapsible > summary {
-  cursor: pointer;
-}
-.tool-collapsible > summary:hover { color: #e0a87a; }
 .tool-result {
   color: #d4d4d4;
   font-size: 12px;
