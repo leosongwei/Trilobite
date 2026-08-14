@@ -179,13 +179,18 @@ body {
   gap: 4px;
 }
 .session-item .project-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
   background: #2d5a3f;
   color: #ffffff;
   font-family: inherit;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
-  padding: 2px 5px;
   border: none;
   border-radius: 3px;
   cursor: pointer;
@@ -194,11 +199,14 @@ body {
 .session-item .project-actions .delete {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
   background: #933636;
   color: #ffffff;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
-  padding: 2px 4px;
   border: none;
   border-radius: 3px;
   cursor: pointer;
