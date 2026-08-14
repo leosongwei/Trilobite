@@ -26,11 +26,18 @@
       <pre v-if="readOpen" class="tool-result">{{ displayContent }}</pre>
     </div>
     <template v-else-if="isBash">
-      <div class="tool-action bash-action toggle-header" @click="toggleBash">
+      <div class="tool-action bash-action toggle-header" @click="toggleCollapsed">
         <span v-if="collapsible" class="ms ms-expand" :class="{ open: expanded }"></span>
         [<span v-if="bashDescription" class="ms ms-build ms-fill"></span>bash: {{ bashLabel }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
-      <pre ref="outputPre" class="tool-result">{{ bashContent }}</pre>
+      <pre ref="outputPre" class="tool-result">{{ collapsedContent }}</pre>
+    </template>
+    <template v-else-if="isSearch">
+      <div class="tool-action toggle-header" @click="toggleCollapsed">
+        <span v-if="collapsible" class="ms ms-expand" :class="{ open: expanded }"></span>
+        [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
+      </div>
+      <pre ref="outputPre" class="tool-result">{{ collapsedContent }}</pre>
     </template>
     <template v-else>
       <div class="tool-action">
@@ -76,6 +83,7 @@ watch(
 const isRead = computed(() => props.tool.name === 'read')
 const isTask = computed(() => props.tool.name === 'task')
 const isBash = computed(() => props.tool.name === 'bash')
+const isSearch = computed(() => props.tool.name === 'grep' || props.tool.name === 'glob')
 
 // Model-supplied purpose of a bash call (required param), shown on the first
 // line of the bash block so the user can tell what it is for at a glance.
@@ -156,10 +164,10 @@ const displayContent = computed(() => {
   return props.tool.args || 'running...'
 })
 
-// Non-latest turns collapse bash output to the last 3 lines so old tool
-// results don't eat the whole viewport; the latest bubble keeps the full
-// streaming output. The header (description + cmd) always stays visible, and
-// clicking it (when collapsible) expands the full output on demand.
+// Non-latest turns collapse bash / grep / glob output to the last 3 lines so
+// old tool results don't eat the whole viewport; the latest bubble keeps the
+// full streaming output. The header always stays visible, and clicking it
+// (when collapsible) expands the full output on demand.
 const expanded = ref(false)
 const readOpen = ref(false)
 
@@ -168,11 +176,11 @@ const collapsible = computed(() => {
   return displayContent.value.split('\n').length > 3
 })
 
-function toggleBash() {
+function toggleCollapsed() {
   if (collapsible.value) expanded.value = !expanded.value
 }
 
-const bashContent = computed(() => {
+const collapsedContent = computed(() => {
   const full = displayContent.value
   if (props.latest || expanded.value) return full
   const lines = full.split('\n')
