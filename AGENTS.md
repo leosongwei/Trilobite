@@ -130,6 +130,15 @@ trilobite   # entry point，启动 uvicorn (0.0.0.0:2345)
 * 更新完功能后，修改pyproject.toml中包版本的第三个数字。比如当前是1.1.2，那就改为1.1.3。注意，版本号需要相对于最新版master进行bump，避免一个PR内多次bump。
 * 完成后提交PR
 
+## 发布release
+
+一般用户在github上合并PR到master后会需要发布release。
+
+1. 切到master, git pull，应该能看到分支合并了
+2. 全量构建
+3. gh上传构建产物发布release
+4. 询问用户是否安装新版
+
 ## 后端
 
 * 3.3后的现代python不应该用__init__.py
