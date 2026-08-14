@@ -25,6 +25,7 @@
       <pre class="tool-result">{{ displayContent }}</pre>
     </details>
     <template v-else>
+      <div v-if="bashDescription" class="bash-description">{{ bashDescription }}</div>
       <div class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
       </div>
@@ -67,6 +68,14 @@ watch(
 
 const isRead = computed(() => props.tool.name === 'read')
 const isTask = computed(() => props.tool.name === 'task')
+
+// Model-supplied purpose of a bash call (required param), shown above the
+// command so the user can tell what it is for at a glance.
+const bashDescription = computed(() => {
+  if (props.tool.name !== 'bash') return ''
+  const d = props.tool.startArgs?.description
+  return typeof d === 'string' ? d : ''
+})
 
 const subagents = computed(() => props.tool.subagents ?? [])
 

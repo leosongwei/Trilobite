@@ -152,6 +152,16 @@ class BashTool(Tool):
                 "type": "string",
                 "description": "The bash command to execute.",
             },
+            "description": {
+                "type": "string",
+                "description": (
+                    "Clear, concise description of what this command does in "
+                    "active voice, 5-10 words (shown in the UI). Examples: "
+                    '"ls" -> "List files in current directory"; "git status" '
+                    '-> "Show working tree status"; "npm install" -> "Install '
+                    'package dependencies".'
+                ),
+            },
             "timeout": {
                 "type": "integer",
                 "description": "Timeout in seconds (default 10).",
@@ -173,7 +183,7 @@ class BashTool(Tool):
                 ),
             },
         },
-        "required": ["command"],
+        "required": ["command", "description"],
     }
 
     def execute(
@@ -182,6 +192,7 @@ class BashTool(Tool):
         session_dir: Path,
         additional_dirs: list[Path] | None = None,
         command: str = "",
+        description: str = "",
         timeout: int = 10,
         max_output_lines: int = 100,
         max_output_chars: int = 10000,

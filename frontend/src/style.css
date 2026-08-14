@@ -570,6 +570,11 @@ body {
 }
 
 .tool-entry { margin: 4px 0 8px 8px; }
+.bash-description {
+  color: #6a9955;
+  font-size: 12px;
+  margin-bottom: 1px;
+}
 .tool-action {
   color: #ce9178;
   font-size: 12px;
