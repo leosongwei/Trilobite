@@ -38,8 +38,8 @@ export interface PendingRequest {
 
 export type SSEEvent =
   | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; kind?: string; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
-  | { type: 'user'; text: string; user_seq: number; images?: ImageMeta[] }
-  | { type: 'user_edit'; user_seq: number; text: string }
+  | { type: 'user'; id: string; text: string; user_seq: number; images?: ImageMeta[] }
+  | { type: 'user_edit'; message_id: string; text: string }
   | { type: 'turn' }
   | { type: 'compact' }
   | { type: 'thinking'; text: string }
@@ -73,6 +73,8 @@ export interface ToolCall {
 }
 
 export interface HistoryMessage {
+  /** Message id (v3 history); used by revert to address a specific user message. */
+  id?: string
   role: 'user' | 'assistant' | 'tool' | 'system'
   content?: string
   images?: ImageMeta[]
@@ -170,6 +172,8 @@ export interface UserItem {
   content: string
   images?: ImageMeta[]
   userSeq?: number
+  /** Message id (v3 history); present when the backend sent it. */
+  id?: string
 }
 
 export interface TurnItem {

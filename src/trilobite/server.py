@@ -515,7 +515,7 @@ async def send_message(name: str, req: MessageRequest):
 
 
 class RevertRequest(BaseModel):
-    user_seq: int
+    message_id: str
     message: str
 
 
@@ -527,7 +527,7 @@ class ScheduleDeleteRequest(BaseModel):
 async def revert_message(name: str, req: RevertRequest):
     agent = _get_or_create_agent(name)
     try:
-        status = await agent.revert(req.user_seq, req.message)
+        status = await agent.revert(req.message_id, req.message)
     except ValueError:
         raise HTTPException(status_code=400, detail="user message not found")
     return {"status": status}
@@ -721,8 +721,8 @@ async def get_history(name: str):
         raise HTTPException(404, "Session not found")
     history_path = session_dir / "history.json"
     if history_path.exists():
-        from src.trilobite.history import History
-        return History(history_path).to_flat_dicts()
+        from src.trilobite.history import MessageList
+        return MessageList(history_path).to_flat_dicts()
     return []
 
 

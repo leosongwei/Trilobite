@@ -21,7 +21,7 @@ def should_compact(agent: Agent) -> bool:
     tools = agent._permission.filter_definitions(enable_vl=bool(agent.config.get("enable_vl", False)))
     pending = agent.history.raw[agent._token_covered:]
     # Pending entries are typed Message objects; expand to API dicts for the
-    # token estimate (an AssistantMessage unfolds into assistant + tool msgs).
+    # token estimate (a ModelMessage + its ToolResults unfold into assistant + tool msgs).
     pending_dicts = [
         d
         for m in pending

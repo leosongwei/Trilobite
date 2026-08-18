@@ -18,11 +18,11 @@ from src.trilobite.broker import StreamBroker
 from src.trilobite.compaction import should_compact, build_compact_prompt
 from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS
 from src.trilobite.file_access import normalize_dir
-from src.trilobite.history import History
+from src.trilobite.history import MessageList, TurnsView
 from src.trilobite.messages import (
-    AssistantMessage,
     CompactMarker,
     Image,
+    ModelMessage,
     SystemMessage,
     ToolCall,
     ToolResult,
@@ -309,7 +309,8 @@ class Agent:
         if listing:
             self.system_prompt += "\n\n" + listing
         self.working_context = self._load_working_context()
-        self.history = History(session_dir / "history.json")
+        self.history = MessageList(session_dir / "history.json")
+        self._turns = TurnsView(self.history)
         self._broker = StreamBroker(len(self.history.raw))
         self._token_count: int = 0
         self._token_covered: int = 0
@@ -669,9 +670,11 @@ class Agent:
         serves as metadata only.
         """
         user_seq = self._count_user_messages()
-        self.history.append(UserMessage("", images=[image]))
+        user = UserMessage("", images=[image])
+        self.history.append(user)
         await self._send_stream_event({
             "type": "user",
+            "id": user._id,
             "text": "",
             "images": [image.to_frontend_dict()],
             "user_seq": user_seq,
@@ -684,7 +687,7 @@ class Agent:
             if isinstance(msg, CompactMarker):
                 start = i + 1
         for msg in self.history.raw[start:]:
-            if isinstance(msg, (UserMessage, AssistantMessage)) and not (
+            if isinstance(msg, (UserMessage, ModelMessage)) and not (
                 isinstance(msg, UserMessage)
                 and (msg.compact_summary or msg.is_compact_prompt)
             ):
@@ -783,11 +786,11 @@ class Agent:
             self._last_notified_mode = self._plan_mode
             self.history.append(UserMessage(notif, is_mode_notification=True))
 
-        # The assistant message being streamed/mutated in the current turn
+        # The model message being streamed/mutated in the current turn
         # (None outside a turn). Held as locals so the CancelledError handler
         # can salvage or discard partial output.
-        current_asst: AssistantMessage | None = None
-        current_asst_persisted = False
+        current_model: ModelMessage | None = None
+        current_model_persisted = False
 
         try:
             while True:
@@ -839,13 +842,13 @@ class Agent:
                     tools=tools,
                 )
 
-                # Begin the turn: append an empty assistant message and mutate
-                # it as the stream drains. It is persisted only once finalized,
-                # so a crash mid-turn leaves no half-written entry on disk.
-                asst = AssistantMessage()
-                self.history.append(asst, persist=False)
-                current_asst = asst
-                current_asst_persisted = False
+                # Begin the turn: append an empty model message and mutate it as
+                # the stream drains. It is persisted only once finalized, so a
+                # crash mid-turn leaves no half-written entry on disk.
+                model = ModelMessage()
+                self.history.append_model(model)
+                current_model = model
+                current_model_persisted = False
                 # Drop buffered bash output from previous turns -- it is only
                 # needed to salvage a cancelled in-flight command, and a new
                 # turn means the previous one completed (or was salvaged).
@@ -867,11 +870,11 @@ class Agent:
                         continue
 
                     if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                        asst.thinking += delta.reasoning_content
+                        model.think += delta.reasoning_content
                         await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
 
                     if delta.content:
-                        asst.content += delta.content
+                        model.content += delta.content
                         await self._send_stream_event({"type": "text", "text": delta.content})
 
                     if delta.tool_calls:
@@ -884,7 +887,7 @@ class Agent:
                                         "args": current_tool_args,
                                         "complete": True,
                                     })
-                                    asst.tool_calls.append(ToolCall(
+                                    model.tool_calls.append(ToolCall(
                                         id=current_tool_id,
                                         name=current_tool_name,
                                         arguments=current_tool_args,
@@ -924,7 +927,7 @@ class Agent:
                         "args": current_tool_args,
                         "complete": True,
                     })
-                    asst.tool_calls.append(ToolCall(
+                    model.tool_calls.append(ToolCall(
                         id=current_tool_id,
                         name=current_tool_name,
                         arguments=current_tool_args,
@@ -938,22 +941,22 @@ class Agent:
 
                 self._log.info(
                     "TURN result content_len=%d thinking_len=%d tool_calls=%d token_count=%d plan_mode=%s",
-                    len(asst.content), len(asst.thinking), len(asst.tool_calls), self._token_count, self._plan_mode,
+                    len(model.content), len(model.think), len(model.tool_calls), self._token_count, self._plan_mode,
                 )
-                if not asst.content and not asst.thinking and not asst.tool_calls:
-                    self._log.warning("TURN produced EMPTY assistant output (no content/thinking/tool_calls)")
+                if not model.content and not model.think and not model.tool_calls:
+                    self._log.warning("TURN produced EMPTY model output (no content/thinking/tool_calls)")
 
                 self._step_count += 1
 
-                if asst.tool_calls:
-                    # Persist the assistant message (with tool_calls) before
+                if model.tool_calls:
+                    # Persist the model message (with tool_calls) before
                     # executing tools, so a crash between tools leaves a
                     # patchable dangling entry rather than nothing.
                     self.history.save()
-                    current_asst_persisted = True
+                    current_model_persisted = True
                     self._pending_tool_results = True
 
-                    for tc in asst.tool_calls:
+                    for tc in model.tool_calls:
                         args = {}
                         try:
                             args = json.loads(tc.arguments)
@@ -1056,15 +1059,16 @@ class Agent:
                             result_event["diff"] = tool_result["diff"]
                         await self._send_stream_event(result_event)
 
-                        # The tool result lives inside the assistant message
-                        # (self-contained turn), so a steering user message can
-                        # never land between the tool_calls and their results.
-                        asst.tool_results.append(ToolResult(
+                        # The result goes into the ToolResults entry right
+                        # after the model (created on first result, before any
+                        # steering user appended meanwhile), so a steering
+                        # message can never land between the tool_calls and
+                        # their results.
+                        self.history.insert_result(ToolResult(
                             tool_call_id=tc.id,
                             content=tool_result["result"],
                             diff=tool_result.get("diff"),
                         ))
-                        self.history.save()
 
                         # A scheduled agent that went out of bounds: the denial
                         # is now persisted with the tool call; abort the fire.
@@ -1074,10 +1078,10 @@ class Agent:
                             raise CronBoundaryError(msg)
                 else:
                     self.history.save()
-                    current_asst_persisted = True
+                    current_model_persisted = True
 
                 # ── compaction handling after the turn ──
-                if self._need_compact and asst.tool_calls:
+                if self._need_compact and model.tool_calls:
                     # The model called tools during the compaction turn despite
                     # the prompt; they were intercepted above (no side effects).
                     # Do not finalize with an empty/partial summary -- loop
@@ -1091,11 +1095,12 @@ class Agent:
                     # steering messages that arrived during the compact turn so
                     # the model responds to them on the fresh context instead
                     # of losing them behind the marker.
-                    pending_steers = self._finalize_compaction(asst.content)
+                    pending_steers = self._finalize_compaction(model.content)
                     for s in pending_steers:
                         user_seq = self._count_user_messages()
-                        self.history.append(UserMessage(s))
-                        await self._send_stream_event({"type": "user", "text": s, "user_seq": user_seq})
+                        user = UserMessage(s)
+                        self.history.append(user)
+                        await self._send_stream_event({"type": "user", "id": user._id, "text": s, "user_seq": user_seq})
                     self._token_covered = len(self.history.raw)
                     self._persist_token_count()
                     await self._broker.commit(len(self.history.raw))
@@ -1111,12 +1116,13 @@ class Agent:
                     self._need_compact = True
                     prompt = build_compact_prompt(self)
                     user_seq = self._count_user_messages()
-                    self.history.append(UserMessage(prompt, is_compact_prompt=True))
-                    await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
-                elif not asst.tool_calls:
+                    user = UserMessage(prompt, is_compact_prompt=True)
+                    self.history.append(user)
+                    await self._send_stream_event({"type": "user", "id": user._id, "text": prompt, "user_seq": user_seq})
+                elif not model.tool_calls:
                     # Plain-text final turn, nothing pending: the run completes.
                     self._final_state = "completed"
-                    self._final_result = asst.content
+                    self._final_result = model.content
 
             # Loop exited normally: the run completed with no pending work.
             # Emit ``done`` only for a completed run (max_steps already
@@ -1142,14 +1148,13 @@ class Agent:
                 # lose the model's reasoning. Only drop a truly empty
                 # placeholder (nothing streamed yet). A persisted turn (mid
                 # tool-execution) is already in history.
-                if current_asst is not None and not current_asst_persisted:
-                    if self.history.raw and self.history.raw[-1] is current_asst:
-                        if current_asst.thinking or current_asst.content or current_asst.tool_calls:
-                            self.history.save()
-                        else:
-                            self.history.pop()
+                if current_model is not None and not current_model_persisted:
+                    if current_model.think or current_model.content or current_model.tool_calls:
+                        self.history.save()
+                    else:
+                        self.history.remove(current_model)
                 # Salvage partial bash output for the in-flight tool call.
-                self._salvage_inflight_tool(current_asst)
+                self._salvage_inflight_tool(current_model)
                 self._patch_dangling_tool_calls()
                 try:
                     await self._summarize_and_exit()
@@ -1171,18 +1176,18 @@ class Agent:
             # Salvage partial bash output for the in-flight tool call before
             # persisting, so the model sees what the cancelled command produced
             # instead of a bare [interrupted] placeholder on the next run.
-            self._salvage_inflight_tool(current_asst)
-            # Persist the in-flight assistant message if it has any content,
+            self._salvage_inflight_tool(current_model)
+            # Persist the in-flight model message if it has any content,
             # thinking, or tool_calls; otherwise drop the empty placeholder so
             # history stays clean.
-            if current_asst is not None and self.history.raw and self.history.raw[-1] is current_asst:
-                if current_asst.content or current_asst.thinking or current_asst.tool_calls:
+            if current_model is not None:
+                if current_model.content or current_model.think or current_model.tool_calls:
                     self.history.save()
                     self._log.warning(
                         "RUN cancelled content_len=%d thinking_len=%d tool_calls=%d",
-                        len(current_asst.content), len(current_asst.thinking), len(current_asst.tool_calls))
+                        len(current_model.content), len(current_model.think), len(current_model.tool_calls))
                 else:
-                    self.history.pop()
+                    self.history.remove(current_model)
                     self._log.warning("RUN cancelled (no partial output)")
             else:
                 self._log.warning("RUN cancelled")
@@ -1230,6 +1235,7 @@ class Agent:
             # The run is over regardless of how it ended; clear the running
             # flag (a safety net -- done/cancelled/error already set it) and
             # drop the task reference so is_running() is accurate.
+            self.history.close_model()
             self._broker.set_running(False)
             self._task = None
 
@@ -1242,11 +1248,14 @@ class Agent:
         never splitting tool_calls from their results.
         """
         user_seq = self._count_user_messages()
-        self.history.append(UserMessage(message))
-        await self._send_stream_event({"type": "user", "text": message, "user_seq": user_seq})
+        user = UserMessage(message)
+        self.history.append(user)
+        await self._send_stream_event({"type": "user", "id": user._id, "text": message, "user_seq": user_seq})
 
-    def add_user_message(self, message: str, images: list[Image] | None = None):
-        self.history.append(UserMessage(message, images=images))
+    def add_user_message(self, message: str, images: list[Image] | None = None) -> UserMessage:
+        user = UserMessage(message, images=images)
+        self.history.append(user)
+        return user
 
     def is_running(self) -> bool:
         return self._broker.is_running
@@ -1264,10 +1273,11 @@ class Agent:
         # Subagents carry a description instead and are never auto-titled.
         if user_seq == 0 and self._subagent_type is None:
             self._maybe_auto_title(message)
-        self.add_user_message(message, images=images)
+        user = self.add_user_message(message, images=images)
         self._broker.set_running(True)
         await self._send_stream_event({
             "type": "user",
+            "id": user._id,
             "text": message,
             "images": [img.to_frontend_dict() for img in (images or [])] or None,
             "user_seq": user_seq,
@@ -1283,9 +1293,9 @@ class Agent:
             self._plan_mode,
             [str(d) for d in self._additional_dirs],
         )
-        # Expand the committed typed messages into the flat v1-style dict list
-        # the frontend expects (an AssistantMessage unfolds into its assistant
-        # dict followed by its tool-result dicts).
+        # Expand the committed typed messages into the flat role-based dict list
+        # the frontend expects (a ModelMessage unfolds into its assistant
+        # dict; a ToolResults into its tool-result dicts).
         snapshot["history"] = [
             d for m in snapshot["history"] for d in m.to_frontend_dicts()
         ]
@@ -1410,10 +1420,12 @@ class Agent:
         if self.history.raw:
             self.history.append(CompactMarker())
         self.history.append(SystemMessage(self.system_prompt + self.working_context))
-        self.history.append(UserMessage(prompt_text))
+        user = UserMessage(prompt_text)
+        self.history.append(user)
         self._broker.set_running(True)
         await self._send_stream_event({
             "type": "user",
+            "id": user._id,
             "text": prompt_text,
             "user_seq": self._count_user_messages() - 1,
         })
@@ -1510,21 +1522,22 @@ class Agent:
         max_chars = args.get("max_output_chars", 10000)
         return truncate_output(output, max_lines, max_chars)
 
-    def _salvage_inflight_tool(self, asst: AssistantMessage | None) -> None:
+    def _salvage_inflight_tool(self, model: ModelMessage | None) -> None:
         """Fill the in-flight bash tool's result with partial output on cancel.
 
         When a run is cancelled mid-tool-execution, the executing tool call has
         no result yet. For bash, salvage the output streamed so far (via
-        ``on_output``) and append a note that the user cancelled, so the model
+        ``on_output``) and insert a note that the user cancelled, so the model
         sees what the command produced instead of a bare ``[interrupted]``
         placeholder. Only the first unanswered tool call (the one actually
         executing) is considered; later, not-yet-started calls are left for
         ``_patch_dangling_tool_calls``.
         """
-        if asst is None or not asst.tool_calls:
+        if model is None or not model.tool_calls:
             return
-        answered = {tr.tool_call_id for tr in asst.tool_results}
-        for tc in asst.tool_calls:
+        entry = self.history.tool_results_of(model)
+        answered = {tr.tool_call_id for tr in entry.results} if entry else set()
+        for tc in model.tool_calls:
             if tc.id and tc.id not in answered:
                 # The first unanswered tool call is the one that was executing.
                 if tc.name == "bash":
@@ -1535,37 +1548,41 @@ class Agent:
                     partial = self._format_partial_bash_output(tc.id, args)
                     note = "\n[command cancelled by user; output above is partial]"
                     content = (partial + note) if partial else "[command cancelled by user]"
-                    asst.tool_results.append(ToolResult(tool_call_id=tc.id, content=content))
+                    self.history.insert_result(
+                        ToolResult(tool_call_id=tc.id, content=content),
+                        after=model,
+                    )
                     self._tool_output_buffer.pop(tc.id, None)
-                    self.history.save()
                 break
 
     def _patch_dangling_tool_calls(self) -> None:
         """Fill placeholder tool results for tool_calls lacking a result.
 
-        An interrupt or crash can leave a trailing :class:`AssistantMessage`
-        with ``tool_calls`` but not all ``tool_results``. OpenAI-compatible
-        APIs reject ``tool_calls`` without matching results, which would break
-        the next turn. Scan the trailing assistant message and append a
-        placeholder result for any unanswered ``tool_call_id``.
+        An interrupt or crash can leave a :class:`ModelMessage` with
+        ``tool_calls`` but not all results in its :class:`ToolResults` entry.
+        OpenAI-compatible APIs reject ``tool_calls`` without matching results,
+        which would break the next turn. Scan for the last such model (it may
+        not be the trailing entry -- steering messages can sit after it) and
+        insert a placeholder result for any unanswered ``tool_call_id``.
         """
         raw = self.history.raw
-        if not raw:
+        last_model: ModelMessage | None = None
+        for m in raw:
+            if isinstance(m, ModelMessage) and m.tool_calls:
+                last_model = m
+        if last_model is None:
             return
-        last = raw[-1]
-        if not isinstance(last, AssistantMessage) or not last.tool_calls:
-            return
-        answered = {tr.tool_call_id for tr in last.tool_results}
-        patched = False
-        for tc in last.tool_calls:
-            if tc.id and tc.id not in answered:
-                last.tool_results.append(ToolResult(
-                    tool_call_id=tc.id,
-                    content="[interrupted]",
-                ))
-                patched = True
-        if patched:
-            self.history.save()
+        entry = self.history.tool_results_of(last_model)
+        answered = {tr.tool_call_id for tr in entry.results} if entry else set()
+        pending = [
+            tc for tc in last_model.tool_calls
+            if tc.id and tc.id not in answered
+        ]
+        if pending:
+            self.history.insert_results(
+                [ToolResult(tool_call_id=tc.id, content="[interrupted]") for tc in pending],
+                after=last_model,
+            )
 
     async def _summarize_and_exit(self) -> None:
         """Produce a final summary turn after an interrupt, then exit.
@@ -1574,28 +1591,30 @@ class Agent:
         summary that becomes this subagent's result.
         """
         summary_prompt = "你被中断了。请简明总结你目前的发现/进展，然后停止。"
-        self.history.append(UserMessage(summary_prompt))
-        await self._send_stream_event({"type": "user", "text": summary_prompt, "user_seq": self._count_user_messages() - 1})
+        user = UserMessage(summary_prompt)
+        self.history.append(user)
+        await self._send_stream_event({"type": "user", "id": user._id, "text": summary_prompt, "user_seq": self._count_user_messages() - 1})
         await self._send_stream_event({"type": "turn"})
         messages = self.history.get_api_messages(
             image_dir=self.session_dir / "images",
             enable_vl=bool(self.config.get("enable_vl", False)),
         )
         stream = await self.chat_completion(messages=messages, stream=True, tools=None)
-        asst = AssistantMessage()
-        self.history.append(asst, persist=False)
+        model = ModelMessage()
+        self.history.append_model(model)
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None
             if delta is None:
                 continue
             if getattr(delta, "content", None):
-                asst.content += delta.content
+                model.content += delta.content
                 await self._send_stream_event({"type": "text", "text": delta.content})
-        if not asst.content:
-            asst.content = "[no summary produced]"
+        if not model.content:
+            model.content = "[no summary produced]"
         self.history.save()
+        self.history.close_model()
         self._final_state = "interrupted"
-        self._final_result = asst.content
+        self._final_result = model.content
         await self._send_stream_event({"type": "interrupted"})
 
     async def _broadcast_to_group(self, event: dict) -> None:
@@ -1625,13 +1644,13 @@ class Agent:
         for c in list(self._children):
             await c._send_stream_event(event)
 
-    async def revert(self, user_seq: int, message: str) -> str:
+    async def revert(self, message_id: str, message: str) -> str:
         """Edit a previously sent user message and rerun from there.
 
         Two cases:
 
-        * The message has already been read by the model (``user_seq`` below
-          the read cursor): stop the run, truncate history to just before that
+        * The message has already been read by the model (its user_seq is
+          below the read cursor): stop the run, truncate history at that
           message, then start a fresh run with the edited text.
         * The message has not been read yet (a steering message still pending
           in history): swap its text in place without interrupting the run.
@@ -1640,42 +1659,27 @@ class Agent:
         reconnect (rerun rebuilds from the truncated history) or just apply a
         local text update (queued).
         """
-        # Locate the user_seq-th real user message (compact summaries and mode
-        # notices excluded, matching _count_user_messages).
-        target = -1
-        count = 0
-        for i, msg in enumerate(self.history.raw):
-            if (
-                isinstance(msg, UserMessage)
-                and not msg.compact_summary
-                and not msg.is_mode_notification
-            ):
-                if count == user_seq:
-                    target = i
-                    break
-                count += 1
-        if target < 0:
-            raise ValueError("user message not found")
-
-        if user_seq < self._user_read_cursor or not self.is_running():
-            # Already read by the model, or no run is alive to consume an
-            # in-place edit: rerun from the edited message.
+        target = self._turns.find_user(message_id)
+        seq = self.history.user_seq_of(target)
+        if seq < self._user_read_cursor or not self.is_running():
+            # Stop first: the cancelled run's salvage logic may still reference
+            # messages that are about to be truncated away.
             if self.is_running():
                 await self.stop()
-            self.history.truncate(target)
+            self.history.truncate_at(message_id)
             # Truncation removed the messages the cursor counted past; align it
             # to the truncated history so start()'s new message reads as unread
             # and the run loop actually turns. Otherwise (k+1) > old_cursor is
             # false and the run exits immediately without calling the model.
             self._user_read_cursor = self._count_user_messages()
-            await self._broker.commit(target)
+            await self._broker.commit(len(self.history.raw))
             await self.start(message)
             return "rerun"
 
         # Not yet read and a run is live (steering message pending): edit in place.
-        self.history.raw[target].content = message
+        target.content = message
         self.history.save()
-        await self._send_stream_event({"type": "user_edit", "user_seq": user_seq, "text": message})
+        await self._send_stream_event({"type": "user_edit", "message_id": message_id, "text": message})
         return "queued"
 
     async def compact_now(self) -> None:
@@ -1706,6 +1710,7 @@ class Agent:
         self._need_compact = True
         prompt = build_compact_prompt(self)
         user_seq = self._count_user_messages()
-        self.history.append(UserMessage(prompt, is_compact_prompt=True))
-        await self._send_stream_event({"type": "user", "text": prompt, "user_seq": user_seq})
+        user = UserMessage(prompt, is_compact_prompt=True)
+        self.history.append(user)
+        await self._send_stream_event({"type": "user", "id": user._id, "text": prompt, "user_seq": user_seq})
         self._task = asyncio.create_task(self.run())

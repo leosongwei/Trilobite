@@ -135,11 +135,11 @@ export async function sendMessage(
   return res.json()
 }
 
-export async function revert(id: string, userSeq: number, message: string): Promise<{ status: string }> {
+export async function revert(id: string, messageId: string, message: string): Promise<{ status: string }> {
   const res = await authFetch(`/api/sessions/${encode(id)}/revert`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_seq: userSeq, message }),
+    body: JSON.stringify({ message_id: messageId, message }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
