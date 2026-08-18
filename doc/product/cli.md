@@ -68,8 +68,8 @@ trilobite -c             # CLI 续接当前目录最新的 session
 
 **`-t` 新建**：
 1. `init_config()` 加载配置（与 web 模式共用 `~/.config/trilobite/config.yaml`）。
-2. 在 `get_sessions_dir()` 下新建一个 session 目录（`uuid4().hex`），写 `session.json`（`working_dir` 解析为绝对路径、`plan_mode: false`、`additional_dirs: []`、`created_at`）。
-3. 实例化 `Agent`（与 `POST /api/sessions` 相同的参数：`name`、`working_dir`、`session_dir`、`config`、`registry`），回写 `session_id`。
+2. 在 `get_sessions_dir()` 下新建一个 session 目录（`uuid4().hex`），写 `session.json`（`working_dir` 解析为绝对路径、`plan_mode: false`、`additional_dirs: []`、`created_at`、`model` = 默认模型名）。
+3. 实例化 `Agent`（与 `POST /api/sessions` 相同的参数：`name`、`working_dir`、`session_dir`、`config`、`registry`、`model_name`），回写 `session_id`。
 4. `await agent.attach_subscriber()` 拿到事件队列 + `init` 快照（新 session 历史为空）。
 5. 进入 REPL 主循环（见第三节）。
 
@@ -77,7 +77,7 @@ trilobite -c             # CLI 续接当前目录最新的 session
 1. `init_config()`，取 `cwd`。
 2. 扫描 `get_sessions_dir()` 下所有 `session.json`，过滤掉 subagent session（`subagent_type` 非空）和相对路径 `working_dir`，匹配 `Path(working_dir).resolve() == cwd`，按 `history.json` 的 mtime（最后一次存盘时间，回退 `created_at`）取最新。
 3. 无匹配则退化新建（打印 `无历史 session，新建`），流程同 `-t`。
-4. 有匹配则实例化 `Agent`（复用其 `session_id`，`Agent` 从 `history.json` 加载历史），恢复 `plan_mode` / `additional_dirs`。
+4. 有匹配则实例化 `Agent`（复用其 `session_id` 与保存的 `model`，`Agent` 从 `history.json` 加载历史），恢复 `plan_mode` / `additional_dirs`。
 5. `attach_subscriber()` 拿队列 + 快照（**不回显历史**，只打印一条 `resumed · <name> · <working_dir>` 提示）。
 6. 进入 REPL 主循环。
 

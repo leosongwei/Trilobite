@@ -27,8 +27,8 @@ estimated = token_count（上次 API 返回的真实 token 数，仅反映 marke
 
 当 `estimated >= max_context_tokens * compaction_trigger_ratio` 时，标记 `_need_compact=True` 并把压缩指令作为一条普通 user 消息 append 进 history。下一轮因此有「新消息」而续跑。
 
-默认配置：
-- `max_context_tokens`：1,048,576（1M）
+触发阈值与上下文窗口都是**模型定义**的一部分（`models[].max_context` / `models[].compaction_trigger_ratio`），会话切换主模型时同步更新。默认值：
+- `max_context`：400,000（400k）
 - `compaction_trigger_ratio`：0.7（即 70% 时触发）
 
 ## 压缩流程

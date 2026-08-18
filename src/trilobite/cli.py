@@ -25,7 +25,7 @@ except ImportError:  # non-readline platforms (e.g. Windows)
     pass
 
 from src.trilobite.agent import Agent
-from src.trilobite.config import get_sessions_dir, init_config
+from src.trilobite.config import get_default_model_name, get_sessions_dir, init_config
 from src.trilobite.version import get_version
 
 
@@ -352,7 +352,7 @@ def _write_session_json(session_dir: Path, info: dict) -> None:
     (session_dir / "session.json").write_text(json.dumps(info, indent=2, ensure_ascii=False))
 
 
-def _create_session(working_dir: str) -> tuple[Path, dict]:
+def _create_session(working_dir: str, config: dict) -> tuple[Path, dict]:
     """Create a new session dir + session.json, mirroring POST /api/sessions."""
     working_dir = str(Path(working_dir).resolve())
     name = os.path.basename(working_dir) or "cli"
@@ -365,6 +365,7 @@ def _create_session(working_dir: str) -> tuple[Path, dict]:
         "plan_mode": False,
         "additional_dirs": [],
         "created_at": now,
+        "model": get_default_model_name(config),
     }
     _write_session_json(session_dir, info)
     return session_dir, info
@@ -431,6 +432,7 @@ async def _make_agent(
         config=config,
         session_id=info.get("session_id"),
         registry=registry,
+        model_name=info.get("model"),
     )
     registry[agent.name] = agent
     if resume:
@@ -451,7 +453,7 @@ async def run_cli(working_dir: str | None, resume: bool) -> None:
         if session_dir is None:
             sys.stdout.write(_dim(f"# {cwd} 无历史 session，新建\n"))
             sys.stdout.flush()
-            session_dir, info = _create_session(str(cwd))
+            session_dir, info = _create_session(str(cwd), config)
             agent, queue = await _make_agent(config, session_dir, info, resume=False)
             info["session_id"] = agent.session_id
             _write_session_json(session_dir, info)
@@ -460,7 +462,7 @@ async def run_cli(working_dir: str | None, resume: bool) -> None:
             agent, queue = await _make_agent(config, session_dir, info, resume=True)
             banner = f"# resumed · {info.get('name', session_dir.name)} · {info.get('working_dir', cwd)}"
     else:
-        session_dir, info = _create_session(working_dir)
+        session_dir, info = _create_session(working_dir, config)
         agent, queue = await _make_agent(config, session_dir, info, resume=False)
         info["session_id"] = agent.session_id
         _write_session_json(session_dir, info)

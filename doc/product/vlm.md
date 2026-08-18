@@ -2,13 +2,18 @@
 
 ## 开关
 
-在 `config.yaml` 中设置：
+视觉能力是**每个模型定义**的一部分：在 `config.yaml` 的 `models` 列表里为对应模型设置：
 
 ```yaml
-enable_vl: true
+models:
+  - name: "GPT-4o"
+    model: "gpt-4o"
+    api_key: "sk-xxx"
+    api_url: "https://api.openai.com/v1"
+    enable_vl: true
 ```
 
-开启后，前端发送区会出现“📎”图片按钮。后端不会验证模型是否支持视觉，需要用户自行把 `model` 改为视觉模型（如 `gpt-4o`）。
+开启后，前端发送区会出现“📎”图片按钮。后端不会验证模型是否支持视觉，需要用户自行把 `enable_vl` 配在视觉模型上。切换主模型会同步切换该开关：切到 `enable_vl: false` 的模型后图片按钮消失，新图片不再保存，但历史中已有的图片元数据和文件保留（详见下方后端行为）。
 
 ## 前端行为
 
@@ -26,9 +31,9 @@ enable_vl: true
 - 图片写入 `sessions/<id>/images/<hash>.ext`，`hash` 是文件内容 SHA256 的前 12 位十六进制字符。
 - `UserMessage` 保存 `Image` 元数据，历史文件只引用文件名，不内嵌 base64。
 - `History.get_api_messages(image_dir=..., enable_vl=...)` 在构造 LLM 请求时把图片编码为 OpenAI 兼容的 `image_url` content part。
-- 当 `enable_vl` 被关闭后，新的图片附件不会被保存，已存在历史中的图片元数据和文件也**不会被删除**，但它们不会出现在发给 LLM 的请求里，从而可以在非视觉模型上继续对话。
+- 当 `enable_vl` 被关闭后（配置里该模型未开启，或会话切换到 `enable_vl: false` 的模型），新的图片附件不会被保存，已存在历史中的图片元数据和文件也**不会被删除**，但它们不会出现在发给 LLM 的请求里，从而可以在非视觉模型上继续对话。
 - `read` 工具读到支持的图片文件（PNG / JPEG / GIF / WebP）时，会把图片存入 `sessions/<id>/images/<hash>.ext`，并返回 `<image filename="..." original_name="..." mime="..." modified="..." />` 标记。该图片会被挂到触发这次工具调用的 user 消息上，下轮 LLM 请求时模型就能看到这张图。
-- 只有 `enable_vl: true` 时，系统提示词和 `read` 工具定义才会包含图片相关的说明。`enable_vl: false` 时 `read` 只 advertised 为文本读取工具，避免纯文本模型幻觉自己能读图。
+- 只有会话当前模型的 `enable_vl: true` 时，系统提示词和 `read` 工具定义才会包含图片相关的说明（切换模型的瞬间，agent 会重建系统提示词并更新历史首条 system 消息）。`enable_vl: false` 时 `read` 只 advertised 为文本读取工具，避免纯文本模型幻觉自己能读图。
 - 图片通过 `/api/sessions/{id}/images/{filename}` 读取。
 
 ## 相关代码
