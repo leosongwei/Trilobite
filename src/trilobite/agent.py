@@ -1413,6 +1413,7 @@ class Agent:
             "description": description,
             "depth": self._depth + 1,
             "additional_dirs": [str(d) for d in self._additional_dirs],
+            "model": self._model_name,
             "created_at": time.time(),
         }
         (child_dir / "session.json").write_text(json.dumps(info, indent=2))

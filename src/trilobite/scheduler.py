@@ -42,6 +42,7 @@ from typing import Any
 from croniter import croniter
 
 from src.trilobite.agent import Agent
+from src.trilobite.config import get_default_model_name
 from src.trilobite.messages import SystemMessage, UserMessage
 
 _log = logging.getLogger(__name__)
@@ -290,6 +291,10 @@ class CronService:
 
         # The schedule's own session is created up front so it shows up in the
         # sidebar immediately and accumulates runs over the schedule's life.
+        # It inherits the owner session's current model (falls back to the
+        # config default when the owner is unknown).
+        owner = self._agents.get(session_name)
+        owner_model = owner._model_name if owner is not None else get_default_model_name(self._config)
         session_dir = self._sessions_dir / sched_session
         session_dir.mkdir(parents=True, exist_ok=True)
         info = {
@@ -300,6 +305,7 @@ class CronService:
             "schedule_id": sched_id,
             "description": description,
             "additional_dirs": [str(d) for d in additional_dirs],
+            "model": owner_model,
             "created_at": time.time(),
         }
         (session_dir / "session.json").write_text(json.dumps(info, indent=2))
@@ -525,6 +531,7 @@ class CronService:
                 scheduled=True,
                 scheduled_allow_dirs=info.get("additional_dirs", []),
                 max_steps=int(self._config.get("subagent_max_steps", 100)),
+                model_name=info.get("model"),
             )
             self._agents[sched.session_id] = agent
         agent.set_additional_dirs(info.get("additional_dirs", []))

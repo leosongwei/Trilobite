@@ -482,6 +482,7 @@ def _get_or_create_agent(name: str) -> Agent:
             description=info.get("description"),
             depth=info.get("depth", 1),
             sealed=True,
+            model_name=info.get("model"),
         )
         agent.set_additional_dirs(info.get("additional_dirs", []))
         agents[name] = agent
@@ -500,6 +501,7 @@ def _get_or_create_agent(name: str) -> Agent:
             scheduled=True,
             scheduled_allow_dirs=info.get("additional_dirs", []),
             max_steps=int(config.get("subagent_max_steps", 100)),
+            model_name=info.get("model"),
         )
         agent.set_additional_dirs(info.get("additional_dirs", []))
         agents[name] = agent
