@@ -81,11 +81,11 @@ function cancelEdit() {
 }
 
 async function confirmEdit() {
-  const seq = props.item.userSeq
+  const id = props.item.id
   const text = draft.value
   editing.value = false
-  if (seq !== undefined && text.trim()) {
-    await revert(seq, text)
+  if (id !== undefined && text.trim()) {
+    await revert(id, text)
   }
 }
 </script>

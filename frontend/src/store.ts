@@ -194,13 +194,14 @@ function handleSSEEvent(event: SSEEvent) {
         content: event.text,
         images: event.images,
         userSeq: event.user_seq,
+        id: event.id,
       })
       break
     }
 
     case 'user_edit': {
       const item = state.chatItems.find(
-        (it) => it.kind === 'user' && it.userSeq === event.user_seq,
+        (it) => it.kind === 'user' && it.id === event.message_id,
       )
       if (item && item.kind === 'user') item.content = event.text
       break
@@ -486,6 +487,7 @@ function parseHistory(history: HistoryMessage[], isScheduled = false): ChatItem[
         content: msg.content || '',
         images: msg.images,
         userSeq: userSeq++,
+        id: msg.id,
       })
       i++
       continue
@@ -876,10 +878,10 @@ export function useStore() {
     await api.interruptSession(name)
   }
 
-  async function revert(userSeq: number, message: string) {
+  async function revert(messageId: string, message: string) {
     if (!state.currentSession) return
     try {
-      const res = await api.revert(state.currentSession, userSeq, message)
+      const res = await api.revert(state.currentSession, messageId, message)
       if (res.status === 'rerun') {
         // Reconnect so init rebuilds chatItems from the truncated history and
         // the replayed buffer carries the new user message + fresh run.

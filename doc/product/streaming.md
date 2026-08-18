@@ -44,8 +44,8 @@ per-session 事件总线，维护：
 | 事件 | 字段 | 说明 |
 |---|---|---|
 | `init` | `history, is_running, token_count, max_context_tokens, plan_mode, additional_dirs` | 连接时首发，前端据此重建对话与状态 |
-| `user` | `text, user_seq` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`user_seq` 为该消息在所有 user 消息中的序号 |
-| `user_edit` | `user_seq, text` | revert 编辑尚未被模型读取的 steer 消息时发（消息已在 history 但模型未读到），前端就地更新对应 user 气泡 |
+| `user` | `id, text, user_seq` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`id` 为该消息的消息 id（revert 用），`user_seq` 为在真实 user 消息中的序号 |
+| `user_edit` | `message_id, text` | revert 编辑尚未被模型读取的 steer 消息时发（消息已在 history 但模型未读到），前端按 `message_id` 就地更新对应 user 气泡 |
 | `turn` | -- | 一个 LLM 回合开始，置 `is_running=true` |
 | `thinking` | `text` | 思考增量 |
 | `text` | `text` | 正文增量 |
@@ -76,7 +76,7 @@ per-session 事件总线，维护：
 * `init` 事件重建 `chatItems` 与状态；`user` 事件渲染用户消息（前端不再乐观 push，保证重连一致）。
 * `isStreaming` 由 `turn`/`done`/`cancelled`/`error` 事件驱动。
 * `sendMessage` 只 POST，不处理流。
-* `revert(userSeq, message)`：编辑历史用户消息并重发。返回 `rerun` 则重连 SSE 重建对话；返回 `queued` 则由 `user_edit` 事件就地更新气泡，不重连（详见 [history.md](./history.md)）。
+* `revert(messageId, message)`：编辑历史用户消息并重发。返回 `rerun` 则重连 SSE 重建对话；返回 `queued` 则由 `user_edit` 事件就地更新气泡，不重连（详见 [history.md](./history.md)）。
 * 网络断开自动重连（1s 退避）；切换 session 主动 abort 旧连接。
 * 每个流连接使用**不同的 URL**（`/stream?_t=<随机值>`）：Firefox 对同一 URL 的在途 GET 做 single-flight 合并——第二个请求会等第一个响应结束（SSE 永不结束，于是第二个 tab 打开同一 session 时 `/stream` 在浏览器缓存层无限排队，表现为"加载不出来"）。随机 query 让每个连接走独立的缓存槽，多开/重连互不阻塞。
 
