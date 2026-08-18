@@ -1,10 +1,11 @@
 import { reactive } from 'vue'
-import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem, PendingRequest, Project } from './types'
+import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem, PendingRequest, Project, ModelOption } from './types'
 import * as api from './api'
 
 interface State {
   sessions: Session[]
   projects: Project[]
+  models: ModelOption[]
   currentSession: string | null
   chatItems: ChatItem[]
   isStreaming: boolean
@@ -36,6 +37,7 @@ interface State {
 const state = reactive<State>({
   sessions: [],
   projects: [],
+  models: [],
   currentSession: null,
   chatItems: [],
   isStreaming: false,
@@ -726,9 +728,10 @@ function ensureSessionPolling() {
 
 export function useStore() {
   async function loadSessions() {
-    const [list, projects] = await Promise.all([api.getSessions(), api.getProjects()])
+    const [list, projects, models] = await Promise.all([api.getSessions(), api.getProjects(), api.getModels()])
     state.sessions = list
     state.projects = projects
+    state.models = models
     ensureSessionPolling()
   }
 
@@ -825,6 +828,17 @@ export function useStore() {
     state.planMode = mode === 'plan'
   }
 
+  async function selectModel(modelName: string) {
+    if (!state.currentSession) return
+    await api.setSessionModel(state.currentSession, modelName)
+    const s = state.sessions.find((x) => x.id === state.currentSession)
+    if (s) s.model = modelName
+    // VLM 开关跟随主模型：切换后图片按钮立即可见性同步（服务端下次 init
+    // 事件也会带新的 enable_vl）。
+    const opt = state.models.find((m) => m.name === modelName)
+    if (opt) state.enableVl = opt.enable_vl
+  }
+
   async function addDir(path: string) {
     if (!state.currentSession) return
     state.additionalDirs = await api.addDir(state.currentSession, path)
@@ -909,6 +923,7 @@ export function useStore() {
     sendMessage,
     stopAgent,
     setMode,
+    selectModel,
     addDir,
     removeDir,
     renameSession,

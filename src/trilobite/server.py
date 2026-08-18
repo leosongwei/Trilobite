@@ -13,7 +13,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.trilobite.agent import Agent
-from src.trilobite.config import init_config, get_config_dir, get_sessions_dir, DEFAULT_MAX_CONTEXT_TOKENS
+from src.trilobite.config import (
+    DEFAULT_MAX_CONTEXT_TOKENS,
+    get_config_dir,
+    get_default_model_name,
+    get_model,
+    get_sessions_dir,
+    init_config,
+    load_models,
+)
 from src.trilobite.file_access import detect_line_ending, materialize, normalize_dir, resolve_file_path
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
@@ -187,7 +195,13 @@ async def get_version():
 
 @app.get("/api/config")
 async def get_config():
-    return {"enable_vl": bool(config.get("enable_vl", False))}
+    return {"enable_vl": load_models(config)[0].enable_vl}
+
+
+@app.get("/api/models")
+async def list_models():
+    """The predefined model definitions (frontend shape, no api_key)."""
+    return [m.to_frontend_dict() for m in load_models(config)]
 
 
 def _scheduled_info(info: dict) -> dict:
@@ -256,6 +270,7 @@ async def list_sessions():
                     info["is_running"] = agent.is_running() if agent else False
                     info["history_length"] = len(agent.history) if agent else 0
                     info["plan_mode"] = agent._plan_mode if agent else info.get("plan_mode", False)
+                    info["model"] = agent._model_name if agent else info.get("model") or get_default_model_name(config)
                     info["sealed"] = agent.is_sealed() if agent else bool(info.get("subagent_type"))
                     # Scheduled sessions carry their schedule's live state
                     # (cron, run count, last state, whether the schedule still
@@ -297,6 +312,7 @@ async def create_session(req: SessionCreate):
 
     session_dir.mkdir(parents=True, exist_ok=True)
     info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": time.time()}
+    info["model"] = get_default_model_name(config)
     if req.project_id:
         info["project_id"] = req.project_id
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
@@ -413,6 +429,31 @@ async def set_session_project(name: str, req: SessionProjectRequest):
     return {"status": "ok"}
 
 
+class ModelSelectRequest(BaseModel):
+    model: str
+
+
+@app.put("/api/sessions/{name}/model")
+async def set_session_model(name: str, req: ModelSelectRequest):
+    """Switch the session's main model. The choice is persisted to
+    session.json and takes effect from the next send (an in-flight run picks
+    it up at its next completion call)."""
+    try:
+        get_model(config, req.model)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"unknown model: {req.model}")
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    info = json.loads((session_dir / "session.json").read_text())
+    info["model"] = req.model
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+    agent = agents.get(name)
+    if agent is not None and agent.kind == "main":
+        agent.apply_model(req.model)
+    return {"status": "ok", "model": req.model}
+
+
 def _get_or_create_agent(name: str) -> Agent:
     """Return the in-memory agent for a session, creating it from disk if needed.
 
@@ -471,6 +512,7 @@ def _get_or_create_agent(name: str) -> Agent:
         session_id=info.get("session_id"),
         registry=agents,
         cron_service=cron_service,
+        model_name=info.get("model"),
     )
     agent.set_plan_mode(info.get("plan_mode", False))
     agent.set_additional_dirs(info.get("additional_dirs", []))
@@ -497,9 +539,10 @@ async def send_message(name: str, req: MessageRequest):
     # The agent runs as an independent task; the HTTP response returns
     # immediately. Output is delivered through the /stream subscription
     # endpoint, so closing the browser never cancels an in-progress run.
-    if not config.get("enable_vl", False):
-        # Image support is disabled: do not save new attachments, but keep any
-        # images already stored in the session history.
+    if not agent.enable_vl:
+        # Image support is disabled for the session's current model: do not
+        # save new attachments, but keep any images already stored in the
+        # session history.
         req.images = None
     images: list[Image] = []
     for att in req.images or []:
@@ -697,6 +740,7 @@ async def get_session_info(name: str):
             "max_context_tokens": int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS)),
             "plan_mode": info.get("plan_mode", False),
             "additional_dirs": info.get("additional_dirs", []),
+            "model": info.get("model") or get_default_model_name(config),
         }
     return {
         "name": name,
@@ -706,6 +750,7 @@ async def get_session_info(name: str):
         "max_context_tokens": agent.max_context_tokens,
         "plan_mode": agent._plan_mode,
         "additional_dirs": [str(d) for d in agent._additional_dirs],
+        "model": agent._model_name,
     }
 
 

@@ -5,6 +5,18 @@ export interface ImageMeta {
   date?: string
 }
 
+// A predefined model definition from the backend config's ``models`` list
+// (frontend shape; the api_key never leaves the server).
+export interface ModelOption {
+  name: string
+  model: string
+  api_url: string
+  enable_vl: boolean
+  max_context: number
+  max_tokens: number
+  compaction_trigger_ratio: number
+}
+
 // A session-grouping folder. Projects are lightweight: they only record a
 // name and a working directory (the default for sessions created from the
 // project); member sessions keep their own working_dir and reference the
@@ -100,6 +112,8 @@ export interface Session {
   description?: string
   sealed?: boolean
   additional_dirs?: string[]
+  /** The session's chosen model (display name from the config's models list). */
+  model?: string
   /** Project (sidebar grouping) this main session belongs to. */
   project_id?: string
   created_at?: number

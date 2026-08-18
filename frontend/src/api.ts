@@ -1,4 +1,4 @@
-import type { Session, SessionInfo, HistoryMessage, SSEEvent, DiffRow, Project } from './types'
+import type { Session, SessionInfo, HistoryMessage, SSEEvent, DiffRow, Project, ModelOption } from './types'
 
 export interface ImageAttachment {
   mime_type: string
@@ -46,6 +46,19 @@ export async function getVersion(): Promise<string> {
   const res = await authFetch('/api/version')
   const data = await res.json()
   return data.version
+}
+
+export async function getModels(): Promise<ModelOption[]> {
+  const res = await authFetch('/api/models')
+  return res.json()
+}
+
+export async function setSessionModel(id: string, model: string): Promise<void> {
+  await authFetch(`/api/sessions/${encode(id)}/model`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  })
 }
 
 export async function getSessions(): Promise<Session[]> {

@@ -7,6 +7,27 @@ max_tokens: 65536
 log_level: WARNING
 compaction_trigger_ratio: 0.7
 enable_vl: false
+# 预定义模型列表：每个模型是一份独立的 API 配置（模型名、地址、密钥、VLM、
+# 上下文/输出上限、压缩阈值）。会话可随时切换主模型，切换后下一次发送生效。
+# 字段缺省时：enable_vl=false，max_context=400k，max_tokens=64k，
+# compaction_trigger_ratio=0.7。api_key/api_url 缺省时回退到顶层同名字段。
+# extra_body 会原样合并进请求体，用于思考模式等厂商特有字段，如
+# {"reasoning_effort": "max", "thinking": {"type": "enabled"}}。
+models:
+  - name: "DeepSeek"
+    model: "deepseek-chat"
+    api_key: "your-api-key-here"
+    api_url: "https://api.deepseek.com/v1"
+    enable_vl: false
+    max_context: 1048576
+    max_tokens: 65536
+    compaction_trigger_ratio: 0.7
+    extra_body:
+      reasoning_effort: max
+# 默认模型（models 中的 name）；未配置时取 models 第一项
+default_model: "DeepSeek"
+# 默认视觉模型，预留字段，暂未使用
+default_vl_model: ""
 # 服务监听地址：127.0.0.1 仅本机可访问；0.0.0.0 开放所有网卡（局域网内可访问，受 token 保护）
 host: "127.0.0.1"
 # 服务监听端口

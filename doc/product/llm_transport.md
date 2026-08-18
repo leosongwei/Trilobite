@@ -35,18 +35,17 @@ Agent 通过 HTTP 直接调用 OpenAI 兼容的 chat completions API（如 DeepS
 
 | 字段 | 来源 | 说明 |
 |---|---|---|
-| `model` | config | 模型名 |
+| `model` | 会话当前模型的 `model` | 模型名（会话切换模型后下一次请求生效） |
 | `messages` | history | 对话消息 |
 | `tools` | tool_call | 工具定义（可选） |
 | `stream` | 参数 | 是否流式 |
 | `stream_options` | 固定 | `{include_usage: true}`，流式时附带 token 用量 |
-| `reasoning_effort` | config | 思考强度，流式时发送 |
-| `thinking` | 固定 | `{type: enabled}`，流式时启用思考 |
-| `max_tokens` | config | **单次 completion 的输出 token 上限** |
+| `max_tokens` | 会话当前模型的 `max_tokens` | **单次 completion 的输出 token 上限** |
+| `reasoning_effort` / `thinking` 等 | 会话当前模型的 `extra_body` | 模型自定义字段，**原样合并**进请求体（如思考模式 `{"reasoning_effort": "max"}`） |
 
-`max_tokens`（单次输出上限，默认 65536）与 `max_context_tokens`（上下文窗口，默认 1048576）是两个不同维度：前者限制单轮回复能生成多少 token，后者限制整段历史能占多大窗口。
+`max_tokens`（单次输出上限，默认 65536）与 `max_context_tokens`（上下文窗口，默认 1048576）是两个不同维度：前者限制单轮回复能生成多少 token，后者限制整段历史能占多大窗口。两者都属于模型定义的一部分，随会话切换模型而更新。
 
-> 历史教训：若不传 `max_tokens`，API 默认 4096。配合 `reasoning_effort: max` 时，模型可能在 reasoning 阶段耗尽 4096 token，导致 `finish_reason=length`、正文 `content` 一字未生即被截断，表现为"卡住/空回复"。务必显式设置足够大的 `max_tokens`。
+> 历史教训：若不传 `max_tokens`，API 默认 4096。配合 `reasoning_effort: max` 时，模型可能在 reasoning 阶段耗尽 4096 token，导致 `finish_reason=length`、正文 `content` 一字未生即被截断，表现为"卡住/空回复"。务必显式设置足够大的 `max_tokens`。思考模式字段由用户在各模型的 `extra_body` 中显式声明，agent 不再内置注入。
 
 ## 流式响应解析
 
@@ -67,7 +66,7 @@ chunk.usage.total_tokens
 
 ## VLM / 图片输入
 
-当 `config.yaml` 中 `enable_vl: true` 时，前端在 send 按钮左侧显示“添加图片”按钮，允许一次附带多张图片。用户需自行把 `model` 改为支持视觉的模型（如 `gpt-4o` 等）。
+当会话当前模型的 `enable_vl: true` 时，前端在 send 按钮左侧显示“添加图片”按钮，允许一次附带多张图片。视觉能力是模型定义的一部分，切换主模型会同步切换该开关（详见 `models.md`）。
 
 图片上传流程：
 

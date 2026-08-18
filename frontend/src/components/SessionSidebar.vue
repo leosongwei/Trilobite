@@ -114,6 +114,11 @@
             <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
         </div>
+        <div v-if="modelSelectorVisible" class="info-row">
+          <span class="info-label">model:</span>
+          <span class="info-value" :title="currentModelDesc">{{ currentModelName }}</span>
+          <button class="model-conf-btn" title="模型配置：切换主模型，下一次发送生效" @click="openModelModal">Model Conf</button>
+        </div>
         <details>
           <summary>Allowed directories ({{ groupDirs.length }})</summary>
           <div v-if="groupDirs.length === 0" class="requests-empty">
@@ -163,6 +168,37 @@
         />
       </div>
     </div>
+    <div v-if="modelModalOpen" class="model-modal-overlay" @click.self="modelModalOpen = false">
+      <div class="model-modal">
+        <div class="model-modal-header">
+          <span class="model-modal-title">Model Configuration</span>
+          <button class="model-modal-close" title="关闭" @click="modelModalOpen = false"><span class="ms ms-close"></span></button>
+        </div>
+        <div class="model-modal-body">
+          <p class="model-modal-hint">切换主模型；当前生成结束后，下一次发送的消息将发给新模型。</p>
+          <label v-for="m in state.models" :key="m.name" class="model-option" :class="{ active: pendingModel === m.name }">
+            <input v-model="pendingModel" type="radio" :value="m.name" />
+            <span class="model-option-main">
+              <span class="model-name">{{ m.name }}</span>
+              <span class="model-id">{{ m.model }}</span>
+              <span v-if="m.enable_vl" class="model-badge vl" title="支持视觉输入">VLM</span>
+              <span class="model-check" v-if="currentModelName === m.name" title="当前模型">✓</span>
+            </span>
+            <span class="model-meta">
+              <span class="model-url" :title="m.api_url">{{ m.api_url }}</span>
+              <span class="model-limits">ctx {{ m.max_context.toLocaleString() }} · out {{ m.max_tokens.toLocaleString() }} · ratio {{ m.compaction_trigger_ratio }}</span>
+            </span>
+          </label>
+          <div v-if="state.models.length === 0" class="model-empty">
+            未配置模型（config.yaml 中缺少 models 列表）
+          </div>
+        </div>
+        <div class="model-modal-footer">
+          <button class="modal-btn secondary" @click="modelModalOpen = false">Cancel</button>
+          <button class="modal-btn primary" :disabled="!pendingModel || pendingModel === currentModelName" @click="confirmModel">Apply</button>
+        </div>
+      </div>
+    </div>
   </aside>
 </template>
 
@@ -187,7 +223,7 @@ const emit = defineEmits<{
 // highlighting always compares the working tree against it.
 const props = defineProps<{ base: string; requestsTick?: number; sidebarWidth: number }>()
 
-const { state, selectSession, createSession, deleteSession, addDir, renameSession, approveRequest, rejectRequest, createProject, deleteProject, setSessionProject } = useStore()
+const { state, selectSession, createSession, deleteSession, addDir, renameSession, approveRequest, rejectRequest, createProject, deleteProject, setSessionProject, selectModel } = useStore()
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
@@ -197,6 +233,9 @@ const editName = ref('')
 const sessionsHeight = ref(300)
 const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const requestsDetails = ref<HTMLDetailsElement | null>(null)
+// Model configuration modal (main sessions only).
+const modelModalOpen = ref(false)
+const pendingModel = ref('')
 // Expanded/collapsed state of project folders (in-memory only, not persisted).
 const collapsedProjects = ref(new Set<string>())
 // Subagent lists collapse per session; expanded only while explicitly
@@ -255,6 +294,35 @@ const projectSelectorVisible = computed(() => {
   return !!cur && !cur.parent_session
 })
 const projectSelValue = computed(() => currentSessionObj.value?.project_id ?? '')
+
+// Model selection applies to main sessions only (subagents inherit the
+// parent's model; scheduled sessions always use the default).
+const modelSelectorVisible = computed(() => {
+  if (state.isSubagent || state.isScheduled) return false
+  const cur = currentSessionObj.value
+  return !!cur && !cur.parent_session
+})
+const currentModelName = computed(() => currentSessionObj.value?.model ?? '')
+const currentModelDesc = computed(() => {
+  const m = state.models.find((x) => x.name === currentModelName.value)
+  return m ? `${m.model} · ${m.api_url}` : currentModelName.value
+})
+
+function openModelModal() {
+  pendingModel.value = currentModelName.value
+  modelModalOpen.value = true
+}
+
+async function confirmModel() {
+  const target = pendingModel.value
+  modelModalOpen.value = false
+  if (!target || target === currentModelName.value) return
+  try {
+    await selectModel(target)
+  } catch (err) {
+    alert(err instanceof Error ? err.message : String(err))
+  }
+}
 
 async function handleProjectChange(e: Event) {
   const v = (e.target as HTMLSelectElement).value
@@ -598,3 +666,159 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
   }
 }
 </script>
+
+<style scoped>
+.model-conf-btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  background: #0e639c;
+  color: #ffffff;
+  border: none;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.model-conf-btn:hover { background: #1177bb; }
+
+.model-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.model-modal {
+  width: 520px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.model-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.model-modal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #cccccc;
+}
+
+.model-modal-close {
+  background: none;
+  border: none;
+  color: #858585;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px;
+}
+.model-modal-close:hover { color: #ffffff; }
+
+.model-modal-body {
+  padding: 10px 14px;
+  overflow-y: auto;
+}
+
+.model-modal-hint {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: #858585;
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: #2d2d2d;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.model-option:hover { border-color: #0e639c; }
+.model-option.active { border-color: #0e639c; background: #2a3a4a; }
+.model-option input[type='radio'] { flex-shrink: 0; }
+
+.model-option-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.model-name { font-size: 13px; color: #cccccc; font-weight: 600; white-space: nowrap; }
+.model-id { font-size: 11px; color: #9cdcfe; white-space: nowrap; }
+.model-badge.vl {
+  font-size: 10px;
+  color: #7ee787;
+  border: 1px solid #7ee787;
+  border-radius: 3px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+.model-check { font-size: 12px; color: #3fb950; flex-shrink: 0; }
+
+.model-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  align-items: flex-end;
+}
+.model-url {
+  font-size: 10px;
+  color: #858585;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-limits { font-size: 10px; color: #6e7681; white-space: nowrap; }
+
+.model-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: #858585;
+  text-align: center;
+}
+
+.model-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid #3c3c3c;
+}
+.modal-btn {
+  padding: 5px 14px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid #3c3c3c;
+}
+.modal-btn.primary {
+  background: #0e639c;
+  color: #ffffff;
+  border-color: #0e639c;
+}
+.modal-btn.primary:hover:not(:disabled) { background: #1177bb; }
+.modal-btn.primary:disabled { opacity: 0.5; cursor: default; }
+.modal-btn.secondary { background: #3c3c3c; color: #cccccc; }
+.modal-btn.secondary:hover { background: #4a4a4a; }
+</style>

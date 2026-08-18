@@ -16,7 +16,12 @@ from typing import Any
 
 from src.trilobite.broker import StreamBroker
 from src.trilobite.compaction import should_compact, build_compact_prompt
-from src.trilobite.config import DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_TOKENS
+from src.trilobite.config import (
+    DEFAULT_MAX_CONTEXT_TOKENS,
+    DEFAULT_MAX_TOKENS,
+    get_default_model_name,
+    get_model,
+)
 from src.trilobite.file_access import normalize_dir
 from src.trilobite.history import MessageList, TurnsView
 from src.trilobite.messages import (
@@ -240,13 +245,21 @@ class Agent:
         scheduled: bool = False,
         scheduled_allow_dirs: list[str] | None = None,
         cron_service: Any = None,
+        model_name: str | None = None,
     ):
         self.name = name
         self.working_dir = Path(working_dir).resolve()
         self.session_dir = session_dir
         self.config = config
         self._session_id = session_id or _generate_session_id()
-        self._api_url = config["api_url"].rstrip("/")
+        # The session's chosen model (display name from the ``models`` config
+        # list). New sessions default to ``default_model``; a session restored
+        # from disk carries its persisted choice. Subagents inherit the
+        # parent's model at spawn time.
+        model_def = get_model(config, model_name or get_default_model_name(config))
+        self._model_name = model_def.name
+        self._api_key = model_def.api_key
+        self._api_url = model_def.api_url.rstrip("/")
         self._http = httpx.AsyncClient(
             base_url=self._api_url,
             headers={
@@ -256,7 +269,8 @@ class Agent:
             },
             timeout=httpx.Timeout(600, connect=10),
         )
-        self.model = config["model"]
+        self.model = model_def.model
+        self.enable_vl = model_def.enable_vl
         self._log = logging.getLogger(f"trilobite.agent.{name}")
         if not self._log.handlers:
             _fh = logging.FileHandler(self.session_dir / "agent.log", encoding="utf-8")
@@ -264,11 +278,10 @@ class Agent:
             self._log.addHandler(_fh)
         self._log.setLevel(config.get("log_level", "WARNING"))
         self._log.propagate = False
-        self.reasoning_effort = config.get("reasoning_effort", "max")
-        self.max_context_tokens = int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS))
-        self.max_tokens = int(config.get("max_tokens", DEFAULT_MAX_TOKENS))
-        self.compaction_trigger_ratio = float(config.get("compaction_trigger_ratio", 0.7))
-        self.system_prompt = SYSTEM_PROMPT
+        self.max_context_tokens = model_def.max_context
+        self.max_tokens = model_def.max_tokens
+        self.compaction_trigger_ratio = model_def.compaction_trigger_ratio
+        self._extra_body = model_def.extra_body or {}
         # Subagents override the system prompt with the role prefix + guidance
         # and use a fixed role permission (never plan/build mode).
         self._subagent_type: str | None = subagent_type
@@ -279,35 +292,36 @@ class Agent:
         # semantics stay intact; ``kind`` is what the frontend keys on.
         self._scheduled: bool = scheduled
         if subagent_type == "explore":
-            self.system_prompt = subagent_system_prompt("explore")
+            role_prompt = subagent_system_prompt("explore")
         elif subagent_type == "general":
-            self.system_prompt = subagent_system_prompt("general")
+            role_prompt = subagent_system_prompt("general")
         elif scheduled:
             # Scheduled agents: base system prompt + the shared subagent
             # prefix + a cron role prompt that injects the allowed directory
             # list (workspace + the owner's additional_dirs at creation) and
             # warns that out-of-workspace access aborts the run.
             allow_dirs = "\n".join(f"- {d}" for d in (scheduled_allow_dirs or [])) or "(none)"
-            self.system_prompt = (
+            role_prompt = (
                 SYSTEM_PROMPT + "\n\n" + SUBAGENT_ROLE_PREFIX + "\n\n"
                 + CRON_ROLE_PROMPT.format(allow_dirs=allow_dirs)
             )
+        else:
+            role_prompt = SYSTEM_PROMPT
         # Prepend a dynamic environment block (working dir, git, platform)
         # so the model knows where it is and prefers relative paths over
         # guessed absolute paths that drift outside the workspace.
         self._is_git_repo = self._detect_git_repo()
-        self.system_prompt = self._build_env_block() + "\n\n" + self.system_prompt
-        if self.config.get("enable_vl", False):
-            self.system_prompt += "\n\n" + IMAGE_READ_PROMPT
+        self._system_base = self._build_env_block() + "\n\n" + role_prompt
         # Append the available-skills listing (name/description/path only;
         # the full body loads on demand via the skill tool). Like the env
         # block and AGENTS.md, the listing is baked into the system message
-        # at session start and re-generated on compaction.
+        # at session start; the VLM block (below) depends on the model's
+        # enable_vl and is re-evaluated on model switches.
         listing = format_skill_listing(
             discover_skills(self.working_dir, self.config.get("skill_dirs", []))
         )
-        if listing:
-            self.system_prompt += "\n\n" + listing
+        self._skills_listing = listing
+        self.system_prompt = self._build_system_prompt()
         self.working_context = self._load_working_context()
         self.history = MessageList(session_dir / "history.json")
         self._turns = TurnsView(self.history)
@@ -388,15 +402,16 @@ class Agent:
             body["tools"] = tools
         body["stream"] = stream
         body["max_tokens"] = self.max_tokens
+        # Model-specific extra fields (e.g. ``reasoning_effort``/``thinking``
+        # for thinking models) are user-defined per model in ``extra_body``
+        # and merged verbatim into the request body.
+        body.update(self._extra_body)
         if stream:
             body["stream_options"] = {"include_usage": True}
-            if self.reasoning_effort:
-                body["reasoning_effort"] = self.reasoning_effort
-                body["thinking"] = {"type": "enabled"}
-            return _chat_completion_stream(self._http, self.config["api_key"], body, log=self._log)
+            return _chat_completion_stream(self._http, self._api_key, body, log=self._log)
         else:
             headers = {
-                "Authorization": f"Bearer {self.config['api_key']}",
+                "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
             }
             resp = await self._http.post("/chat/completions", json=body, headers=headers)
@@ -442,6 +457,46 @@ class Agent:
             "</env>",
         ]
         return "\n".join(lines)
+
+    def _build_system_prompt(self) -> str:
+        """Assemble the full system prompt from the role base plus the VLM
+        block and skills listing. The VLM part depends on the session's
+        current model (``enable_vl``), so model switches rebuild it."""
+        prompt = self._system_base
+        if self.enable_vl:
+            prompt += "\n\n" + IMAGE_READ_PROMPT
+        if self._skills_listing:
+            prompt += "\n\n" + self._skills_listing
+        return prompt
+
+    def apply_model(self, name: str) -> None:
+        """Switch the session to a predefined model.
+
+        The change takes effect from the next LLM request (i.e. the next
+        send; an in-flight run picks it up at its next completion call).
+        Persisting the choice to ``session.json`` is the caller's job; here
+        the agent's effective settings (endpoint, key, limits, VL flag) are
+        updated so ``chat_completion`` uses the new model. The system prompt
+        is rebuilt when the switch flips ``enable_vl``, and the persisted
+        SystemMessage is rewritten to match (the model change already
+        invalidates the provider cache, so touching the API prefix is free).
+        """
+        model_def = get_model(self.config, name)
+        self._model_name = model_def.name
+        self.model = model_def.model
+        self._api_key = model_def.api_key
+        self.enable_vl = model_def.enable_vl
+        self.max_context_tokens = model_def.max_context
+        self.max_tokens = model_def.max_tokens
+        self.compaction_trigger_ratio = model_def.compaction_trigger_ratio
+        self._extra_body = model_def.extra_body or {}
+        url = model_def.api_url.rstrip("/")
+        if url != self._api_url:
+            self._api_url = url
+            self._http.base_url = url
+        self.system_prompt = self._build_system_prompt()
+        if self.history and isinstance(self.history[0], SystemMessage):
+            self.history[0].content = self.system_prompt + self.working_context
 
     def _ensure_system_message(self):
         """Ensure history starts with a system message.
@@ -815,7 +870,7 @@ class Agent:
                     break
                 messages = self.history.get_api_messages(
                     image_dir=self.session_dir / "images",
-                    enable_vl=bool(self.config.get("enable_vl", False)),
+                    enable_vl=self.enable_vl,
                 )
                 # Record how many user messages the model is reading this turn
                 # (at get_api_messages time, before the stream drains). A steer
@@ -834,7 +889,7 @@ class Agent:
                 # any tool call it makes is intercepted (see the _need_compact
                 # branch below) so the tools never actually execute.
                 tools = self._permission.filter_definitions(
-                    enable_vl=bool(self.config.get("enable_vl", False))
+                    enable_vl=self.enable_vl
                 )
                 stream = await self.chat_completion(
                     messages=messages,
@@ -1008,7 +1063,7 @@ class Agent:
                                 execute_tool, tool_name, args, self.working_dir,
                                 self.session_dir, self._additional_dirs,
                                 self.config, self._register_proc, on_output)
-                            if "image" in tool_result and self.config.get("enable_vl", False):
+                            if "image" in tool_result and self.enable_vl:
                                 await self._append_image_user_message(tool_result["image"])
 
                         # Handle permission request from tool
@@ -1050,7 +1105,7 @@ class Agent:
                                     execute_tool, tool_name, args, self.working_dir,
                                     self.session_dir, self._additional_dirs,
                                     self.config, self._register_proc, on_output)
-                                if "image" in tool_result and self.config.get("enable_vl", False):
+                                if "image" in tool_result and self.enable_vl:
                                     await self._append_image_user_message(tool_result["image"])
                             # else: keep original error result
 
@@ -1304,7 +1359,7 @@ class Agent:
         snapshot["sealed"] = self._sealed
         snapshot["subagent_type"] = self._subagent_type
         snapshot["description"] = self._description
-        snapshot["enable_vl"] = bool(self.config.get("enable_vl", False))
+        snapshot["enable_vl"] = self.enable_vl
         return q, snapshot
 
     def detach_subscriber(self, q: asyncio.Queue) -> None:
@@ -1372,6 +1427,7 @@ class Agent:
             parent=self,
             depth=self._depth + 1,
             max_steps=int(self.config.get("subagent_max_steps", 100)),
+            model_name=self._model_name,
         )
         child.set_additional_dirs([str(d) for d in self._additional_dirs])
         child.add_user_message(prompt)
@@ -1597,7 +1653,7 @@ class Agent:
         await self._send_stream_event({"type": "turn"})
         messages = self.history.get_api_messages(
             image_dir=self.session_dir / "images",
-            enable_vl=bool(self.config.get("enable_vl", False)),
+            enable_vl=self.enable_vl,
         )
         stream = await self.chat_completion(messages=messages, stream=True, tools=None)
         model = ModelMessage()

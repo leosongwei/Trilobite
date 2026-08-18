@@ -92,7 +92,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 | `name` | `uuid4().hex`（纯 UUID，作为稳定标识兼目录名；子 session 没有人可读名字，前端用 `description` 展示） |
 | `working_dir` | 与父 agent 相同（同一工作区） |
 | `session_dir` | `sessions/<child_name>/`（扁平结构，与父平级） |
-| `config` | 继承父 agent 的 config（同一模型/API） |
+| `config` | 继承父 agent 的 config；模型（`model_name`）也继承父 session 的当前选择（详见 [models.md](./models.md)） |
 | permission | `ExploreSubagentPermission()` 或 `GeneralSubagentPermission()`，按 `subagent_type` |
 | `depth` | `parent.depth + 1`（父为 0，子为 1） |
 | `registry` | 父 agent 的 registry（同一个 `agents` 字典），见第八节 |
