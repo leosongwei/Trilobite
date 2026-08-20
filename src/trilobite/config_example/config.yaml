@@ -24,6 +24,16 @@ models:
     compaction_trigger_ratio: 0.7
     extra_body:
       reasoning_effort: max
+    # 是否伪装成 opencode 客户端发送请求头（User-Agent、session id 等）。
+    # 默认 true，对 DeepSeek 等线上服务保持兼容；对本地 llama.cpp 等不需要
+    # Bearer 认证的服务，设为 false 并留空 api_key 可省略 Authorization 头。
+    pretend_to_be_opencode: true
+  # 本地 llama.cpp 示例：关闭 opencode 伪装且 api_key 留空，避免发送 Bearer 头
+  # - name: "llama.cpp"
+  #   model: "local-model"
+  #   api_key: ""
+  #   api_url: "http://127.0.0.1:8080/v1"
+  #   pretend_to_be_opencode: false
 # 默认模型（models 中的 name）；未配置时取 models 第一项
 default_model: "DeepSeek"
 # 默认视觉模型，预留字段，暂未使用

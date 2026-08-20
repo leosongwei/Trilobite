@@ -128,18 +128,41 @@ BUILD_MODE_NOTIFICATION = (
 
 # ── httpx-based OpenAI-compatible streaming chat completions ────────────────
 
+def _build_request_headers(
+    api_key: str,
+    *,
+    pretend_to_be_opencode: bool = True,
+    stream: bool = False,
+) -> dict:
+    """Build request headers for an OpenAI-compatible chat completion.
+
+    When ``pretend_to_be_opencode`` is false we use a minimal standard header
+    set.  An empty ``api_key`` omits the ``Authorization`` header entirely,
+    which is needed for local servers (e.g. llama.cpp) that do not expect a
+    ``Bearer`` token.
+    """
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+    }
+    if stream:
+        headers["Accept"] = "text/event-stream"
+    # In opencode mode we always send Authorization (even with an empty key)
+    # for backwards compatibility.  In plain mode we only send it when a key
+    # is configured, which lets local servers like llama.cpp omit the header.
+    if pretend_to_be_opencode or api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
 async def _chat_completion_stream(
     http: httpx.AsyncClient,
     api_key: str,
+    pretend_to_be_opencode: bool,
     body: dict,
     log: logging.Logger | None = None,
 ):
     """Stream SSE chunks from an OpenAI-compatible chat/completions endpoint."""
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream",
-    }
+    headers = _build_request_headers(api_key, pretend_to_be_opencode=pretend_to_be_opencode, stream=True)
     if log:
         log.info("STREAM request model=%s messages=%d tools=%d reasoning=%s max_tokens=%s",
                  body.get("model"), len(body.get("messages", [])),
@@ -260,13 +283,17 @@ class Agent:
         self._model_name = model_def.name
         self._api_key = model_def.api_key
         self._api_url = model_def.api_url.rstrip("/")
-        self._http = httpx.AsyncClient(
-            base_url=self._api_url,
-            headers={
+        self._pretend_to_be_opencode = model_def.pretend_to_be_opencode
+        base_headers: dict[str, str] = {}
+        if self._pretend_to_be_opencode:
+            base_headers = {
                 "User-Agent": "opencode/1.18.4",
                 "x-session-affinity": self._session_id,
                 "X-Session-Id": self._session_id,
-            },
+            }
+        self._http = httpx.AsyncClient(
+            base_url=self._api_url,
+            headers=base_headers,
             timeout=httpx.Timeout(600, connect=10),
         )
         self.model = model_def.model
@@ -408,12 +435,18 @@ class Agent:
         body.update(self._extra_body)
         if stream:
             body["stream_options"] = {"include_usage": True}
-            return _chat_completion_stream(self._http, self._api_key, body, log=self._log)
+            return _chat_completion_stream(
+                self._http,
+                self._api_key,
+                self._pretend_to_be_opencode,
+                body,
+                log=self._log,
+            )
         else:
-            headers = {
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            }
+            headers = _build_request_headers(
+                self._api_key,
+                pretend_to_be_opencode=self._pretend_to_be_opencode,
+            )
             resp = await self._http.post("/chat/completions", json=body, headers=headers)
             resp.raise_for_status()
             return resp.json()
@@ -490,10 +523,23 @@ class Agent:
         self.max_tokens = model_def.max_tokens
         self.compaction_trigger_ratio = model_def.compaction_trigger_ratio
         self._extra_body = model_def.extra_body or {}
+        self._pretend_to_be_opencode = model_def.pretend_to_be_opencode
         url = model_def.api_url.rstrip("/")
         if url != self._api_url:
             self._api_url = url
             self._http.base_url = url
+        # Update opencode-style base headers when switching models.
+        base_headers: dict[str, str] = {}
+        if self._pretend_to_be_opencode:
+            base_headers = {
+                "User-Agent": "opencode/1.18.4",
+                "x-session-affinity": self._session_id,
+                "X-Session-Id": self._session_id,
+            }
+        self._http.headers.update(base_headers)
+        for key in ["User-Agent", "x-session-affinity", "X-Session-Id"]:
+            if not self._pretend_to_be_opencode and key in self._http.headers:
+                del self._http.headers[key]
         self.system_prompt = self._build_system_prompt()
         if self.history and isinstance(self.history[0], SystemMessage):
             self.history[0].content = self.system_prompt + self.working_context

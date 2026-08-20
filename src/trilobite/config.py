@@ -46,6 +46,7 @@ class Model:
     max_tokens: int = DEFAULT_MODEL_MAX_TOKENS
     compaction_trigger_ratio: float = DEFAULT_MODEL_COMPACTION_RATIO
     extra_body: dict | None = None  # extra fields merged into the request body
+    pretend_to_be_opencode: bool = True  # send opencode-style headers (User-Agent, session ids)
 
     def to_frontend_dict(self) -> dict:
         """Frontend-facing shape (never includes the api_key or extra_body)."""
@@ -79,6 +80,7 @@ def load_models(config: dict) -> list[Model]:
             max_tokens=int(m.get("max_tokens", DEFAULT_MODEL_MAX_TOKENS)),
             compaction_trigger_ratio=float(m.get("compaction_trigger_ratio", DEFAULT_MODEL_COMPACTION_RATIO)),
             extra_body=m.get("extra_body") or None,
+            pretend_to_be_opencode=bool(m.get("pretend_to_be_opencode", True)),
         ))
     if not models:
         # Legacy fallback: a single model synthesized from the top-level
@@ -97,6 +99,7 @@ def load_models(config: dict) -> list[Model]:
             max_tokens=int(config.get("max_tokens", DEFAULT_MAX_TOKENS)),
             compaction_trigger_ratio=float(config.get("compaction_trigger_ratio", DEFAULT_MODEL_COMPACTION_RATIO)),
             extra_body=legacy_extra or None,
+            pretend_to_be_opencode=True,
         ))
     return models
 

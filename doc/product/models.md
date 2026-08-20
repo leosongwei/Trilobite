@@ -20,16 +20,20 @@ models:
     compaction_trigger_ratio: 0.7       # 压缩阈值，默认 0.7
     extra_body:                         # 原样合并进请求体的附加字段，默认无
       reasoning_effort: max
+    pretend_to_be_opencode: true        # 是否发送 opencode 风格请求头，默认 true
 default_model: "DeepSeek"               # 默认模型（models 中的 name）
 default_vl_model: ""                    # 预留字段，暂未使用
 ```
 
 要点：
 
-- 字段缺省规则：`enable_vl=false`、`max_context=400k`、`max_tokens=64k`、`compaction_trigger_ratio=0.7`；`api_key`/`api_url` 缺省时回退到顶层同名字段。
-- `models` 列表为空/不存在时回退到**旧式顶层配置**（`model`/`api_key`/`api_url`/`max_context_tokens`/`max_tokens`/`compaction_trigger_ratio`/`enable_vl`），合成单个模型（name = 顶层 `model` 值），老配置无需改动即可继续使用。旧式顶层的 `reasoning_effort` 在该回退路径下会转成模型的 `extra_body`，保持原有的思考模式行为（注意：旧的流式请求还会额外注入 `thinking: {"type": "enabled"}`，新实现不再自动注入，如需完整保持原行为，在 `extra_body` 里显式加上该字段）。
+- 字段缺省规则：`enable_vl=false`、`max_context=400k`、`max_tokens=64k`、`compaction_trigger_ratio=0.7`、`pretend_to_be_opencode=true`；`api_key`/`api_url` 缺省时回退到顶层同名字段。
+- `models` 列表为空/不存在时回退到**旧式顶层配置**（`model`/`api_key`/`api_url`/`max_context_tokens`/`max_tokens`/`compaction_trigger_ratio`/`enable_vl`），合成单个模型（name = 顶层 `model` 值），老配置无需改动即可继续使用。旧式顶层的 `reasoning_effort` 在该回退路径下会转成模型的 `extra_body`，保持原有的思考模式行为（注意：旧的流式请求还会额外注入 `thinking: {"type": "enabled"}`，新实现不再自动注入，如需完整保持原行为，在 `extra_body` 里显式加上该字段）。该回退路径的 `pretend_to_be_opencode` 固定为 `true`。
 - `default_model` 未配置或指向未知模型时，取 `models` 列表第一项。
 - `extra_body` 用于思考模式等厂商特有字段（如 `{"reasoning_effort": "max"}`），agent 将其**原样合并**进 chat completions 请求体，不再内置注入任何思考字段。
+- `pretend_to_be_opencode` 控制请求头风格：
+  - `true`（默认）使用 opencode 伪装头，包括 `User-Agent: opencode/1.18.4`、`x-session-affinity`、`X-Session-Id`，并始终携带 `Authorization: Bearer <api_key>`。
+  - `false` 使用最小标准头集；当 `api_key` 为空（`api_key: ""`）时**不发送** `Authorization` 头，适用于本地 llama.cpp 等不需要 Bearer 认证的服务器。
 
 ## 会话模型选择
 
@@ -49,7 +53,8 @@ default_vl_model: ""                    # 预留字段，暂未使用
 - `GET /api/models` 返回模型定义列表（前端形状，**不含 api_key / extra_body**）。
 - `PUT /api/sessions/{name}/model` 校验模型名并持久化到 `session.json`；unknown 模型返回 400。
 - `GET /api/sessions` 与 `/api/sessions/{name}/info` 携带会话当前模型名。
-- 切换模型时 agent 同步更新：API 地址（httpx 客户端 base_url）、密钥、`enable_vl`、`max_context`/`max_tokens`/`compaction_trigger_ratio`、`extra_body`。
+- 切换模型时 agent 同步更新：API 地址（httpx 客户端 base_url）、密钥、`enable_vl`、`max_context`/`max_tokens`/`compaction_trigger_ratio`、`extra_body`、`pretend_to_be_opencode`。
+- `pretend_to_be_opencode` 切换时同步更新 httpx 客户端的 base headers：开启则加入 `User-Agent`/`x-session-affinity`/`X-Session-Id`；关闭则移除这些头。
 - 切换导致 `enable_vl` 变化时，agent 重建系统提示词（VLM 说明块）并更新历史首条 system 消息——切换模型本身已使 provider 缓存失效，改写 API 前缀无额外代价。
 - 图片附件在 `/api/sessions/{name}/message` 端按**当前模型的 `enable_vl`** 决定是否保存（`enable_vl: false` 时丢弃本次附件，历史中已有的图片保留）。
 

@@ -8,7 +8,7 @@ Agent 通过 HTTP 直接调用 OpenAI 兼容的 chat completions API（如 DeepS
 
 ## HTTP Headers
 
-发送的请求 header：
+发送的请求 header 由模型定义的 `pretend_to_be_opencode` 字段控制。默认 `true`：
 
 | Header | 值 | 说明 |
 |---|---|---|
@@ -20,6 +20,16 @@ Agent 通过 HTTP 直接调用 OpenAI 兼容的 chat completions API（如 DeepS
 | `X-Session-Id` | `ses_xxxxxxxxxx...` | 同上 |
 
 不含任何 `X-Stainless-*` header。
+
+当 `pretend_to_be_opencode: false` 时，请求头退化为最小标准集：
+
+| Header | 值 | 说明 |
+|---|---|---|
+| `Authorization` | `Bearer <api_key>` | 仅当 `api_key` 非空时发送 |
+| `Content-Type` | `application/json` | -- |
+| `Accept` | `text/event-stream` | 流式请求需要 |
+
+此设置用于本地 llama.cpp 等不需要 Bearer 认证或不需要 opencode 伪装头的服务端。将对应模型的 `api_key` 留空（空字符串），同时设置 `pretend_to_be_opencode: false`，即可完全省略 `Authorization` 头，请求头中只保留 `Content-Type` 和（流式时的）`Accept`。
 
 ## Session ID
 
