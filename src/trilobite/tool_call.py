@@ -92,77 +92,45 @@ TASK_TOOL_DEF: dict = {
 }
 
 
-# Virtual tool: schedule a prompt to run later as an unattended scheduled
-# agent (cron). Only exposed by the primary modes (build/plan); its execution
-# -- creating the schedule, firing scheduled agents on time -- is handled by
-# the CronService via Agent, not here. There is deliberately no "edit" tool:
-# schedules are immutable once created (adjust by delete + create).
-CRON_CREATE_DEF: dict = {
+# Virtual tool: suspend this session until a target time. Exposed by the
+# primary modes (build/plan); its execution -- registering the suspension
+# with the TimerService -- is handled in Agent, not here. Waking re-enters
+# this same conversation with a synthetic wake-up message.
+SLEEP_UNTIL_DEF: dict = {
     "type": "function",
     "function": {
-        "name": "cron_create",
+        "name": "sleep_until",
         "description": (
-            "Schedule a prompt to run later as an unattended scheduled agent. "
-            "The agent fires at the cron time with a FRESH context (only this "
-            "prompt), runs to completion, and its results are NOT returned to "
-            "you -- view runs in the sidebar under the schedule's session. "
-            "Use for periodic/unattended work: daily checks that write to a "
-            "file, reminders, recurring reports. The scheduled agent is "
-            "general-role: it can edit files in the workspace. In plan mode "
-            "this tool is blocked. Use recurring=false for a one-shot "
-            "'remind me at <time>' schedule. Adjust a schedule by deleting "
-            "and recreating it."
+            "Suspend this session until a target time, then resume this "
+            "conversation automatically. No tokens are spent while suspended. "
+            "Use it when future work depends on time passing: waiting for a "
+            "build/CI to finish, resuming a task later or tomorrow, reminding "
+            "the user at a specific moment, or polling on an interval (wake, "
+            "check, sleep again). Other tool calls in the same turn run to "
+            "completion before the suspension starts, so finish everything "
+            "you can do now before sleeping."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "name": {
+                "until": {
                     "type": "string",
-                    "description": "Short human-readable name for the schedule (shown in the sidebar instead of a prompt preview). Required: always give the task a concise name.",
-                },
-                "cron": {
-                    "type": "string",
-                    "description": "5-field cron expression in local time: 'minute hour day-of-month month day-of-week' (e.g. '30 9 * * *' = every day at 09:30; '*/5 * * * *' = every 5 minutes).",
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "Self-contained task prompt (max 8 KiB) injected as the scheduled agent's only instruction at each fire.",
-                },
-                "recurring": {
-                    "type": "boolean",
-                    "description": "true (default) = fire on every cron match until deleted. false = fire once at the next match, then auto-delete.",
+                    "description": (
+                        "Target time, local timezone. Formats: relative "
+                        "'+30m' / '+2h' / '+1d' / '+90s' (a bare '+30' means "
+                        "minutes) -- preferred, since you may not know the "
+                        "current time; absolute 'YYYY-MM-DD HH:MM'; 'MM-DD "
+                        "HH:MM' (this year, next year if already past); "
+                        "'HH:MM' (today, tomorrow if already past). Must be "
+                        "5s to 365d from now; parse errors include the "
+                        "current local time."
+                    ),
                 },
             },
-            "required": ["name", "cron", "prompt"],
+            "required": ["until"],
         },
     },
 }
-
-CRON_LIST_DEF: dict = {
-    "type": "function",
-    "function": {
-        "name": "cron_list",
-        "description": "List this session's cron schedules (id, cron expression, recurring, run count, last state, next fire time). Use the ids with cron_delete.",
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    },
-}
-
-CRON_DELETE_DEF: dict = {
-    "type": "function",
-    "function": {
-        "name": "cron_delete",
-        "description": "Delete a cron schedule by id (from cron_list / cron_create). Future fires stop; the schedule's session stays in the sidebar for reviewing past runs.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "Schedule id to delete."},
-            },
-            "required": ["id"],
-        },
-    },
-}
-
-CRON_TOOL_DEFS: tuple[dict, ...] = (CRON_CREATE_DEF, CRON_LIST_DEF, CRON_DELETE_DEF)
 
 
 def execute_tool(

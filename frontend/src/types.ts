@@ -67,9 +67,8 @@ export type SSEEvent =
   | { type: 'subagents'; parent: string; children: SubagentChild[] }
   | { type: 'subagent_state'; session: string; state: string }
   | { type: 'subagent_permission_request'; child_session: string; child_type: string; child_description: string; path: string; tool: string; message: string }
-  | { type: 'cron_fire'; schedule_id: string; session: string; description: string; state: string }
-  | { type: 'cron_fire_end'; session: string; state: string }
-  | { type: 'cron_missed'; schedule_id: string; session: string }
+  | { type: 'sleep_start'; session: string; until: number }
+  | { type: 'sleep_end'; session: string }
   | { type: 'done' }
   | { type: 'cancelled' }
   | { type: 'interrupted' }
@@ -118,24 +117,12 @@ export interface Session {
   project_id?: string
   created_at?: number
   updated_at?: number
-  // Main sessions: whether the session owns a schedule that still needs to
-  // fire (completed one-shots and deleted schedules don't count). The
-  // sidebar shows a blue dot and sorts such sessions to the top.
-  has_schedule?: boolean
-  // Scheduled sessions (kind === 'scheduled'): live schedule state, refreshed
-  // by the session poll. The sidebar dot renders from is_running/last_state:
-  // pending (never fired) -> light blue, running -> pulsing green,
-  // last_state error -> red, finished -> grey. schedule_active flips false
-  // after cron_delete or a one-shot's single fire.
-  schedule_id?: string
-  schedule_active?: boolean
-  recurring?: boolean
-  deleted?: boolean
-  cron?: string
-  run_count?: number
-  last_state?: string
-  next_fire_at?: string
-  prompt?: string
+  // Whether the session is suspended via sleep_until (the sidebar shows a
+  // blue dot and sorts such sessions to the top). sleep_until is the armed
+  // target (epoch seconds) for the banner/tooltip; both are refreshed by the
+  // sessions poll and kept live by the sleep_start/sleep_end SSE events.
+  has_sleep?: boolean
+  sleep_until?: number | null
 }
 
 export interface SessionInfo {

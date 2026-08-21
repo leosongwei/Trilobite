@@ -27,7 +27,6 @@ interface State {
   // session stops running (an unanswered request blocks its run).
   pendingRequests: PendingRequest[]
   isSubagent: boolean
-  isScheduled: boolean
   sealed: boolean
   subagentType: string | null
   subagentDescription: string
@@ -50,7 +49,6 @@ const state = reactive<State>({
   additionalDirs: [],
   pendingRequests: [],
   isSubagent: false,
-  isScheduled: false,
   sealed: false,
   subagentType: null,
   subagentDescription: '',
@@ -168,8 +166,7 @@ function dropEndedSessionRequests() {
 function handleSSEEvent(event: SSEEvent) {
   switch (event.type) {
     case 'init': {
-      state.isScheduled = event.kind === 'scheduled'
-      state.chatItems = parseHistory(event.history, state.isScheduled)
+      state.chatItems = parseHistory(event.history)
       state.isStreaming = event.is_running
       state.tokenCount = event.token_count
       state.maxTokens = event.max_context_tokens
@@ -185,11 +182,11 @@ function handleSSEEvent(event: SSEEvent) {
     }
 
     case 'user': {
-      // A scheduled agent's fire opens with the synthetic "⏰ 定时触发" line;
-      // render a run-boundary divider before it so past runs stay visually
-      // separated (matches parseHistory on reconnect).
-      if (state.isScheduled && event.text.startsWith('⏰')) {
-        state.chatItems.push({ kind: 'divider', text: '定时运行' })
+      // A wake-up opens with the synthetic "⏰ 定时唤醒" line; render a
+      // run-boundary divider before it so the suspension boundary stays
+      // visible (matches parseHistory on reconnect).
+      if (event.text.startsWith('⏰')) {
+        state.chatItems.push({ kind: 'divider', text: '定时唤醒' })
       }
       state.chatItems.push({
         kind: 'user',
@@ -375,28 +372,25 @@ function handleSSEEvent(event: SSEEvent) {
       })
       break
 
-    case 'cron_fire': {
-      // A scheduled agent started a fire; mark its sidebar node running.
-      const s = state.sessions.find((x) => x.id === event.session)
-      if (s) s.is_running = true
-      break
-    }
-
-    case 'cron_fire_end': {
-      // A scheduled fire finished; the scheduled agent may have written files.
-      state.fsRefreshTick++
+    case 'sleep_start': {
+      // sleep_until armed: light up the sidebar's blue dot immediately (the
+      // sessions poll would catch up within 3s anyway).
       const s = state.sessions.find((x) => x.id === event.session)
       if (s) {
-        s.is_running = false
-        s.last_state = event.state
-        s.run_count = (s.run_count ?? 0) + 1
+        s.has_sleep = true
+        s.sleep_until = event.until
       }
       break
     }
 
-    case 'cron_missed': {
-      // A fire was skipped because the previous one was still running; the
-      // session poll will show the fresh run count. Nothing to render.
+    case 'sleep_end': {
+      // The suspension ended (timer wake-up, early user message, or wake
+      // from the UI); clear the dot. The sessions poll is the fallback.
+      const s = state.sessions.find((x) => x.id === event.session)
+      if (s) {
+        s.has_sleep = false
+        s.sleep_until = null
+      }
       break
     }
 
@@ -433,29 +427,25 @@ function handleSSEEvent(event: SSEEvent) {
   state.streamTick++
 }
 
-function parseHistory(history: HistoryMessage[], isScheduled = false): ChatItem[] {
+function parseHistory(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = []
   let i = 0
   let userSeq = 0
-  // A scheduled run boundary comes from a CompactMarker in the persisted
-  // history; the synthetic "⏰" user message right after it must not draw a
-  // second divider (the live-stream path still keys on "⏰" because markers
-  // are not streamed).
-  let lastWasRunBoundary = false
+  // A wake-up boundary renders from the synthetic "⏰" user message; a
+  // compact marker renders as the compaction divider. When the two are
+  // adjacent (legacy scheduled-session history stores a marker right before
+  // each "⏰" fire message) only one divider is drawn.
+  let lastWasDivider = false
 
   while (i < history.length) {
     const msg = history[i]
 
     // System messages: the initial prompt is invisible; a compact marker
-    // renders as a divider line ("定时运行" for scheduled run boundaries).
+    // renders as a divider line.
     if (msg.role === 'system') {
       if (msg.compact_marker) {
-        if (isScheduled) {
-          items.push({ kind: 'divider', text: '定时运行' })
-          lastWasRunBoundary = true
-        } else {
-          items.push({ kind: 'compact' })
-        }
+        items.push({ kind: 'compact' })
+        lastWasDivider = true
       }
       i++
       continue
@@ -477,13 +467,12 @@ function parseHistory(history: HistoryMessage[], isScheduled = false): ChatItem[
         i++
         continue
       }
-      // Scheduled agents: each fire opens with the synthetic "⏰ 定时触发"
-      // line -- draw a run-boundary divider before it, unless the preceding
-      // CompactMarker already drew one.
+      // A wake-up message ("⏰ 定时唤醒") draws a divider before it, unless
+      // the preceding marker already drew one.
       if ((msg.content || '').startsWith('⏰')) {
-        if (!lastWasRunBoundary) items.push({ kind: 'divider', text: '定时运行' })
+        if (!lastWasDivider) items.push({ kind: 'divider', text: '定时唤醒' })
       }
-      lastWasRunBoundary = false
+      lastWasDivider = false
       items.push({
         kind: 'user',
         content: msg.content || '',
@@ -690,23 +679,6 @@ document.addEventListener('visibilitychange', () => {
 async function loadSessionsRefresher() {
   try {
     const [list, projects] = await Promise.all([api.getSessions(), api.getProjects()])
-    // A scheduled agent's fire reuses the idle instance (its broker keeps the
-    // SSE stream alive), so the stream normally follows each fire live. The
-    // reconnect below is a safety net: after a restart, or if the stream was
-    // dropped for any reason, the poll catches the session flipping to
-    // running and re-attaches. (Fires shorter than the poll interval are
-    // missed live but still land in history.)
-    const wasRunning = new Map(state.sessions.map((s) => [s.id, s.is_running]))
-    const cur = list.find((s) => s.id === state.currentSession)
-    if (
-      cur &&
-      cur.kind === 'scheduled' &&
-      cur.is_running &&
-      !wasRunning.get(cur.id) &&
-      !state.isStreaming
-    ) {
-      connectStream(cur.id)
-    }
     state.sessions = list
     state.projects = projects
   } catch {
@@ -742,7 +714,6 @@ export function useStore() {
     state.statusText = null
     state.isStreaming = false
     state.isSubagent = false
-    state.isScheduled = false
     state.sealed = false
     state.subagentType = null
     state.subagentDescription = ''

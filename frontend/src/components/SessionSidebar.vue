@@ -59,11 +59,8 @@
           >
             <span class="session-label" :title="childLabel(c)">
               <span v-if="c.is_running" class="running-dot" title="running"></span>
-              <span v-if="c.kind === 'scheduled'" class="child-badge scheduled" title="scheduled agent"><span class="ms ms-schedule"></span></span>
-              <span v-else class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
-              <span v-if="c.kind === 'scheduled' && !c.is_running && c.last_state === 'error'" class="stopped-dot" title="error"></span>
-              <span v-else-if="c.kind === 'scheduled' && !c.is_running && c.last_state" class="sealed-dot" title="finished"></span>
-              <span v-else-if="c.kind === 'scheduled' && !c.is_running" class="pending-dot" title="pending"></span>
+              <span v-if="c.subagent_type" class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
+              <span v-if="c.has_sleep" class="pending-dot" title="suspended (sleep_until)"></span>
               <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
               {{ c.description || c.name }}
             </span>
@@ -253,11 +250,6 @@ watch(
 
 // Requests list display helpers: which agent asked, and for what.
 function childLabel(c: Session): string {
-  if (c.kind === 'scheduled') {
-    const parts = [`cron: ${c.cron || ''}`, `runs: ${c.run_count ?? 0}`, `last: ${c.last_state ?? '-'}`]
-    if (c.schedule_active === false) parts.push(c.deleted ? '(schedule deleted)' : '(completed)')
-    return parts.join(' · ')
-  }
   return c.subagent_type || ''
 }
 
@@ -286,19 +278,19 @@ const currentSessionName = computed(() => {
 const currentSessionCwd = computed(() => currentSessionObj.value?.working_dir ?? '')
 
 // The project selector only makes sense for top-level main sessions: a
-// subagent/scheduled session is nested under its parent and never rendered
-// as an independent row.
+// subagent session is nested under its parent and never rendered as an
+// independent row.
 const projectSelectorVisible = computed(() => {
-  if (state.isSubagent || state.isScheduled) return false
+  if (state.isSubagent) return false
   const cur = currentSessionObj.value
   return !!cur && !cur.parent_session
 })
 const projectSelValue = computed(() => currentSessionObj.value?.project_id ?? '')
 
 // Model selection applies to main sessions only (subagents inherit the
-// parent's model; scheduled sessions always use the default).
+// parent's model).
 const modelSelectorVisible = computed(() => {
-  if (state.isSubagent || state.isScheduled) return false
+  if (state.isSubagent) return false
   const cur = currentSessionObj.value
   return !!cur && !cur.parent_session
 })
@@ -405,7 +397,7 @@ interface SessionNode extends Session {
 // sessions nested under it when expanded) followed by every top-level
 // session and its subagent children. Projects come first, in creation
 // order; unassigned sessions follow. Each row carries its persistent
-// status dot (running > pending cron > idle).
+// status dot (running > suspended > idle).
 type SessionRow =
   | { key: string; kind: 'project'; project: Project; children: Session[]; dot: SessionStatus }
   | { key: string; kind: 'session'; session: SessionNode; children: Session[]; project: boolean; dot: SessionStatus }
@@ -456,13 +448,13 @@ const sessionRows = computed<SessionRow[]>(() => {
       return (b.created_at ?? 0) - (a.created_at ?? 0)
     }),
   })
-  // Running sessions first, then sessions with a schedule still to fire
+  // Running sessions first, then sessions suspended via sleep_until
   // (blue dot), then by last activity (updated_at descending, history.json
   // mtime set by the server; missing timestamps of legacy sessions count
   // as zero), then by name.
   const sortTop = (list: Session[]) =>
     list.slice().sort((a, b) => {
-      const rank = (s: Session) => (s.is_running ? 2 : s.has_schedule ? 1 : 0)
+      const rank = (s: Session) => (s.is_running ? 2 : s.has_sleep ? 1 : 0)
       const byRank = rank(b) - rank(a)
       if (byRank !== 0) return byRank
       const byTime = (b.updated_at ?? b.created_at ?? 0) - (a.updated_at ?? a.created_at ?? 0)

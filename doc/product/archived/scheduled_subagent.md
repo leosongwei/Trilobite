@@ -1,6 +1,6 @@
-# 定时 Subagent（Scheduled Subagent / Cron）
+# 定时 Subagent（Scheduled Subagent / Cron）【已作废】
 
-> 状态：**已实现**。本文是定时 subagent 功能的产品规格，参考调研见第二节（opencode、kimi-code）。
+> 状态：**已作废**。该功能已被移除（由 `sleep_until` 定时挂起取代，见 `doc/product/timer.md`）。本文仅作历史规格存档：`cron_create`/`cron_list`/`cron_delete` 工具、`CronService`、`CronSubagentPermission`、scheduled session 与 `schedules.json` 均已从代码中删除。磁盘上遗留的 `schedules.json` 与 `kind: "scheduled"` 旧 session 不再被读取，旧定时 session 退化为挂在父 session 下的普通只读历史会话。参考调研见第二节（opencode、kimi-code）。
 
 ## 一、概述
 

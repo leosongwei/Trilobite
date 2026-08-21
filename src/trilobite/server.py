@@ -27,14 +27,14 @@ from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
 from src.trilobite.projects import create_project as projects_create, delete_project as projects_delete, load_projects
-from src.trilobite.scheduler import CronService, Schedule
+from src.trilobite.timer import TimerService
 from src.trilobite.version import get_version as get_pkg_version
 
 app = FastAPI(title="Trilobite")
 
 agents: dict[str, Agent] = {}
 config: dict = {}
-cron_service: CronService | None = None
+timer_service: TimerService | None = None
 
 #: Max file size the file manager will read/diff/save (bytes). Larger files
 #: are refused and the agent's read tool (paged) is the suggested fallback.
@@ -169,18 +169,18 @@ def _decode_data_url(data_url: str) -> bytes:
 
 @app.on_event("startup")
 async def startup():
-    global config, cron_service
+    global config, timer_service
     config = init_config()
-    # Reload persisted cron schedules and resume the tick loop.
-    cron_service = CronService(get_sessions_dir(), config, agents)
-    cron_service.load_all()
-    cron_service.start()
+    # Reload persisted sleep_until suspensions and resume the tick loop.
+    timer_service = TimerService(get_sessions_dir(), _get_or_create_agent)
+    timer_service.load_all()
+    timer_service.start()
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    if cron_service is not None:
-        await cron_service.shutdown()
+    if timer_service is not None:
+        await timer_service.shutdown()
 
 
 @app.get("/api/cwd")
@@ -204,58 +204,6 @@ async def list_models():
     return [m.to_frontend_dict() for m in load_models(config)]
 
 
-def _scheduled_info(info: dict) -> dict:
-    """Live schedule state for a scheduled session, read from its owner's
-    schedules.json (so a deleted schedule shows up as inactive even after a
-    restart, with no extra state to keep in sync). One-shot schedules stay
-    in the file after their single fire (``completed``) and cron_delete
-    marks entries ``deleted`` instead of removing them, so the endpoint can
-    still report the final run state; the frontend renders the dot from
-    ``last_state`` (pending / running / error / finished)."""
-    parent = info.get("parent_session")
-    schedule_id = info.get("schedule_id")
-    if not parent or not schedule_id:
-        return {"schedule_active": False, "cron": "", "run_count": 0, "last_state": None, "recurring": None, "deleted": False, "next_fire_at": None, "prompt": ""}
-    path = get_sessions_dir() / parent / "schedules.json"
-    active = False
-    cron = ""
-    run_count = 0
-    last_state = None
-    recurring = None
-    deleted = False
-    next_fire_at = None
-    prompt = ""
-    if path.is_file():
-        try:
-            data = json.loads(path.read_text())
-            for s in data.get("schedules", []):
-                if s.get("id") == schedule_id:
-                    active = not s.get("completed", False) and not s.get("deleted", False)
-                    cron = s.get("cron", "")
-                    run_count = s.get("run_count", 0)
-                    last_state = s.get("last_state")
-                    recurring = bool(s.get("recurring", True))
-                    deleted = bool(s.get("deleted", False))
-                    prompt = s.get("prompt", "")
-                    if active:
-                        nxt = Schedule.from_dict(s).next_fire_at()
-                        if nxt is not None:
-                            next_fire_at = nxt.strftime("%Y-%m-%d %H:%M")
-                    break
-        except Exception:
-            pass
-    return {
-        "schedule_active": active,
-        "cron": cron,
-        "run_count": run_count,
-        "last_state": last_state,
-        "recurring": recurring,
-        "deleted": deleted,
-        "next_fire_at": next_fire_at,
-        "prompt": prompt,
-    }
-
-
 @app.get("/api/sessions")
 async def list_sessions():
     sessions_dir = get_sessions_dir()
@@ -272,18 +220,12 @@ async def list_sessions():
                     info["plan_mode"] = agent._plan_mode if agent else info.get("plan_mode", False)
                     info["model"] = agent._model_name if agent else info.get("model") or get_default_model_name(config)
                     info["sealed"] = agent.is_sealed() if agent else bool(info.get("subagent_type"))
-                    # Scheduled sessions carry their schedule's live state
-                    # (cron, run count, last state, whether the schedule still
-                    # exists) so the sidebar can render the clock node and a
-                    # "stopped" marker after cron_delete.
-                    if info.get("kind") == "scheduled":
-                        sched_info = _scheduled_info(info)
-                        info.update(sched_info)
-                    else:
-                        # Main sessions: whether the session owns any schedule
-                        # that still needs to fire. Feeds the sidebar's blue
-                        # dot and top-of-list sorting.
-                        info["has_schedule"] = cron_service.has_active(sd.name) if cron_service else False
+                    # A session suspended via sleep_until shows the sidebar's
+                    # blue dot and sorts to the top; the target time feeds the
+                    # tooltip. Suspended sessions can also be woken from the
+                    # UI (POST /wake).
+                    info["has_sleep"] = timer_service.is_sleeping(sd.name) if timer_service else False
+                    info["sleep_until"] = timer_service.sleep_until(sd.name) if timer_service else None
                     # Last activity: history.json mtime (written at the end of
                     # each run); never-messaged sessions fall back to created_at.
                     hist = sd / "history.json"
@@ -323,7 +265,7 @@ async def create_session(req: SessionCreate):
         session_dir=session_dir,
         config=config,
         registry=agents,
-        cron_service=cron_service,
+        timer_service=timer_service,
     )
     info["session_id"] = agent.session_id
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
@@ -364,17 +306,10 @@ async def delete_session(name: str):
             agents.pop(n)
         sd = sessions_dir / n
         if sd.exists():
-            # Deleting a scheduled session removes its schedule from the owner.
-            try:
-                info = json.loads((sd / "session.json").read_text())
-                if info.get("kind") == "scheduled" and cron_service is not None:
-                    cron_service.remove_schedule_by_session(n)
-            except Exception:
-                pass
             import shutil
             shutil.rmtree(sd)
-    if cron_service is not None:
-        cron_service.remove_session(name)
+    if timer_service is not None:
+        timer_service.remove_session(name)
     return {"status": "ok"}
 
 
@@ -487,25 +422,6 @@ def _get_or_create_agent(name: str) -> Agent:
         agent.set_additional_dirs(info.get("additional_dirs", []))
         agents[name] = agent
         return agent
-    if info.get("kind") == "scheduled":
-        # A scheduled session restored from disk: rebuild as an idle scheduled
-        # agent for viewing. It rejects new messages; the next cron fire
-        # reuses (or replaces) it.
-        agent = Agent(
-            name=name,
-            working_dir=info["working_dir"],
-            session_dir=session_dir,
-            config=config,
-            session_id=info.get("session_id"),
-            registry=agents,
-            scheduled=True,
-            scheduled_allow_dirs=info.get("additional_dirs", []),
-            max_steps=int(config.get("subagent_max_steps", 100)),
-            model_name=info.get("model"),
-        )
-        agent.set_additional_dirs(info.get("additional_dirs", []))
-        agents[name] = agent
-        return agent
     agent = Agent(
         name=name,
         working_dir=info["working_dir"],
@@ -513,7 +429,7 @@ def _get_or_create_agent(name: str) -> Agent:
         config=config,
         session_id=info.get("session_id"),
         registry=agents,
-        cron_service=cron_service,
+        timer_service=timer_service,
         model_name=info.get("model"),
     )
     agent.set_plan_mode(info.get("plan_mode", False))
@@ -525,13 +441,16 @@ def _get_or_create_agent(name: str) -> Agent:
 @app.post("/api/sessions/{name}/message")
 async def send_message(name: str, req: MessageRequest):
     agent = _get_or_create_agent(name)
-    if agent.is_scheduled():
-        raise HTTPException(status_code=409, detail="scheduled agent does not accept input (view-only; manage it with cron_delete from the main session)")
     if agent.is_sealed():
         raise HTTPException(status_code=409, detail="subagent session has ended, no longer accepts input")
     if req.message.strip() == "/compact":
         if agent.is_running():
             raise HTTPException(status_code=409, detail="agent is running, stop it first")
+        if timer_service is not None and timer_service.is_sleeping(name):
+            # A normal message would wake the session early (and is allowed);
+            # compaction is refused instead so the suspension and the rebuilt
+            # context never interleave -- wake it first if needed.
+            raise HTTPException(status_code=409, detail="session is suspended (sleep_until); send a message or wake it first")
         await agent.compact_now()
         return {"status": "compacted"}
     if agent.is_running():
@@ -564,13 +483,14 @@ class RevertRequest(BaseModel):
     message: str
 
 
-class ScheduleDeleteRequest(BaseModel):
-    schedule_id: str
-
-
 @app.post("/api/sessions/{name}/revert")
 async def revert_message(name: str, req: RevertRequest):
     agent = _get_or_create_agent(name)
+    # Rolling back history also drops any armed suspension: the wake-up
+    # message would otherwise land in a context that no longer matches what
+    # the model asked to sleep on.
+    if timer_service is not None and timer_service.is_sleeping(name):
+        timer_service.cancel(name)
     try:
         status = await agent.revert(req.message_id, req.message)
     except ValueError:
@@ -619,16 +539,22 @@ async def cancel_session(name: str):
     return {"status": "ok"}
 
 
-@app.post("/api/sessions/{name}/schedule/delete")
-async def delete_schedule(name: str, req: ScheduleDeleteRequest):
-    """Cancel a cron schedule from the UI (same semantics as cron_delete:
-    no further fires, the scheduled session stays for review)."""
-    if cron_service is None:
-        raise HTTPException(status_code=500, detail="cron service not ready")
-    result = cron_service.delete_schedule(name, req.schedule_id)
-    if result.startswith("Error"):
-        raise HTTPException(status_code=404, detail=result)
-    return {"status": "ok", "detail": result}
+@app.post("/api/sessions/{name}/wake")
+async def wake_session(name: str):
+    """Wake a session suspended via sleep_until: end the suspension and start
+    the wake-up run now (same run the timer would start at the target time)."""
+    if timer_service is None:
+        raise HTTPException(status_code=500, detail="timer service not ready")
+    if not timer_service.is_sleeping(name):
+        raise HTTPException(status_code=409, detail="session is not suspended")
+    agent = agents.get(name)
+    if agent is not None and agent.is_running():
+        # Long sibling tools from the sleeping turn are still executing; the
+        # wake-up is armed and will fire when the run ends. A plain message
+        # can still steer it right now.
+        raise HTTPException(status_code=409, detail="session is running; the wake-up is armed for when it goes idle")
+    await timer_service.wake(name)
+    return {"status": "ok"}
 
 
 @app.post("/api/sessions/{name}/interrupt")
@@ -663,10 +589,6 @@ async def set_mode(name: str, req: ModeRequest):
         raise HTTPException(404, "Session not found")
 
     info = json.loads((session_dir / "session.json").read_text())
-    if info.get("kind") == "scheduled":
-        # Scheduled agents are a fixed role (CronSubagentPermission), not a
-        # mode; they must not be switchable from the UI.
-        raise HTTPException(400, "scheduled agent has no mode")
 
     plan_mode = req.mode == "plan"
     info["plan_mode"] = plan_mode

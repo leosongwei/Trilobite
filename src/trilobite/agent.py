@@ -34,21 +34,19 @@ from src.trilobite.messages import (
     UserMessage,
 )
 from src.trilobite.prompts import (
-    CRON_ROLE_PROMPT,
     IMAGE_READ_PROMPT,
-    SUBAGENT_ROLE_PREFIX,
     SYSTEM_PROMPT,
     subagent_system_prompt,
 )
 from src.trilobite.permission import (
     AgentPermission,
     BuildModePermission,
-    CronSubagentPermission,
     ExploreSubagentPermission,
     GeneralSubagentPermission,
     PlanModePermission,
 )
 from src.trilobite.skills import discover_skills, format_skill_listing
+from src.trilobite.timer import parse_sleep_until, sleep_placeholder
 from src.trilobite.tools.bash import kill_process_group, truncate_output
 from src.trilobite.tool_call import execute_tool
 
@@ -67,14 +65,6 @@ def _generate_session_id() -> str:
 
 
 # ── thin SSE-chunk wrappers (mirror OpenAI SDK shapes) ──────────────────────
-
-class CronBoundaryError(Exception):
-    """A scheduled agent's fire was aborted for an out-of-workspace access.
-
-    Raised inside the run loop after the denial text is recorded as the tool
-    result; the run's error handler turns it into a terminal ``error`` state
-    (the schedule itself survives and fires again next time).
-    """
 
 @dataclass
 class _Function:
@@ -110,7 +100,7 @@ PLAN_MODE_NOTIFICATION = (
     '<modeswitch mode="plan">\n'
     "You are now in plan mode (read-only analysis).\n"
     "The following tools are blocked and will be rejected if called: edit, write.\n"
-    "All other tools remain available: read, glob, grep, bash, TodoList, exit_plan_mode, task.\n"
+    "All other tools remain available: read, glob, grep, bash, TodoList, exit_plan_mode, task, sleep_until.\n"
     "Note: in plan mode the task tool may only spawn explore (read-only) subagents.\n"
     "Focus on exploring, analyzing, and planning. To make file changes, call exit_plan_mode to request switching to build mode.\n"
     "</modeswitch>"
@@ -119,7 +109,7 @@ PLAN_MODE_NOTIFICATION = (
 BUILD_MODE_NOTIFICATION = (
     '<modeswitch mode="build">\n'
     "You are now in build mode (full access).\n"
-    "All tools are available: read, glob, grep, edit, write, bash, TodoList, task.\n"
+    "All tools are available: read, glob, grep, edit, write, bash, TodoList, task, sleep_until.\n"
     "(exit_plan_mode is a no-op in build mode and will be rejected if called.)\n"
     "You may make file changes, run shell commands, and use your full arsenal of tools.\n"
     "</modeswitch>"
@@ -265,9 +255,7 @@ class Agent:
         depth: int = 0,
         max_steps: int | None = None,
         sealed: bool = False,
-        scheduled: bool = False,
-        scheduled_allow_dirs: list[str] | None = None,
-        cron_service: Any = None,
+        timer_service: Any = None,
         model_name: str | None = None,
     ):
         self.name = name
@@ -313,25 +301,10 @@ class Agent:
         # and use a fixed role permission (never plan/build mode).
         self._subagent_type: str | None = subagent_type
         self._description: str = description or ""
-        # A scheduled agent is a role too (general), but with an unattended
-        # lifecycle: each cron fire reuses the same session and the agent is
-        # never sealed. It is not a ``subagent_type`` so is_sealed()/is_subagent
-        # semantics stay intact; ``kind`` is what the frontend keys on.
-        self._scheduled: bool = scheduled
         if subagent_type == "explore":
             role_prompt = subagent_system_prompt("explore")
         elif subagent_type == "general":
             role_prompt = subagent_system_prompt("general")
-        elif scheduled:
-            # Scheduled agents: base system prompt + the shared subagent
-            # prefix + a cron role prompt that injects the allowed directory
-            # list (workspace + the owner's additional_dirs at creation) and
-            # warns that out-of-workspace access aborts the run.
-            allow_dirs = "\n".join(f"- {d}" for d in (scheduled_allow_dirs or [])) or "(none)"
-            role_prompt = (
-                SYSTEM_PROMPT + "\n\n" + SUBAGENT_ROLE_PREFIX + "\n\n"
-                + CRON_ROLE_PROMPT.format(allow_dirs=allow_dirs)
-            )
         else:
             role_prompt = SYSTEM_PROMPT
         # Prepend a dynamic environment block (working dir, git, platform)
@@ -372,8 +345,6 @@ class Agent:
             self._permission: AgentPermission = ExploreSubagentPermission()
         elif subagent_type == "general":
             self._permission: AgentPermission = GeneralSubagentPermission()
-        elif scheduled:
-            self._permission: AgentPermission = CronSubagentPermission()
         else:
             self._permission: AgentPermission = BuildModePermission()
         self._last_notified_mode: bool | None = None
@@ -409,13 +380,14 @@ class Agent:
         self._initial_prompt: str = ""
         self._final_state: str = "completed"
         self._final_result: str = ""
-        # The CronService backing the cron_* virtual tools (injected by the
-        # server for primary agents; None for CLI/subagents -> tools error).
-        self._cron_service = cron_service
-        #: Set when a scheduled agent's tool call goes out of the allowed
-        #: directories: the denial is recorded as the tool result, then the
-        #: run aborts with a CronBoundaryError (state=error).
-        self._cron_boundary_error: str | None = None
+        # The TimerService backing the sleep_until virtual tool (injected by
+        # the server for primary agents; None for CLI/subagents -> the tool
+        # returns an error). ``_sleeping_until`` holds the armed suspension's
+        # target (epoch seconds) from the sleep_until call until the next run
+        # starts: the run loop breaks on it, and any new run (timer wake-up or
+        # an early user message) clears it in its prologue.
+        self._timer_service = timer_service
+        self._sleeping_until: float | None = None
 
     @property
     def session_id(self) -> str:
@@ -570,7 +542,7 @@ class Agent:
         in ``run`` notices the swap and tells the model. Subagents are fixed
         roles and ignore this.
         """
-        if self._subagent_type is not None or self._scheduled:
+        if self._subagent_type is not None:
             return
         self._permission = PlanModePermission() if mode else BuildModePermission()
 
@@ -578,15 +550,9 @@ class Agent:
         """True for a subagent whose run has ended (view-only, no new input)."""
         return self._sealed
 
-    def is_scheduled(self) -> bool:
-        """True for a scheduled (cron) agent: unattended, never sealed."""
-        return self._scheduled
-
     @property
     def kind(self) -> str:
-        """Session kind for the frontend: 'main' | 'subagent' | 'scheduled'."""
-        if self._scheduled:
-            return "scheduled"
+        """Session kind for the frontend: 'main' | 'subagent'."""
         if self._subagent_type is not None:
             return "subagent"
         return "main"
@@ -855,15 +821,17 @@ class Agent:
         self._task = asyncio.current_task()
         self._loop = asyncio.get_running_loop()
 
-        # A scheduled agent's instance is reused across fires (its broker
-        # keeps the SSE stream alive, so viewers follow each fire live);
-        # reset the per-fire run state a previous run may have left behind.
-        if self._scheduled:
-            self._interrupted = False
-            self._step_count = 0
-            self._pending_tool_results = False
-            self._force_run = False
-            self._user_read_cursor = 0
+        # A run starting on a suspended session ends the suspension: either
+        # the timer fired (the pending entry is already dropped) or the user
+        # sent a message (an early wake-up). Cancel whatever suspension state
+        # is left and tell the frontend the blue dot can go. After a restart
+        # the restored instance has no in-memory flag, so this is a no-op and
+        # the dot clears via the sessions poll instead.
+        if self._sleeping_until is not None:
+            self._sleeping_until = None
+            if self._timer_service is not None:
+                self._timer_service.cancel(self.name)
+            await self._send_stream_event({"type": "sleep_end", "session": self.name})
 
         self._ensure_system_message()
         # Guard against a dangling assistant(tool_calls) lacking results left
@@ -880,7 +848,7 @@ class Agent:
         # cacheable. The notice is hidden from the frontend and excluded from
         # user_seq via is_mode_notification. Scheduled agents are a fixed role
         # (no mode), so they never get a notice.
-        if not self._scheduled and (
+        if (
             self._last_notified_mode is None or self._plan_mode != self._last_notified_mode
         ):
             notif = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
@@ -902,6 +870,22 @@ class Agent:
                 has_unread_user = self._count_user_messages() > self._user_read_cursor
                 if not (self._pending_tool_results or has_unread_user or self._force_run):
                     break
+                # A sleep_until suspension ends this run here. The flags are
+                # intentionally NOT cleared: the pending tool results (with
+                # the sleep placeholder) stay armed so the wake-up run
+                # resumes the loop exactly where this one stopped, and the
+                # wake-up message arrives as the new unread user input. A
+                # steering message that landed meanwhile is an early wake-up:
+                # it clears the suspension and the run continues, so the
+                # user gets their response now instead of at the target time.
+                if self._sleeping_until is not None:
+                    if has_unread_user:
+                        self._sleeping_until = None
+                        if self._timer_service is not None:
+                            self._timer_service.cancel(self.name)
+                        await self._send_stream_event({"type": "sleep_end", "session": self.name})
+                    else:
+                        break
                 # About to run a turn, which consumes any pending tool results
                 # and forced run; clear them so a plain-text turn afterwards
                 # does not spuriously continue.
@@ -1096,8 +1080,8 @@ class Agent:
                                     tool_result = {"result": "User declined. Continue planning in plan mode."}
                         elif tool_name == "task":
                             tool_result = await self._run_subagents(args)
-                        elif tool_name in ("cron_create", "cron_list", "cron_delete"):
-                            tool_result = await self._run_cron_tool(tool_name, args)
+                        elif tool_name == "sleep_until":
+                            tool_result = await self._run_sleep_tool(args)
                         else:
                             # Tools are synchronous (notably bash's subprocess.run
                             # blocks). Run them in a worker thread so a long bash
@@ -1115,14 +1099,7 @@ class Agent:
                         # Handle permission request from tool
                         if "permission" in tool_result:
                             perm_path = tool_result["permission"]
-                            if self._scheduled:
-                                # Unattended scheduled agent: an out-of-workspace
-                                # access aborts this fire with an error instead
-                                # of prompting (nobody would answer). The denial
-                                # text is recorded as the tool result below,
-                                # then the run terminates with state=error.
-                                self._cron_boundary_error = tool_result["result"]
-                            elif self._subagent_type is not None and self._parent is not None:
+                            if self._subagent_type is not None and self._parent is not None:
                                 # Subagent: broadcast globally (parent + all
                                 # siblings) so the prompt reaches the user
                                 # regardless of which session they are viewing.
@@ -1171,12 +1148,6 @@ class Agent:
                             diff=tool_result.get("diff"),
                         ))
 
-                        # A scheduled agent that went out of bounds: the denial
-                        # is now persisted with the tool call; abort the fire.
-                        if self._cron_boundary_error is not None:
-                            msg = self._cron_boundary_error
-                            self._cron_boundary_error = None
-                            raise CronBoundaryError(msg)
                 else:
                     self.history.save()
                     current_model_persisted = True
@@ -1294,13 +1265,6 @@ class Agent:
                 self._log.warning("RUN cancelled")
             await self._send_stream_event({"type": "cancelled"})
             raise
-        except CronBoundaryError as e:
-            # A scheduled fire was aborted for an out-of-workspace access.
-            # The denial text is already persisted with the tool call; the
-            # schedule itself survives and fires again next time.
-            self._final_state = "error"
-            self._final_result = str(e)
-            await self._send_stream_event({"type": "error", "text": str(e)})
         except Exception as e:
             msg = str(e)
             error_type: str | None = None
@@ -1329,9 +1293,8 @@ class Agent:
             })
         finally:
             # A subagent's run has ended for any reason -> it is now sealed
-            # (view-only, no new input). Scheduled agents are never sealed:
-            # the next fire reuses the session.
-            if self._subagent_type is not None and not self._scheduled:
+            # (view-only, no new input).
+            if self._subagent_type is not None:
                 self._sealed = True
             # The run is over regardless of how it ended; clear the running
             # flag (a safety net -- done/cancelled/error already set it) and
@@ -1493,45 +1456,30 @@ class Agent:
         await self._send_stream_event({"type": "user", "text": self._initial_prompt, "user_seq": 0})
         await self.run()
 
-    # ── scheduled (cron) agents ────────────────────────────────────────────
+    # ── timers (sleep_until) ───────────────────────────────────────────────
 
-    async def _run_cron_tool(self, tool_name: str, args: dict) -> dict[str, Any]:
-        """Dispatch a cron_* tool call to the CronService.
+    async def _run_sleep_tool(self, args: dict) -> dict[str, Any]:
+        """Suspend this session until a target time (virtual sleep_until tool).
 
-        The cron tools are virtual: their execution lives in the CronService
-        (scheduler.py), which needs the owning session's identity to persist
-        schedules. Only build mode advertises them (plan mode does not expose
-        them at all, so a read-only session can never create an unattended
-        full-permission agent).
+        Registers the suspension with the TimerService (persisted to the
+        session's session.json) and arms ``_sleeping_until`` -- the run loop
+        breaks on it once this turn's tool calls are done. The returned
+        placeholder is recorded as the tool result, so on wake-up the model
+        sees what it asked for (and when) next to the wake-up message.
         """
-        if self._cron_service is None:
-            return {"result": "Error: cron tools are not available in this context."}
-        result = self._cron_service.handle(
-            self.name, tool_name, args, self.working_dir, self._additional_dirs
-        )
-        return {"result": result}
-
-    async def start_scheduled_fire(self, prompt_text: str) -> None:
-        """Open a new fire of this scheduled agent: fresh API context + run.
-
-        A :class:`CompactMarker` is appended before this fire's messages when
-        the session already holds earlier runs: ``get_api_messages()`` starts
-        just past the last marker, so the API context covers only this fire,
-        while the persisted history keeps every earlier run (the marker is
-        what the frontend renders as the run boundary divider).
-        """
-        if self.history.raw:
-            self.history.append(CompactMarker())
-        self.history.append(SystemMessage(self.system_prompt + self.working_context))
-        user = UserMessage(prompt_text)
-        self.history.append(user)
-        self._broker.set_running(True)
+        if self._timer_service is None:
+            return {"result": "Error: sleep_until is only available for server sessions."}
+        wake_at, err = parse_sleep_until(str(args.get("until") or ""))
+        if err is not None:
+            return {"result": err}
+        self._timer_service.register(self.name, wake_at)
+        self._sleeping_until = wake_at
         await self._send_stream_event({
-            "type": "user",
-            "id": user._id,
-            "text": prompt_text,
-            "user_seq": self._count_user_messages() - 1,
+            "type": "sleep_start",
+            "session": self.name,
+            "until": wake_at,
         })
+        return {"result": sleep_placeholder(wake_at)}
 
     async def _run_subagents(self, args: dict) -> dict[str, Any]:
         """Spawn one or more subagents in parallel, gather their results."""

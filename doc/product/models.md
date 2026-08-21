@@ -37,7 +37,7 @@ default_vl_model: ""                    # 预留字段，暂未使用
 
 ## 会话模型选择
 
-- 每个 session 的 `session.json` 持久化 `model` 字段（当前选择的模型 name）：主 session 新建时写入默认模型，subagent 派生时写入父 session 当前模型，定时 session 创建时写入所属主 session 当前模型（owner 不可知时回退默认模型）。字段缺失（旧版 session）时一律回退默认模型。重启/重连后按该字段恢复。
+- 每个 session 的 `session.json` 持久化 `model` 字段（当前选择的模型 name）：主 session 新建时写入默认模型，subagent 派生时写入父 session 当前模型。字段缺失（旧版 session）时一律回退默认模型。重启/重连后按该字段恢复。
 - CLI 模式：`-t` 新建 session 使用默认模型，`-c` 续接时恢复 session 已保存的模型。
 
 ### UI
