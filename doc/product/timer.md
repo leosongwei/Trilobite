@@ -8,7 +8,7 @@
 
 - **同会话续跑**：挂起不派生新 agent、不新建 session。模型调用 `sleep_until` 后本轮流结束；到点唤醒时追加一条 `⏰ 定时唤醒（<当前时间>）` 合成 user 消息并启动新一轮 run，模型在**同一上下文**里继续之前的工作。模型醒来看到的信息 = 睡前的工具结果占位文本 + 带当前时间的唤醒消息。
 - **挂起零开销**：挂起期间无 LLM 请求、不烧 token；run 结束、broker 置为非运行态。
-- **跨重启存活**：挂起状态持久化在 `session.json` 的 `sleep_until` 字段（epoch 秒），服务重启后由 TimerService 重载；停机期间错过的唤醒点在启动后立即补唤醒（迟到唤醒，唤醒消息携带真实当前时间）。
+- **跨重启存活**：挂起状态持久化在 `session.json` 的 `sleep_until` 字段（epoch 秒），服务重启后由 TimerService 重载；停机期间错过的唤醒点在启动后立即补触发（迟到唤醒）。服务停机期间什么都不发生（无运行、无消耗）；**过期的挂起一律补触发**——迟到超过 60 秒的唤醒消息显式标注原定时间与迟到时长（`⏰ 定时唤醒（<now>，原定 <target>，迟到了 <duration>）`），模型据此自行判断任务是否还有意义（继续做 / 一句话收尾）。
 - **蓝点标识**：挂起中的会话在侧边栏显示蓝点（`has_sleep`），排序置顶（运行中 > 挂起 > 普通）；用户发消息可提前唤醒。
 
 典型用例：等 CI/构建跑完再检查（`+10m`）、明天早上九点继续今天的任务（`2025-06-02 09:00`）、提醒用户到点做某事、轮询式任务（醒来检查、再睡）。
@@ -78,13 +78,13 @@
 - `wake(name) -> bool`：手动立即唤醒（供 REST 端点），未挂起返回 False。
 - **tick 循环**：每秒一次，遍历 pending 表，`time.time() >= wake_at` 即触发 `_do_wake`（墙钟比较，系统时间跳变语义正确；单用户本地应用轮询开销可忽略）。
 - `_do_wake(name)`：
-  1. 清除 pending 与 `session.json` 字段。
-  2. 若 agent 正在运行（挂起登记后同轮兄弟工具仍在跑）——**重新挂回 pending**，下一秒重试（唤醒推迟到 run 结束，属迟到唤醒，唤醒消息带真实当前时间）。
-  3. `await agent.start(f"⏰ 定时唤醒（{now}）")`：追加合成 user 消息（发 `user` 事件）→ `set_running(True)` → 独立 asyncio task 跑 `run()`。run 循环因 `_pending_tool_results`（睡前的占位结果）+ 未读 user 消息（唤醒消息）继续运转。`start()` 的同步前缀（追加消息 + 置 running）先于其首个 await 执行，与 `/message` 同构的无竞态形状，用户消息不会与唤醒交叠出双 run。
+  1. 若 agent 正在运行（挂起登记后同轮兄弟工具仍在跑）——**重新挂回 pending**（文件字段保留，中途崩溃仍可恢复），下一秒重试，唤醒不丢失。
+  2. 清除 pending 与 `session.json` 字段，发 `sleep_end` 事件。
+  3. `await agent.start(wake_message(wake_at))`：追加合成 user 消息（发 `user` 事件；迟到超 60 秒带"原定/迟到"标注）→ `set_running(True)` → 独立 asyncio task 跑 `run()`。run 循环因 `_pending_tool_results`（睡前的占位结果）+ 未读 user 消息（唤醒消息）继续运转。`start()` 的同步前缀（追加消息 + 置 running）先于其首个 await 执行，与 `/message` 同构的无竞态形状，用户消息不会与唤醒交叠出双 run。
 
 ### 各入口与挂起的交互
 
-任何新 run（唤醒或用户消息）的 `run()` 序言统一结束挂起：清除 `_sleeping_until`、`TimerService.cancel`（幂等）、发 `sleep_end` 事件（实例从磁盘恢复时无内存标志，则不发，蓝点由 3s 轮询兜底清除）。挂起轮的兄弟工具仍在执行时收到 steer，run 循环顶部检测到未读 user 消息同样立即结束挂起并继续循环——**任何用户输入（消息或 steer）都是提前唤醒**，模型当轮即响应，不会等到目标时刻。
+任何新 run（唤醒或用户消息）的 `run()` 序言统一结束挂起：清除 `_sleeping_until`、`TimerService.cancel`（幂等）、发 `sleep_end` 事件。序言同时检查内存标志与 TimerService 的 pending 表（`is_sleeping`）——重启后从磁盘恢复的实例没有内存标志，只查标志会漏掉提前发消息的取消，导致用户消息唤醒后定时器又多发一次唤醒。挂起轮的兄弟工具仍在执行时收到 steer，run 循环顶部检测到未读 user 消息同样立即结束挂起并继续循环——**任何用户输入（消息或 steer）都是提前唤醒**，模型当轮即响应，不会等到目标时刻。
 
 | 入口 | 行为 |
 |---|---|
@@ -96,7 +96,7 @@
 | 删除 session | `TimerService.remove_session`（丢弃 pending），目录随级联删除 |
 | 模式切换（Tab / `/mode`） | 允许；`session.json` 读-改-写保留 `sleep_until` 字段，唤醒时按新模式运行（`<modeswitch>` 通知随唤醒 run 注入） |
 | interrupt / cancel | 挂起中无运行 task，自然不适用；UI 停止按钮在非流式态不可用。挂起轮兄弟工具执行中被中断：挂起仍生效，到点照常唤醒 |
-| 服务重启 | `load_all` 重载 pending；停机期间到点的目标在启动后立即补唤醒（迟到唤醒，消息带真实当前时间） |
+| 服务重启 | `load_all` 重载 pending（含过期目标）；停机期间到点的目标在启动后 1 秒内补触发，迟到超 60 秒的唤醒消息带"原定/迟到"标注。重启后用户在补触发前发消息：run 序言经 `is_sleeping` 检查取消挂起，定时唤醒不再触发 |
 
 ### CLI 不支持
 

@@ -51,6 +51,11 @@ MIN_DELAY = 5.0
 #: ...and at most this far (a year; "wake me in 2030" is a mistake).
 MAX_DELAY = timedelta(days=365)
 
+#: A wake-up more than this late (downtime, long sibling tools) is announced
+#: as such in the wake-up message. Normal tick jitter stays under ~1s, so
+#: anything past this window means the wake-up was genuinely delayed.
+LATE_GRACE = 60.0
+
 _REL_RE = re.compile(r"^\+(\d+)([smhd])$")
 _ABS_FORMAT = "%Y-%m-%d %H:%M"
 
@@ -119,9 +124,25 @@ def format_delay(seconds: float) -> str:
     return f"{seconds:.0f}s"
 
 
-def wake_message() -> str:
-    """The synthetic user message that wakes a suspended session."""
-    return f"{WAKE_PREFIX}（{_now_str()}）"
+def wake_message(wake_at: float | None = None) -> str:
+    """The synthetic user message that wakes a suspended session.
+
+    Carries the current local time. A wake-up that is meaningfully late
+    (server downtime or long sibling tools delayed it past the grace
+    window) also names the original target and the lateness, so the model
+    can immediately judge whether the suspended task is still relevant.
+    """
+    now = datetime.now()
+    text = f"{WAKE_PREFIX}（{now.strftime('%Y-%m-%d %H:%M:%S')}）"
+    if wake_at is not None:
+        late = now.timestamp() - wake_at
+        if late > LATE_GRACE:
+            target = datetime.fromtimestamp(wake_at).strftime("%Y-%m-%d %H:%M")
+            text = (
+                f"{WAKE_PREFIX}（{now.strftime('%Y-%m-%d %H:%M:%S')}，"
+                f"原定 {target}，迟到了 {format_delay(late)}）"
+            )
+    return text
 
 
 def sleep_placeholder(wake_at: float) -> str:
@@ -270,15 +291,14 @@ class TimerService:
         """Clear the suspension and start the wake-up run.
 
         Returns False only when the session is not suspended. When the
-        agent is mid-run (long sibling tools from the sleeping turn, or a
-        user message landed during the window) the suspension is re-armed
-        and the tick retries once the run ends -- the wake-up itself is
-        never dropped.
+        agent is mid-run (long sibling tools from the sleeping turn) the
+        suspension is re-armed -- file field included, so a crash in between
+        keeps it recoverable -- and the tick retries once the run ends;
+        the wake-up itself is never dropped.
         """
         wake_at = self._pending.pop(name, None)
         if wake_at is None:
             return False
-        self._clear_field(name)
         try:
             agent = self._get_agent(name)
         except Exception:
@@ -287,9 +307,15 @@ class TimerService:
         if agent.is_running():
             self._pending[name] = wake_at
             return True
+        self._clear_field(name)
+        # The suspension is over regardless of how the wake-up run ends;
+        # tell the frontend now so the blue dot clears even when the agent
+        # was restored from disk (no in-memory flag to key the run
+        # prologue's sleep_end on).
+        await agent._send_stream_event({"type": "sleep_end", "session": name})
         # start()'s synchronous prefix (append user message + set_running)
         # executes before its first await, so no /message request can
         # interleave between the is_running check above and the running
         # flag flipping -- the same race-free shape /message relies on.
-        await agent.start(wake_message())
+        await agent.start(wake_message(wake_at))
         return True

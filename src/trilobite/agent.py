@@ -824,10 +824,15 @@ class Agent:
         # A run starting on a suspended session ends the suspension: either
         # the timer fired (the pending entry is already dropped) or the user
         # sent a message (an early wake-up). Cancel whatever suspension state
-        # is left and tell the frontend the blue dot can go. After a restart
-        # the restored instance has no in-memory flag, so this is a no-op and
-        # the dot clears via the sessions poll instead.
-        if self._sleeping_until is not None:
+        # is left and tell the frontend the blue dot can go. The in-memory
+        # flag alone is not enough after a restart: an instance restored from
+        # disk starts with no flag while the TimerService still holds the
+        # armed suspension, so consult the service too -- otherwise an early
+        # user message would leave the stale timer armed and the session
+        # would be woken twice.
+        if self._sleeping_until is not None or (
+            self._timer_service is not None and self._timer_service.is_sleeping(self.name)
+        ):
             self._sleeping_until = None
             if self._timer_service is not None:
                 self._timer_service.cancel(self.name)
