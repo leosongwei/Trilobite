@@ -169,17 +169,13 @@ export async function interruptSession(id: string): Promise<void> {
   await authFetch(`/api/sessions/${encode(id)}/interrupt`, { method: 'POST' })
 }
 
-// Cancel a cron schedule from the UI (same semantics as the cron_delete
-// tool: no further fires; the scheduled session stays for review).
-export async function deleteSchedule(owner: string, scheduleId: string): Promise<void> {
-  const res = await authFetch(`/api/sessions/${encode(owner)}/schedule/delete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ schedule_id: scheduleId }),
-  })
+// Wake a session suspended via sleep_until: end the suspension and start
+// the wake-up run now (same run the timer would start at the target time).
+export async function wakeSession(id: string): Promise<void> {
+  const res = await authFetch(`/api/sessions/${encode(id)}/wake`, { method: 'POST' })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || 'Failed to delete schedule')
+    throw new Error(err.detail || 'Failed to wake session')
   }
 }
 

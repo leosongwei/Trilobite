@@ -39,22 +39,15 @@
         @update:base="(b) => { diffBase = b }"
       />
       <template v-else>
-        <div v-if="state.isSubagent || state.isScheduled" class="subagent-bar">
+        <div v-if="state.isSubagent" class="subagent-bar">
           <button class="back-btn" @click="goParent"><span class="ms ms-back"></span> parent</button>
-          <span v-if="state.isScheduled" class="subagent-tag scheduled" title="scheduled agent"><span class="ms ms-schedule"></span></span>
-          <span v-else class="subagent-tag" :class="state.subagentType">{{ state.subagentType }}</span>
+          <span class="subagent-tag" :class="state.subagentType">{{ state.subagentType }}</span>
           <span class="subagent-title">{{ state.subagentDescription || state.currentSession }}</span>
           <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>
         </div>
-        <div v-if="state.isScheduled && currentSessionInfo" class="scheduled-info">
-          <div class="scheduled-meta">
-            <span class="meta-item">cron: <code>{{ currentSessionInfo.cron || '-' }}</code></span>
-            <span class="meta-item">{{ currentSessionInfo.recurring ? '重复执行' : '一次性' }}</span>
-            <span v-if="currentSessionInfo.schedule_active" class="meta-item">下次执行: {{ currentSessionInfo.next_fire_at || '-' }}</span>
-            <span class="meta-item">已运行: {{ currentSessionInfo.run_count ?? 0 }} 次</span>
-            <button v-if="currentSessionInfo.schedule_active" class="cancel-btn" title="取消定时任务（历史会话保留）" @click="cancelSchedule">取消定时任务</button>
-          </div>
-          <div v-if="currentSessionInfo.prompt" class="scheduled-prompt">{{ currentSessionInfo.prompt }}</div>
+        <div v-if="currentSessionInfo?.has_sleep" class="sleep-banner">
+          <span class="sleep-text">⏳ 挂起至 {{ formatSleepUntil(currentSessionInfo.sleep_until) }}</span>
+          <button class="wake-btn" :disabled="state.isStreaming" title="结束挂起，立即继续对话" @click="wakeNow">立即唤醒</button>
         </div>
         <ChatView />
         <template v-if="state.currentSession">
@@ -91,21 +84,23 @@ import { findSessionRoot } from './utils/sessions'
 
 const { state, loadSessions, setMode, approveRequest, rejectRequest, selectSession } = useStore()
 
-// The current session's full record from the session poll; scheduled
-// sessions carry their schedule state (cron, recurring, next fire time,
-// prompt) which the subagent bar renders.
+// The current session's full record from the session poll; a session
+// suspended via sleep_until carries has_sleep/sleep_until which the
+// suspension banner renders.
 const currentSessionInfo = computed(() =>
   state.sessions.find((s) => s.id === state.currentSession) ?? null,
 )
 
-async function cancelSchedule() {
+function formatSleepUntil(ts?: number | null): string {
+  if (!ts) return '-'
+  return new Date(ts * 1000).toLocaleString()
+}
+
+async function wakeNow() {
   const info = currentSessionInfo.value
-  if (!info || !info.schedule_active) return
-  if (!confirm(`取消定时任务？不再触发。\n历史会话保留，可继续查看过去的运行记录。`)) return
-  if (!info.parent_session || !info.schedule_id) return
+  if (!info?.has_sleep) return
   try {
-    await api.deleteSchedule(info.parent_session, info.schedule_id)
-    await loadSessions()
+    await api.wakeSession(info.id)
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
   }
@@ -230,7 +225,7 @@ watch(() => state.currentSession, () => {
 
 function handleKeydown(e: KeyboardEvent) {
   if (authState.value !== 'ok') return
-  if (e.key === 'Tab' && !state.isSubagent && !state.isScheduled) {
+  if (e.key === 'Tab' && !state.isSubagent) {
     e.preventDefault()
     setMode(state.planMode ? 'build' : 'plan')
   }

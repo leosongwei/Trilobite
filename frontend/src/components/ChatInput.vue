@@ -1,7 +1,7 @@
 <template>
   <div class="input-area">
     <button
-      v-if="!state.isSubagent && !state.isScheduled"
+      v-if="!state.isSubagent"
       class="mode-toggle"
       :class="{ plan: state.planMode }"
       @click="toggleMode"
@@ -9,12 +9,7 @@
     >
       {{ state.planMode ? 'Plan\u00A0' : 'Build' }}
     </button>
-    <template v-if="state.isScheduled">
-      <!-- Scheduled agents are unattended: no input box, interrupt only. -->
-      <div class="sealed-notice">Scheduled agent — runs on its cron schedule (view-only).</div>
-      <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop ms-fill"></span></button>
-    </template>
-    <div v-else-if="state.isSubagent && state.sealed" class="sealed-notice">
+    <div v-if="state.isSubagent && state.sealed" class="sealed-notice">
       This subagent has ended (view-only).
     </div>
     <template v-else>
@@ -194,10 +189,9 @@ async function handleSend() {
 
 async function stop() {
   if (!state.currentSession) return
-  // A subagent's / scheduled agent's stop is an interrupt: hard-stop its
-  // current work, then it runs one summary turn and exits. The main agent's
-  // stop is a plain cancel.
-  if (state.isSubagent || state.isScheduled) {
+  // A subagent's stop is an interrupt: hard-stop its current work, then it
+  // runs one summary turn and exits. The main agent's stop is a plain cancel.
+  if (state.isSubagent) {
     await interruptSubagent(state.currentSession)
   } else {
     await stopAgent()
