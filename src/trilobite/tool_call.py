@@ -116,14 +116,12 @@ SLEEP_UNTIL_DEF: dict = {
                 "until": {
                     "type": "string",
                     "description": (
-                        "Target time, local timezone. Formats: relative "
-                        "'+30m' / '+2h' / '+1d' / '+90s' (a bare '+30' means "
-                        "minutes) -- preferred, since you may not know the "
-                        "current time; absolute 'YYYY-MM-DD HH:MM'; 'MM-DD "
-                        "HH:MM' (this year, next year if already past); "
-                        "'HH:MM' (today, tomorrow if already past). Must be "
-                        "5s to 365d from now; parse errors include the "
-                        "current local time."
+                        "Target time, local timezone. Either a relative "
+                        "duration '+30m' / '+2h' / '+1d' / '+90s' -- "
+                        "preferred, since you may not know the current "
+                        "time -- or an absolute local time "
+                        "'YYYY-MM-DD HH:MM'. Must be 5s to 365d from now; "
+                        "parse errors include the current local time."
                     ),
                 },
             },

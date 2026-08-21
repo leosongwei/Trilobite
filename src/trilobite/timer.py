@@ -51,7 +51,8 @@ MIN_DELAY = 5.0
 #: ...and at most this far (a year; "wake me in 2030" is a mistake).
 MAX_DELAY = timedelta(days=365)
 
-_REL_RE = re.compile(r"^\+(\d+)([smhd]?)$")
+_REL_RE = re.compile(r"^\+(\d+)([smhd])$")
+_ABS_FORMAT = "%Y-%m-%d %H:%M"
 
 
 def _now_str() -> str:
@@ -64,56 +65,33 @@ def _err(msg: str) -> str:
     return f"Error: {msg} (current local time: {_now_str()})"
 
 
-def _try_formats(text: str, formats: tuple[str, ...]) -> datetime | None:
-    for fmt in formats:
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    return None
-
-
 def parse_sleep_until(until: str) -> tuple[float, str | None]:
     """Parse the ``sleep_until`` argument into (wake_at, error).
 
-    Accepted formats (local time): ``+[n][s|m|h|d]`` relative duration
-    (a bare number means minutes), ``HH:MM[:SS]`` (today, tomorrow if past),
-    ``MM-DD HH:MM[:SS]`` (this year, next year if past), and
-    ``YYYY-MM-DD[T ]HH:MM[:SS]`` absolute. Anything else, or a target
-    outside [MIN_DELAY, MAX_DELAY], yields an error string.
+    Exactly two formats are accepted (local time): a relative duration
+    ``+[n][s|m|h|d]`` and an absolute ``YYYY-MM-DD HH:MM``. Anything else,
+    or a target outside [MIN_DELAY, MAX_DELAY], yields an error string.
     """
     text = (until or "").strip()
     now = datetime.now()
     if not text:
-        return 0.0, _err("missing 'until' (a time string or '+30m' style duration)")
+        return 0.0, _err("missing 'until' (a '+30m' duration or a 'YYYY-MM-DD HH:MM' local time)")
 
     m = _REL_RE.match(text)
     if m:
         n = int(m.group(1))
-        unit = m.group(2) or "m"
-        seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+        seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
         wake = now + timedelta(seconds=n * seconds)
     else:
-        wake = _try_formats(text, (
-            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
-            "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
-        ))
-        if wake is None:
-            wake = _try_formats(text, ("%m-%d %H:%M:%S", "%m-%d %H:%M"))
-            if wake is not None:
-                wake = wake.replace(year=now.year)
-                if wake <= now:
-                    wake = wake.replace(year=now.year + 1)
-        if wake is None:
-            wake = _try_formats(text, ("%H:%M:%S", "%H:%M"))
-            if wake is not None:
-                wake = wake.replace(year=now.year, month=now.month, day=now.day)
-                if wake <= now:
-                    wake += timedelta(days=1)
+        try:
+            wake = datetime.strptime(text, _ABS_FORMAT)
+        except ValueError:
+            wake = None
     if wake is None:
         return 0.0, _err(
-            f"unrecognized time '{text}'. Use 'YYYY-MM-DD HH:MM', 'MM-DD HH:MM', "
-            f"'HH:MM', or a relative duration like '+30m' / '+2h' / '+1d'"
+            f"unrecognized time '{text}'. Use a relative duration like "
+            f"'+30m' / '+2h' / '+1d' / '+90s', or an absolute local time "
+            f"'YYYY-MM-DD HH:MM'"
         )
 
     delay = (wake - now).total_seconds()
