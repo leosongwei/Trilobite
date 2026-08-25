@@ -65,15 +65,22 @@ def _build_bwrap_argv(
     Mount order matters: the read-only root bind comes first, then each
     writable directory is rebound (later binds override earlier ones). Missing
     or duplicate directories are skipped -- bubblewrap requires bind targets
-    to exist. The session's ``tmp/`` directory (created on demand) is bound
-    onto ``/tmp`` so commands get a session-scoped scratch area that persists
-    across invocations. ``--die-with-parent`` guarantees the sandboxed
-    process tree is torn down when the bwrap process itself dies (e.g. our
-    SIGKILL on interrupt/timeout).
+    to exist. The session's ``tmp/`` directory is bound onto ``/tmp`` so
+    commands get a session-scoped scratch area that persists across
+    invocations; if it cannot be created, a plain tmpfs is mounted instead
+    so bash still has working scratch space. ``--die-with-parent``
+    guarantees the sandboxed process tree is torn down when the bwrap process
+    itself dies (e.g. our SIGKILL on interrupt/timeout).
     """
     session_tmp = session_dir / "tmp"
-    session_tmp.mkdir(parents=True, exist_ok=True)
-    argv = ["bwrap", *_BWRAP_BASE_ARGS, "--bind", str(session_tmp), "/tmp"]
+    tmp_mount = ["--tmpfs", "/tmp"]
+    try:
+        session_tmp.mkdir(parents=True, exist_ok=True)
+        if session_tmp.is_dir():
+            tmp_mount = ["--bind", str(session_tmp), "/tmp"]
+    except OSError:
+        pass
+    argv = ["bwrap", *_BWRAP_BASE_ARGS, *tmp_mount]
     seen: set[str] = set()
     for directory in writable_dirs:
         try:

@@ -122,6 +122,13 @@ specific moment, or polling on an interval (wake, check, sleep again).
 Finish what you can do now before sleeping -- other tool calls in the same
 turn complete first. Prefer relative times ('+30m') since you may not know
 the current time; any parse error includes it.
+
+# Scratch files
+
+Write temporary/scratch files to /tmp, not the working directory. /tmp is a
+writable per-session scratch area (isolated from the host's /tmp when bash
+runs sandboxed) -- use it for intermediate artifacts, and keep the working
+directory free of throwaway files.
 """
 
 COMPACTION_PROMPT = """You are about to run out of context. Write a first-person handoff note to
