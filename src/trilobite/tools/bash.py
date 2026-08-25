@@ -57,6 +57,15 @@ def _bwrap_available() -> bool:
         return False
 
 
+def sandbox_enabled(config: dict | None) -> bool:
+    """Whether bash runs sandboxed under *config*: mode not ``off`` and a
+    working bubblewrap probe (cached). The file tools share this decision so
+    their ``/tmp`` matches the namespace bash actually sees: sandboxed bash
+    has the session scratch bound onto ``/tmp``, unsandboxed bash the host's.
+    """
+    return (config or {}).get("bash_sandbox", "auto") != "off" and _bwrap_available()
+
+
 def _build_bwrap_argv(
     command: str, writable_dirs: list[Path], session_tmp: Path
 ) -> list[str]:
@@ -225,22 +234,19 @@ class BashTool(Tool):
         # inside the sandbox; everything else is read-only.
         sandbox_mode = (config or {}).get("bash_sandbox", "auto")
         sandbox_warning = ""
-        use_sandbox = False
-        if sandbox_mode != "off":
-            if _bwrap_available():
-                use_sandbox = True
-            elif sandbox_mode == "on":
+        use_sandbox = sandbox_enabled(config)
+        if not use_sandbox and sandbox_mode != "off":
+            if sandbox_mode == "on":
                 return (
                     "Error: bash_sandbox=on but bubblewrap (bwrap) is not "
                     "available or failed to probe. Install bubblewrap or set "
                     "bash_sandbox to auto/off in config.yaml."
                 )
-            else:
-                sandbox_warning = (
-                    "[sandbox] bubblewrap (bwrap) is not available; bash runs "
-                    "without workspace isolation. Install bubblewrap to "
-                    "sandbox bash.\n"
-                )
+            sandbox_warning = (
+                "[sandbox] bubblewrap (bwrap) is not available; bash runs "
+                "without workspace isolation. Install bubblewrap to "
+                "sandbox bash.\n"
+            )
 
         if use_sandbox:
             # The sandbox's /tmp is the session's tmp directory; it must exist

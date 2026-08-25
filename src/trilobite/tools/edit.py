@@ -44,13 +44,16 @@ class EditTool(Tool):
         working_dir: Path,
         session_dir: Path,
         additional_dirs: list[Path] | None = None,
+        session_tmp: Path | None = None,
         filename: str = "",
         old_string: str = "",
         new_string: str = "",
         replace_all: bool = False,
         **kwargs: Any,
     ) -> str | dict[str, Any]:
-        filepath, error, perm_path = resolve_file_path(filename, working_dir, additional_dirs)
+        filepath, error, perm_path = resolve_file_path(
+            filename, working_dir, additional_dirs, session_tmp
+        )
         if perm_path:
             return {"result": error, "permission": perm_path}
         if error:

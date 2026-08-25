@@ -87,6 +87,7 @@ class GrepTool(Tool):
         working_dir: Path,
         session_dir: Path,
         additional_dirs: list[Path] | None = None,
+        session_tmp: Path | None = None,
         pattern: str = "",
         path: str = "",
         glob: str = "",
@@ -97,7 +98,7 @@ class GrepTool(Tool):
         **kwargs: Any,
     ) -> str:
         root, error, perm_path = resolve_file_path(
-            path or ".", working_dir, additional_dirs
+            path or ".", working_dir, additional_dirs, session_tmp
         )
         if perm_path:
             return f"Error: {error}"

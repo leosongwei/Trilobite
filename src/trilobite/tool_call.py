@@ -4,7 +4,7 @@ from typing import Any, Callable
 from src.trilobite.tools.read import ReadTool
 from src.trilobite.tools.edit import EditTool
 from src.trilobite.tools.write import WriteTool
-from src.trilobite.tools.bash import BashTool
+from src.trilobite.tools.bash import BashTool, sandbox_enabled
 from src.trilobite.tools.glob import GlobTool
 from src.trilobite.tools.grep import GrepTool
 from src.trilobite.tools.todo import TodoListTool
@@ -159,6 +159,11 @@ def execute_tool(
     kwargs: dict[str, Any] = {}
     if tool_name == "bash":
         kwargs["config"] = config
+    # While the bash sandbox is active, its /tmp is the session's scratch
+    # directory; the file tools remap /tmp onto it so both see one namespace.
+    # Without the sandbox /tmp keeps its host meaning and no remapping is
+    # done -- /tmp stays implicitly allowed either way (see resolve_file_path).
+    kwargs["session_tmp"] = session_dir / "tmp" if sandbox_enabled(config) else None
     result = tool.execute(
         working_dir=working_dir,
         session_dir=session_dir,

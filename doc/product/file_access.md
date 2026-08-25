@@ -71,6 +71,12 @@ allowed_dirs: []
 
 有效授权集 = `working_dir` + `allowed_dirs` + `additional_dirs`（去重），文件工具边界检查、bash 沙箱可写挂载、文件管理器根目录均使用同一集合；子 agent 继承父 session 的 `additional_dirs`，其自身从 config 计算同样的全局集合，无需额外传播。侧边栏 Allowed directories 顶部以灰色文字展示全局目录（无删除按钮）；若某个 session 对同一路径另有按会话授权，该条目按会话条目展示（删除只移除按会话授权，全局授权仍然生效）。
 
+### Session scratch（`/tmp`）
+
+每个 session 的 `tmp/` 目录（session 目录下）是该会话的 scratch 空间。bash 沙箱把它绑定为沙箱内的 `/tmp`（会话独立、跨 bash 调用持久）；文件工具（`read`/`write`/`edit`/`glob`/`grep`）与文件管理器在 bash 沙箱启用时（`bash_sandbox` 非 `off` 且 bubblewrap 可用）把绝对路径 `/tmp/...` 重定向到同一目录，因此 bash 与文件工具共享同一个 `/tmp` 命名空间：bash 里写入 `/tmp/foo` 的文件可以直接用 `read` 读回，反之亦然。沙箱未启用时（`bash_sandbox: off` 或 bwrap 不可用降级）不重定向，两边都直接访问宿主共享的 `/tmp`，命名空间仍然一致。
+
+该目录**隐式授权**：访问 `/tmp` 不走权限审批、不加入 `additional_dirs`、不持久化，也不出现在侧边栏 Allowed directories 中；敏感文件过滤仍然生效。
+
 ## 路径规范化与边界检查
 
 ### 规范化流程
