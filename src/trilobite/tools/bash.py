@@ -9,15 +9,14 @@ from typing import Any, Callable
 from src.trilobite.tools.tool import Tool
 
 #: Bubblewrap sandbox for bash: the whole tree is mounted read-only, then the
-#: working directory and granted additional directories are rebound writable.
-#: /tmp and /dev/shm get tmpfs/bind so tools that need scratch space keep
-#: working; /dev and /proc must be mounted explicitly inside the sandbox.
+#: working directory, granted additional directories and the session's tmp
+#: directory (bound onto /tmp) are rebound writable. /dev/shm is bound and
+#: /dev and /proc must be mounted explicitly inside the sandbox.
 #: See doc/product/file_access.md for the full design.
 _BWRAP_BASE_ARGS = (
     "--ro-bind", "/", "/",
     "--dev", "/dev",
     "--proc", "/proc",
-    "--tmpfs", "/tmp",
     "--bind", "/dev/shm", "/dev/shm",
 )
 
@@ -58,17 +57,21 @@ def _bwrap_available() -> bool:
         return False
 
 
-def _build_bwrap_argv(command: str, writable_dirs: list[Path]) -> list[str]:
+def _build_bwrap_argv(
+    command: str, writable_dirs: list[Path], session_tmp: Path
+) -> list[str]:
     """Build the bwrap argv that runs ``command`` under the bash sandbox.
 
     Mount order matters: the read-only root bind comes first, then each
     writable directory is rebound (later binds override earlier ones). Missing
     or duplicate directories are skipped -- bubblewrap requires bind targets
-    to exist. ``--die-with-parent`` guarantees the sandboxed process tree is
-    torn down when the bwrap process itself dies (e.g. our SIGKILL on
-    interrupt/timeout).
+    to exist. The session's ``tmp/`` directory (``session_tmp``, verified to
+    exist by the caller) is bound onto ``/tmp`` so commands get a
+    session-scoped scratch area that persists across invocations.
+    ``--die-with-parent`` guarantees the sandboxed process tree is torn down
+    when the bwrap process itself dies (e.g. our SIGKILL on interrupt/timeout).
     """
-    argv = ["bwrap", *_BWRAP_BASE_ARGS]
+    argv = ["bwrap", *_BWRAP_BASE_ARGS, "--bind", str(session_tmp), "/tmp"]
     seen: set[str] = set()
     for directory in writable_dirs:
         try:
@@ -239,10 +242,28 @@ class BashTool(Tool):
                     "sandbox bash.\n"
                 )
 
+        if use_sandbox:
+            # The sandbox's /tmp is the session's tmp directory; it must exist
+            # before bwrap runs (bind targets are required). If it cannot be
+            # created the session directory is broken -- raise, so the run
+            # aborts with an error event (like a failed API call) instead of
+            # handing the model a tool error it would just retry.
+            session_tmp = session_dir / "tmp"
+            try:
+                session_tmp.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise RuntimeError(
+                    f"cannot create the session scratch directory "
+                    f"{session_tmp} for the bash sandbox ({e}) -- check the "
+                    "permissions of the session directory"
+                ) from None
+
         proc: subprocess.Popen | None = None
         try:
             if use_sandbox:
-                argv = _build_bwrap_argv(command, [working_dir] + list(additional_dirs or []))
+                argv = _build_bwrap_argv(
+                    command, [working_dir] + list(additional_dirs or []), session_tmp
+                )
                 shell = False
             else:
                 argv = command
