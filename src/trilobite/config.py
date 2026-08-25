@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
     "compaction_trigger_ratio": "0.7",
     "enable_vl": False,
     "skill_dirs": [],
+    "allowed_dirs": [],
     "bash_sandbox": "auto",
     "models": [],
     "default_model": "",

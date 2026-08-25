@@ -22,7 +22,7 @@ from src.trilobite.config import (
     get_default_model_name,
     get_model,
 )
-from src.trilobite.file_access import normalize_dir
+from src.trilobite.file_access import normalize_dir, normalize_dirs
 from src.trilobite.history import MessageList, TurnsView
 from src.trilobite.messages import (
     CompactMarker,
@@ -349,6 +349,12 @@ class Agent:
             self._permission: AgentPermission = BuildModePermission()
         self._last_notified_mode: bool | None = None
         self._additional_dirs: list[Path] = []
+        # Global fixed allowed dirs from the config (``allowed_dirs``): granted
+        # to every session, never persisted per session, never revocable from
+        # the UI. Relative entries resolve against this session's working dir.
+        self._global_dirs = normalize_dirs(
+            self.config.get("allowed_dirs", []) or [], self.working_dir
+        )
         self._plan_exit_event: asyncio.Event = asyncio.Event()
         self._plan_exit_approved: bool = False
         self._permission_event: asyncio.Event = asyncio.Event()
@@ -623,6 +629,15 @@ class Agent:
                 self._send_stream_event(event), self._loop
             )
         return _on_output
+
+    @property
+    def all_additional_dirs(self) -> list[Path]:
+        """Effective grants: global config dirs followed by session dirs."""
+        out = list(self._global_dirs)
+        for d in self._additional_dirs:
+            if d not in out:
+                out.append(d)
+        return out
 
     def set_additional_dirs(self, dirs: list[str]):
         """Replace the allowed-directory grants, canonicalized and deduped.
@@ -1096,7 +1111,7 @@ class Agent:
                             on_output = self._make_output_callback(tc.id)
                             tool_result = await asyncio.to_thread(
                                 execute_tool, tool_name, args, self.working_dir,
-                                self.session_dir, self._additional_dirs,
+                                self.session_dir, self.all_additional_dirs,
                                 self.config, self._register_proc, on_output)
                             if "image" in tool_result and self.enable_vl:
                                 await self._append_image_user_message(tool_result["image"])
@@ -1131,7 +1146,7 @@ class Agent:
                                 on_output = self._make_output_callback(tc.id)
                                 tool_result = await asyncio.to_thread(
                                     execute_tool, tool_name, args, self.working_dir,
-                                    self.session_dir, self._additional_dirs,
+                                    self.session_dir, self.all_additional_dirs,
                                     self.config, self._register_proc, on_output)
                                 if "image" in tool_result and self.enable_vl:
                                     await self._append_image_user_message(tool_result["image"])
@@ -1374,6 +1389,9 @@ class Agent:
         snapshot["subagent_type"] = self._subagent_type
         snapshot["description"] = self._description
         snapshot["enable_vl"] = self.enable_vl
+        # Global config grants are session-independent; the sidebar shows
+        # them in gray with no remove button.
+        snapshot["global_dirs"] = [str(d) for d in self._global_dirs]
         return q, snapshot
 
     def detach_subscriber(self, q: asyncio.Queue) -> None:

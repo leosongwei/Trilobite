@@ -49,7 +49,7 @@ export interface PendingRequest {
 }
 
 export type SSEEvent =
-  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; is_subagent?: boolean; kind?: string; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
+  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; global_dirs?: string[]; is_subagent?: boolean; kind?: string; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
   | { type: 'user'; id: string; text: string; user_seq: number; images?: ImageMeta[] }
   | { type: 'user_edit'; message_id: string; text: string }
   | { type: 'turn' }
