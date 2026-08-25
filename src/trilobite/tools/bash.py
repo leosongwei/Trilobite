@@ -58,29 +58,20 @@ def _bwrap_available() -> bool:
 
 
 def _build_bwrap_argv(
-    command: str, writable_dirs: list[Path], session_dir: Path
+    command: str, writable_dirs: list[Path], session_tmp: Path
 ) -> list[str]:
     """Build the bwrap argv that runs ``command`` under the bash sandbox.
 
     Mount order matters: the read-only root bind comes first, then each
     writable directory is rebound (later binds override earlier ones). Missing
     or duplicate directories are skipped -- bubblewrap requires bind targets
-    to exist. The session's ``tmp/`` directory is bound onto ``/tmp`` so
-    commands get a session-scoped scratch area that persists across
-    invocations; if it cannot be created, a plain tmpfs is mounted instead
-    so bash still has working scratch space. ``--die-with-parent``
-    guarantees the sandboxed process tree is torn down when the bwrap process
-    itself dies (e.g. our SIGKILL on interrupt/timeout).
+    to exist. The session's ``tmp/`` directory (``session_tmp``, verified to
+    exist by the caller) is bound onto ``/tmp`` so commands get a
+    session-scoped scratch area that persists across invocations.
+    ``--die-with-parent`` guarantees the sandboxed process tree is torn down
+    when the bwrap process itself dies (e.g. our SIGKILL on interrupt/timeout).
     """
-    session_tmp = session_dir / "tmp"
-    tmp_mount = ["--tmpfs", "/tmp"]
-    try:
-        session_tmp.mkdir(parents=True, exist_ok=True)
-        if session_tmp.is_dir():
-            tmp_mount = ["--bind", str(session_tmp), "/tmp"]
-    except OSError:
-        pass
-    argv = ["bwrap", *_BWRAP_BASE_ARGS, *tmp_mount]
+    argv = ["bwrap", *_BWRAP_BASE_ARGS, "--bind", str(session_tmp), "/tmp"]
     seen: set[str] = set()
     for directory in writable_dirs:
         try:
@@ -254,8 +245,22 @@ class BashTool(Tool):
         proc: subprocess.Popen | None = None
         try:
             if use_sandbox:
+                # The sandbox's /tmp is the session's tmp directory; it must
+                # exist before bwrap runs (bind targets are required). If it
+                # cannot be created the session directory is broken -- fail
+                # loudly instead of masking the problem.
+                session_tmp = session_dir / "tmp"
+                try:
+                    session_tmp.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    return (
+                        f"Error: cannot create the session scratch directory "
+                        f"{session_tmp} ({e}). bash needs it as the sandbox's "
+                        "/tmp -- check the permissions of the session "
+                        "directory and retry."
+                    )
                 argv = _build_bwrap_argv(
-                    command, [working_dir] + list(additional_dirs or []), session_dir
+                    command, [working_dir] + list(additional_dirs or []), session_tmp
                 )
                 shell = False
             else:

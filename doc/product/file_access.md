@@ -181,7 +181,7 @@ bwrap --ro-bind / / --dev /dev --proc /proc \
       --die-with-parent -- bash -c <command>
 ```
 
-整个文件系统只读，仅工作目录、已授权目录（additional directories，与文件工具的授权集一致）和会话的 scratch 空间可写；`/tmp` 挂载 session 文件夹下的 `tmp/` 目录（不存在时自动创建），每个会话独立、在会话内跨 bash 调用持久；`/dev/shm` 继承宿主。可写目录中缺失或不存在的路径会被跳过（bwrap 要求挂载目标存在）。沙箱探测结果在进程内缓存。`bwrap` 不可用或非 Linux 平台时，bash 退化为普通执行（`auto` 模式带提示；`on` 模式直接拒绝），行为与未启用沙箱一致。
+整个文件系统只读，仅工作目录、已授权目录（additional directories，与文件工具的授权集一致）和会话的 scratch 空间可写；`/tmp` 挂载 session 文件夹下的 `tmp/` 目录（不存在时自动创建；创建失败则拒绝执行该命令并报错，由用户处理 session 目录的权限问题），每个会话独立、在会话内跨 bash 调用持久；`/dev/shm` 继承宿主。可写目录中缺失或不存在的路径会被跳过（bwrap 要求挂载目标存在）。沙箱探测结果在进程内缓存。`bwrap` 不可用或非 Linux 平台时，bash 退化为普通执行（`auto` 模式带提示；`on` 模式直接拒绝），行为与未启用沙箱一致。
 
 **被拒反馈。** 沙箱拦截工作区外写入时内核返回只读文件系统错误，工具结果会附带 `[sandbox]` 提示，说明写入被沙箱阻止、并引导模型先用 `read` 工具读取目标文件以发起权限请求——用户批准后该目录加入 additional directories，bash 沙箱随即允许写入（复用现有审批流程，无新机制）。
 
