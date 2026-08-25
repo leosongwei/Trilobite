@@ -73,13 +73,16 @@ class ReadTool(Tool):
         working_dir: Path,
         session_dir: Path,
         additional_dirs: list[Path] | None = None,
+        session_tmp: Path | None = None,
         filename: str = "",
         limit_lines: int = 50,
         start_line: int = 0,
         limit_chars: int = 10000,
         **kwargs: Any,
     ) -> str | dict[str, Any]:
-        filepath, error, perm_path = resolve_file_path(filename, working_dir, additional_dirs)
+        filepath, error, perm_path = resolve_file_path(
+            filename, working_dir, additional_dirs, session_tmp
+        )
         if perm_path:
             return {"result": error, "permission": perm_path}
         if error:

@@ -109,12 +109,28 @@ def normalize_dirs(dirs: list[str], base: Path | None = None) -> list[Path]:
     return out
 
 
+#: The model's ``/tmp`` is the session's scratch directory (bound onto /tmp
+#: inside the bash sandbox), not the host's shared /tmp. File tools remap
+#: absolute paths under this host path into the session scratch so bash and
+#: the file tools share one namespace.
+_HOST_TMP = Path("/tmp")
+
+
 def resolve_file_path(
     filename: str,
     working_dir: Path,
     additional_dirs: list[Path] | None = None,
+    session_tmp: Path | None = None,
 ) -> tuple[Path | None, str | None, str | None]:
     """Resolve and validate a file path.
+
+    *session_tmp* is the session's scratch directory (``session_dir/tmp``).
+    When provided, absolute paths under the host's ``/tmp`` are remapped into
+    it -- the bash sandbox binds that directory onto ``/tmp``, so the file
+    tools see the same ``/tmp`` the sandboxed bash does. Without it (bash
+    unsandboxed, host /tmp) the paths keep their host meaning. Either way the
+    ``/tmp`` area is implicitly allowed: no permission request, never
+    persisted, never shown in the UI.
 
     Returns:
         (resolved_path, None, None) on success.
@@ -133,6 +149,11 @@ def resolve_file_path(
 
     if is_sensitive_file(filepath):
         return None, f"Error: Access to sensitive file denied: {filename}", None
+
+    if filepath.is_relative_to(_HOST_TMP):
+        if session_tmp is not None:
+            filepath = session_tmp / filepath.relative_to(_HOST_TMP)
+        return filepath, None, None
 
     all_dirs = [working_dir] + additional_dirs
     in_workspace = any(filepath.is_relative_to(d) for d in all_dirs)

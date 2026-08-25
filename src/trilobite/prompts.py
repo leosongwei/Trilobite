@@ -126,9 +126,10 @@ the current time; any parse error includes it.
 # Scratch files
 
 Write temporary/scratch files to /tmp, not the working directory. /tmp is a
-writable per-session scratch area (isolated from the host's /tmp when bash
-runs sandboxed) -- use it for intermediate artifacts, and keep the working
-directory free of throwaway files.
+writable per-session scratch area shared by the file tools and the bash
+sandbox -- a file written there by one is visible to the others. Use it for
+intermediate artifacts, and keep the working directory free of throwaway
+files.
 """
 
 COMPACTION_PROMPT = """You are about to run out of context. Write a first-person handoff note to

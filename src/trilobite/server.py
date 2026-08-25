@@ -28,6 +28,7 @@ from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
 from src.trilobite.projects import create_project as projects_create, delete_project as projects_delete, load_projects
 from src.trilobite.timer import TimerService
+from src.trilobite.tools.bash import sandbox_enabled
 from src.trilobite.version import get_version as get_pkg_version
 
 app = FastAPI(title="Trilobite")
@@ -711,7 +712,12 @@ def _fs_roots(agent: Agent) -> list[Path]:
 
 def _fs_resolve(agent: Agent, path: str) -> Path:
     """Resolve a file-manager path, enforcing the workspace boundary."""
-    filepath, error, perm_path = resolve_file_path(path, Path(agent.working_dir), agent.all_additional_dirs)
+    # Mirrors the agent's file tools: /tmp is remapped onto the session
+    # scratch only while the bash sandbox binds it there (see execute_tool).
+    session_tmp = agent.session_dir / "tmp" if sandbox_enabled(agent.config) else None
+    filepath, error, perm_path = resolve_file_path(
+        path, Path(agent.working_dir), agent.all_additional_dirs, session_tmp
+    )
     if perm_path or error:
         raise HTTPException(status_code=400, detail=error or "path outside workspace")
     return filepath
