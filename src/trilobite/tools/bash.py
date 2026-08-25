@@ -242,23 +242,25 @@ class BashTool(Tool):
                     "sandbox bash.\n"
                 )
 
+        if use_sandbox:
+            # The sandbox's /tmp is the session's tmp directory; it must exist
+            # before bwrap runs (bind targets are required). If it cannot be
+            # created the session directory is broken -- raise, so the run
+            # aborts with an error event (like a failed API call) instead of
+            # handing the model a tool error it would just retry.
+            session_tmp = session_dir / "tmp"
+            try:
+                session_tmp.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise RuntimeError(
+                    f"cannot create the session scratch directory "
+                    f"{session_tmp} for the bash sandbox ({e}) -- check the "
+                    "permissions of the session directory"
+                ) from None
+
         proc: subprocess.Popen | None = None
         try:
             if use_sandbox:
-                # The sandbox's /tmp is the session's tmp directory; it must
-                # exist before bwrap runs (bind targets are required). If it
-                # cannot be created the session directory is broken -- fail
-                # loudly instead of masking the problem.
-                session_tmp = session_dir / "tmp"
-                try:
-                    session_tmp.mkdir(parents=True, exist_ok=True)
-                except OSError as e:
-                    return (
-                        f"Error: cannot create the session scratch directory "
-                        f"{session_tmp} ({e}). bash needs it as the sandbox's "
-                        "/tmp -- check the permissions of the session "
-                        "directory and retry."
-                    )
                 argv = _build_bwrap_argv(
                     command, [working_dir] + list(additional_dirs or []), session_tmp
                 )
