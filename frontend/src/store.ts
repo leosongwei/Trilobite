@@ -20,6 +20,9 @@ interface State {
   fsRefreshTick: number
   planMode: boolean
   additionalDirs: string[]
+  // Global fixed allowed dirs from the config (init event): granted to every
+  // session, shown in the sidebar in gray with no remove button.
+  globalDirs: string[]
   // Pending approval requests (directory grants + plan-exit), one entry per
   // requesting session. Concurrent requests from the main session and several
   // subagents never overwrite each other; the banner and the sidebar Requests
@@ -47,6 +50,7 @@ const state = reactive<State>({
   fsRefreshTick: 0,
   planMode: false,
   additionalDirs: [],
+  globalDirs: [],
   pendingRequests: [],
   isSubagent: false,
   sealed: false,
@@ -172,6 +176,7 @@ function handleSSEEvent(event: SSEEvent) {
       state.maxTokens = event.max_context_tokens
       state.planMode = event.plan_mode
       state.additionalDirs = event.additional_dirs ?? []
+      state.globalDirs = event.global_dirs ?? []
       state.isSubagent = event.is_subagent ?? false
       state.sealed = event.sealed ?? false
       state.subagentType = event.subagent_type ?? null
@@ -730,6 +735,7 @@ export function useStore() {
     state.statusText = null
     state.planMode = false
     state.additionalDirs = []
+    state.globalDirs = []
     state.isStreaming = false
     await loadSessions()
     connectStream(actualId)
@@ -766,6 +772,7 @@ export function useStore() {
       state.statusText = null
       state.planMode = false
       state.additionalDirs = []
+      state.globalDirs = []
       state.isStreaming = false
       closeTurn()
     }

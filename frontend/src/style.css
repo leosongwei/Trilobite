@@ -303,6 +303,8 @@ body {
   border-radius: 3px;
   font-size: 12px;
 }
+/* Global fixed grants (config allowed_dirs): gray path, no remove button */
+.dir-item-global .dir-path { color: #808080; }
 .dir-path {
   color: #cccccc;
   overflow: hidden;

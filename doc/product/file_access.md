@@ -48,6 +48,29 @@ Content-Type: application/json
 
 **组级语义**：子 agent（subagent）在 spawn 时继承主 session 的授权目录；主 session 的授权目录在运行中发生变化（手工添加、权限审批）时，会同步传播到所有运行中的子 agent（保留子 agent 自己单独获批的目录），因此已经对主 session 授权过的目录不会再向子 agent 重复请求权限。侧边栏 Allowed directories 展示的是整个组（主 session + 子 agent）按路径去重后的并集，同一目录只出现一次。
 
+### 全局固定授权目录（config `allowed_dirs`）
+
+config.yaml 的 `allowed_dirs` 键配置一组**全局固定**的授权目录，对所有 session 生效（包括 web 与 CLI）：
+
+```yaml
+# 全局固定授权目录：所有会话默认可访问（文件工具 + bash 沙箱可写），
+# 不走按会话的权限审批、UI 上不可移除。支持 ~ 展开，相对路径基于各会话
+# 工作目录解析，如 ["/home/user/shared-libs", "~/scripts"]
+allowed_dirs: []
+```
+
+与按会话的 `additional_dirs` 的区别：
+
+| 方面 | `additional_dirs`（按会话） | `allowed_dirs`（全局，config） |
+|------|------------------------------|--------------------------------|
+| 作用范围 | 单个 session（子 agent 继承） | 所有 session |
+| 存储 | `session.json` | config.yaml |
+| 来源 | 用户手动添加 / 权限审批自动添加 | 用户配置 |
+| 移除 | UI 可删除 | 不可移除（改配置后重启） |
+| 权限提示 | 未授权路径触发 | 命中即直接放行，不触发 |
+
+有效授权集 = `working_dir` + `allowed_dirs` + `additional_dirs`（去重），文件工具边界检查、bash 沙箱可写挂载、文件管理器根目录均使用同一集合；子 agent 继承父 session 的 `additional_dirs`，其自身从 config 计算同样的全局集合，无需额外传播。侧边栏 Allowed directories 顶部以灰色文字展示全局目录（无删除按钮）；若某个 session 对同一路径另有按会话授权，该条目按会话条目展示（删除只移除按会话授权，全局授权仍然生效）。
+
 ## 路径规范化与边界检查
 
 ### 规范化流程
@@ -64,13 +87,13 @@ Content-Type: application/json
 ```
 规范化后的路径
     │
-    ├─ 在工作目录或额外目录内？
+    ├─ 在工作目录或授权目录内（全局 allowed_dirs + 按会话 additional_dirs）？
     │   ├─ 是 -> 允许访问
     │   └─ 否 -> 触发权限请求（暂停 Agent，前端弹窗提示用户 Grant/Deny）
 ```
 
 **设计原则**：
-- **白名单制**：所有路径（绝对或相对）必须在 `working_dir` 或 `additional_dirs` 内。
+- **白名单制**：所有路径（绝对或相对）必须在 `working_dir`、全局 `allowed_dirs` 或按会话 `additional_dirs` 内。
 - **权限提示而非硬拒绝**：当模型尝试访问工作区外的路径时，Agent 暂停执行，前端弹出横幅让用户授权（Grant）或拒绝（Deny）。批准后目录自动加入 `additional_dirs` 并持久化，Agent 自动重试工具调用。用户无需手动添加目录。
 - **敏感文件硬拒绝**：`.env`、SSH 密钥等敏感文件无论位置一律拒绝，不走权限提示流程。
 
@@ -181,7 +204,7 @@ bwrap --ro-bind / / --dev /dev --proc /proc \
       --die-with-parent -- bash -c <command>
 ```
 
-整个文件系统只读，仅工作目录、已授权目录（additional directories，与文件工具的授权集一致）和会话的 scratch 空间可写；`/tmp` 挂载 session 文件夹下的 `tmp/` 目录（不存在时自动创建；创建失败则整个 run 中止并广播 error 事件——与模型 API 请求失败同语义，由用户处理 session 目录的权限问题），每个会话独立、在会话内跨 bash 调用持久；`/dev/shm` 继承宿主。可写目录中缺失或不存在的路径会被跳过（bwrap 要求挂载目标存在）。沙箱探测结果在进程内缓存。`bwrap` 不可用或非 Linux 平台时，bash 退化为普通执行（`auto` 模式带提示；`on` 模式直接拒绝），行为与未启用沙箱一致。
+整个文件系统只读，仅工作目录、已授权目录（全局 `allowed_dirs` + 按会话 additional directories，与文件工具的授权集一致）和会话的 scratch 空间可写；`/tmp` 挂载 session 文件夹下的 `tmp/` 目录（不存在时自动创建；创建失败则整个 run 中止并广播 error 事件——与模型 API 请求失败同语义，由用户处理 session 目录的权限问题），每个会话独立、在会话内跨 bash 调用持久；`/dev/shm` 继承宿主。可写目录中缺失或不存在的路径会被跳过（bwrap 要求挂载目标存在）。沙箱探测结果在进程内缓存。`bwrap` 不可用或非 Linux 平台时，bash 退化为普通执行（`auto` 模式带提示；`on` 模式直接拒绝），行为与未启用沙箱一致。
 
 **被拒反馈。** 沙箱拦截工作区外写入时内核返回只读文件系统错误，工具结果会附带 `[sandbox]` 提示，说明写入被沙箱阻止、并引导模型先用 `read` 工具读取目标文件以发起权限请求——用户批准后该目录加入 additional directories，bash 沙箱随即允许写入（复用现有审批流程，无新机制）。
 
@@ -242,6 +265,17 @@ write("/home/user/shared-libs/new.py", ...)  -> ✓ 直接允许
 read("/home/user/other/file.txt")          -> 权限提示（不在额外目录中）
 ```
 
+### 全局固定授权目录（config `allowed_dirs`，无权限提示）
+
+```
+工作目录: /home/user/project
+全局目录: ["/home/user/shared-libs"]
+
+read("/home/user/shared-libs/utils.py")    -> ✓ 直接允许（任何 session 均如此）
+bash("echo x > /home/user/shared-libs/a")  -> ✓ 沙箱内可写
+read("/home/user/other/file.txt")          -> 权限提示（不在全局目录中）
+```
+
 ## 与 kimi-code 的对比
 
 | 方面 | kimi-code | Trilobite |
@@ -252,7 +286,7 @@ read("/home/user/other/file.txt")          -> 权限提示（不在额外目录�
 | 敏感文件 | 硬阻止 + 审批策略双层 | 硬阻止（单层） |
 | 工作目录外访问 | 绝对路径允许但需审批 | 权限提示（Grant/Deny），批准后自动加入白名单 |
 | bash 路径限制 | 无 | bwrap 沙箱（Linux，工作区 + 授权目录可写） |
-| 额外目录添加 | CLI flag + slash command + config | 权限提示自动添加 + API |
+| 额外目录添加 | CLI flag + slash command + config | 权限提示自动添加 + API + 全局 config `allowed_dirs` |
 | 审批系统 | 完整（manual/yolo/auto 模式 + 规则链） | 已实现（SSE 事件暂停 + 前端横幅） |
 
 ## 未来扩展

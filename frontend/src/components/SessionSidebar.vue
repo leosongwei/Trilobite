@@ -121,12 +121,12 @@
           <div v-if="groupDirs.length === 0" class="requests-empty">
             No allowed directories
           </div>
-          <div v-for="entry in groupDirs" :key="entry.path" class="dir-item">
+          <div v-for="entry in groupDirs" :key="entry.path" class="dir-item" :class="{ 'dir-item-global': entry.global }">
             <span class="dir-path" :title="entry.path">
               <span v-if="entry.source" class="dir-source">{{ entry.source }}</span>
               {{ entry.path }}
             </span>
-            <span class="delete" @click="handleRemoveGroupDir(entry)"><span class="ms ms-close"></span></span>
+            <span v-if="!entry.global" class="delete" @click="handleRemoveGroupDir(entry)"><span class="ms ms-close"></span></span>
           </div>
           <div class="dir-add">
             <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
@@ -596,6 +596,8 @@ interface GroupDirEntry {
   sessionId: string
   path: string
   source: string | null
+  /** Grant comes from the config's global allowed_dirs (not removable). */
+  global?: boolean
 }
 
 // Trailing slashes are stripped so `/foo/` and `/foo` (legacy data written
@@ -616,6 +618,17 @@ const groupDirs = computed<GroupDirEntry[]>(() => {
   const group = state.sessions.filter((s) => s.id === root || s.parent_session === root)
   const byPath = new Map<string, GroupDirEntry>()
   const entries: GroupDirEntry[] = []
+  // Global fixed grants (config allowed_dirs) come first; shown in gray and
+  // not removable. A session-level grant of the same path demotes the entry
+  // to a regular session entry: removing it only drops the session grant.
+  for (const p of state.globalDirs) {
+    const key = dirKey(p)
+    if (!byPath.has(key)) {
+      const entry: GroupDirEntry = { sessionId: '', path: key, source: null, global: true }
+      byPath.set(key, entry)
+      entries.push(entry)
+    }
+  }
   for (const s of group) {
     for (const p of s.additional_dirs ?? []) {
       const key = dirKey(p)
@@ -623,7 +636,11 @@ const groupDirs = computed<GroupDirEntry[]>(() => {
       if (existing) {
         // Same directory granted to several sessions: prefer the entry owned
         // by the viewed session (no badge); otherwise merge the owner label.
-        if (s.id === cur) {
+        if (existing.global) {
+          existing.global = false
+          existing.sessionId = s.id
+          existing.source = s.id === cur ? null : sessionLabel(s)
+        } else if (s.id === cur) {
           existing.sessionId = s.id
           existing.source = null
         } else if (existing.sessionId !== cur && existing.source) {

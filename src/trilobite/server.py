@@ -22,7 +22,7 @@ from src.trilobite.config import (
     init_config,
     load_models,
 )
-from src.trilobite.file_access import detect_line_ending, materialize, normalize_dir, resolve_file_path
+from src.trilobite.file_access import detect_line_ending, materialize, normalize_dir, normalize_dirs, resolve_file_path
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image
@@ -664,6 +664,7 @@ async def get_session_info(name: str):
             "max_context_tokens": int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS)),
             "plan_mode": info.get("plan_mode", False),
             "additional_dirs": info.get("additional_dirs", []),
+            "global_dirs": [str(d) for d in normalize_dirs(config.get("allowed_dirs", []) or [], Path(info["working_dir"]))],
             "model": info.get("model") or get_default_model_name(config),
         }
     return {
@@ -674,6 +675,7 @@ async def get_session_info(name: str):
         "max_context_tokens": agent.max_context_tokens,
         "plan_mode": agent._plan_mode,
         "additional_dirs": [str(d) for d in agent._additional_dirs],
+        "global_dirs": [str(d) for d in agent._global_dirs],
         "model": agent._model_name,
     }
 
@@ -704,12 +706,12 @@ async def get_history(name: str):
 # file filter are enforced exactly like the agent's file tools.
 
 def _fs_roots(agent: Agent) -> list[Path]:
-    return [Path(agent.working_dir)] + [Path(d) for d in agent._additional_dirs]
+    return [Path(agent.working_dir)] + agent.all_additional_dirs
 
 
 def _fs_resolve(agent: Agent, path: str) -> Path:
     """Resolve a file-manager path, enforcing the workspace boundary."""
-    filepath, error, perm_path = resolve_file_path(path, Path(agent.working_dir), [Path(d) for d in agent._additional_dirs])
+    filepath, error, perm_path = resolve_file_path(path, Path(agent.working_dir), agent.all_additional_dirs)
     if perm_path or error:
         raise HTTPException(status_code=400, detail=error or "path outside workspace")
     return filepath

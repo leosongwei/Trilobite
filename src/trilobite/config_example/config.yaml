@@ -44,6 +44,10 @@ host: "127.0.0.1"
 port: 2345
 # 额外的 skill 搜索目录（相对路径基于工作目录，支持 ~ 展开），如 ["~/team-skills"]
 skill_dirs: []
+# 全局固定授权目录：所有会话默认可访问（文件工具 + bash 沙箱可写），
+# 不走按会话的权限审批、UI 上不可移除。支持 ~ 展开，相对路径基于各会话
+# 工作目录解析，如 ["/home/user/shared-libs", "~/scripts"]
+allowed_dirs: []
 # bash 沙箱（仅 Linux，依赖 bubblewrap/bwrap）：auto=探测到就用、否则裸跑并提示；
 # on=强制沙箱、不可用则拒绝执行；off=关闭沙箱。沙箱内仅工作目录和已授权目录可写。
 bash_sandbox: auto

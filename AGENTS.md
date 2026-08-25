@@ -71,7 +71,7 @@ Agent 有两种运行模式：
 
 ## 文件访问权限
 
-`read`/`edit`/`write`/`glob`/`grep` 工具在 working_dir（存于 `session.json`）范围内操作；访问工作区以外路径时前端弹出权限请求横幅（Grant/Deny）。批准后目录加入 `additional_dirs` 并持久化到 `session.json`，重启保留。`bash` 在 Linux 上默认套 bubblewrap 沙箱（config `bash_sandbox`：auto/on/off），沙箱内仅工作区 + 授权目录可写。敏感文件直接拒绝。详见 `doc/product/file_access.md`。
+`read`/`edit`/`write`/`glob`/`grep` 工具在 working_dir（存于 `session.json`）范围内操作；访问工作区以外路径时前端弹出权限请求横幅（Grant/Deny）。批准后目录加入 `additional_dirs` 并持久化到 `session.json`，重启保留。config 的 `allowed_dirs` 配置全局固定授权目录（所有会话生效、UI 不可移除，侧边栏灰色展示）。`bash` 在 Linux 上默认套 bubblewrap 沙箱（config `bash_sandbox`：auto/on/off），沙箱内仅工作区 + 授权目录（全局 + 按会话）可写。敏感文件直接拒绝。详见 `doc/product/file_access.md`。
 
 ## 文件管理器
 
@@ -83,7 +83,7 @@ Token 超过 `compaction_trigger_ratio` 阈值时触发压缩：插入 `CompactM
 
 ## 配置 (`src/trilobite/config_example/`)
 
-* `config.yaml` -- `model`、`api_key`、`api_url`、`reasoning_effort`、`max_context_tokens`（上下文窗口）、`max_tokens`（单次输出上限）、`log_level`、`compaction_trigger_ratio`、`enable_vl`、`host`（服务监听地址，默认 127.0.0.1 仅本机可访问）、`port`（服务监听端口）、`skill_dirs`（额外的 skill 搜索目录，相对路径基于工作目录，支持 `~` 展开）
+* `config.yaml` -- `model`、`api_key`、`api_url`、`reasoning_effort`、`max_context_tokens`（上下文窗口）、`max_tokens`（单次输出上限）、`log_level`、`compaction_trigger_ratio`、`enable_vl`、`host`（服务监听地址，默认 127.0.0.1 仅本机可访问）、`port`（服务监听端口）、`skill_dirs`（额外的 skill 搜索目录，相对路径基于工作目录，支持 `~` 展开）、`allowed_dirs`（全局固定授权目录，所有会话默认可访问，不走权限审批、UI 不可移除，支持 `~` 展开、相对路径基于各会话工作目录解析）
 
 提示词（系统提示词、压缩摘要、subagent 角色）不在配置里，而是硬编码在 `src/trilobite/prompts.py`，不可配置。
 

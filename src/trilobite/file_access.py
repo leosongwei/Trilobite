@@ -99,6 +99,16 @@ def normalize_dir(path: str, base: Path | None = None) -> Path:
     return p.resolve()
 
 
+def normalize_dirs(dirs: list[str], base: Path | None = None) -> list[Path]:
+    """Normalize a list of directory grants, deduped in first-seen order."""
+    out: list[Path] = []
+    for d in dirs or []:
+        resolved = normalize_dir(d, base)
+        if resolved not in out:
+            out.append(resolved)
+    return out
+
+
 def resolve_file_path(
     filename: str,
     working_dir: Path,
