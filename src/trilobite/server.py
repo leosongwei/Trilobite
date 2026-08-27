@@ -444,16 +444,9 @@ async def send_message(name: str, req: MessageRequest):
     agent = _get_or_create_agent(name)
     if agent.is_sealed():
         raise HTTPException(status_code=409, detail="subagent session has ended, no longer accepts input")
-    if req.message.strip() == "/compact":
-        if agent.is_running():
-            raise HTTPException(status_code=409, detail="agent is running, stop it first")
-        if timer_service is not None and timer_service.is_sleeping(name):
-            # A normal message would wake the session early (and is allowed);
-            # compaction is refused instead so the suspension and the rebuilt
-            # context never interleave -- wake it first if needed.
-            raise HTTPException(status_code=409, detail="session is suspended (sleep_until); send a message or wake it first")
-        await agent.compact_now()
-        return {"status": "compacted"}
+    # "/compact" needs no special casing here: it rides this endpoint as plain
+    # text (start or steer), so it can also queue behind an in-flight run; the
+    # agent turns it into the compaction turn when the run loop reads it.
     if agent.is_running():
         # Steering only carries text; attached images are ignored mid-run.
         await agent.steer(req.message)
@@ -482,6 +475,11 @@ async def send_message(name: str, req: MessageRequest):
 class RevertRequest(BaseModel):
     message_id: str
     message: str
+    # Filenames (from the edited message's own attachments) to keep; anything
+    # unlisted is dropped by the edit.
+    keep_images: list[str] = []
+    # Newly uploaded attachments, same shape as MessageRequest.images.
+    images: list[ImageAttachment] | None = None
 
 
 @app.post("/api/sessions/{name}/revert")
@@ -492,8 +490,23 @@ async def revert_message(name: str, req: RevertRequest):
     # the model asked to sleep on.
     if timer_service is not None and timer_service.is_sleeping(name):
         timer_service.cancel(name)
+    new_images: list[Image] = []
+    if agent.enable_vl:
+        for att in req.images or []:
+            data = _decode_data_url(att.data_url)
+            new_images.append(save_image(
+                agent.session_dir,
+                data,
+                att.mime_type,
+                original_name=att.original_name or "",
+            ))
     try:
-        status = await agent.revert(req.message_id, req.message)
+        status = await agent.revert(
+            req.message_id,
+            req.message,
+            keep_images=req.keep_images,
+            images=new_images or None,
+        )
     except ValueError:
         raise HTTPException(status_code=400, detail="user message not found")
     return {"status": status}

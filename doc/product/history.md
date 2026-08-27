@@ -174,10 +174,10 @@ steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写�
 
 ## 编辑重发（revert）
 
-用户可以编辑之前发送的某条消息并从该处重新推理（`POST /api/sessions/{id}/revert`，参数 `message_id` + `message`）。`Agent.revert` 通过 `TurnsView.find_user` 按 `_id` 定位目标（找不到抛 ValueError → 400），再按该消息是否已被模型读取分两种处理：
+用户可以编辑之前发送的某条消息并从该处重新推理（`POST /api/sessions/{id}/revert`，参数 `message_id` + `message`，以及可选的图片载荷：`keep_images` 列出编辑后保留的旧附件文件名（未列出的即被删除）、`images` 为新上传附件）。`Agent.revert` 通过 `TurnsView.find_user` 按 `_id` 定位目标（找不到抛 ValueError → 400），先算出最终附件列表（目标消息中 `keep_images` 命中的项 + 新上传项），再按该消息是否已被模型读取分两种处理：
 
-* **rerun**（`user_seq < _user_read_cursor`，或 agent 当前不在运行）：若正在运行先 `stop()`（必须先停后截——被取消 run 的 salvage 逻辑可能引用即将被截掉的消息），再 `history.truncate_at(message_id)` 丢弃该 user 消息及其后所有内容，把 `_user_read_cursor` 对齐到截断后的历史（否则截断后 cursor 仍指向旧的大值，`start()` 追加的新消息会被判为「已读」、run 空转直接结束），`broker.commit(len(history))` 重置回放基准，再 `start(message)` 重新推理。端点返回 `rerun`，前端重连 SSE。
-* **queued**（steer 尚未被读取且 agent 正在运行）：直接改该 `UserMessage.content`，**不中断运行**，广播 `user_edit` 事件（带 `message_id`）让前端就地更新。端点返回 `queued`，前端无需重连。若 agent 已不在运行，即使消息未读也走 rerun（否则没有 run 来消费这条就地改动）。
+* **rerun**（`user_seq < _user_read_cursor`，或 agent 当前不在运行）：若正在运行先 `stop()`（必须先停后截——被取消 run 的 salvage 逻辑可能引用即将被截掉的消息），再 `history.truncate_at(message_id)` 丢弃该 user 消息及其后所有内容，把 `_user_read_cursor` 对齐到截断后的历史（否则截断后 cursor 仍指向旧的大值，`start()` 追加的新消息会被判为「已读」、run 空转直接结束），`broker.commit(len(history))` 重置回放基准，再 `start(message, images=final_images)` 携带完整附件列表重新推理。端点返回 `rerun`，前端重连 SSE。
+* **queued**（steer 尚未被读取且 agent 正在运行）：直接改该 `UserMessage.content` 与 `.images`，**不中断运行**，广播 `user_edit` 事件（带 `message_id` 与最新 images）让前端就地更新。端点返回 `queued`，前端无需重连。若 agent 已不在运行，即使消息未读也走 rerun（否则没有 run 来消费这条就地改动）。
 
 截断在扁平列表上切在目标 user 消息自己的索引处：它前面的工具结果天然保留，重跑后与编辑后的新消息一起折叠进下一个 turn 的 inputs——"拆 turn"这个操作在扁平模型里不存在。
 

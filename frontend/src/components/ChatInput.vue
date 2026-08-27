@@ -50,7 +50,7 @@
         @change="onImageSelect"
       />
       <button
-        v-if="state.enableVl && !state.isSubagent"
+        v-if="enableVl && !state.isSubagent"
         @click="imageInput?.click()"
         title="Add image"
         :disabled="state.isStreaming"
@@ -67,8 +67,9 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useStore } from '../store'
 import type { ImageAttachment } from '../api'
+import { readFileAsDataURL } from '../utils/images'
 
-const { state, sendMessage, stopAgent, interruptSubagent, setMode } = useStore()
+const { state, enableVl, sendMessage, stopAgent, interruptSubagent, setMode } = useStore()
 const message = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const imageInput = ref<HTMLInputElement>()
@@ -84,9 +85,10 @@ interface PendingImage {
 const pendingImages = ref<PendingImage[]>([])
 
 // Slash commands are purely a client-side autocomplete hint; the text is sent
-// as-is and matched by the backend (see server.send_message).
+// as-is, and /compact turns into the compaction turn when the agent's run loop
+// reads it (it can also queue behind an in-flight run like any steer).
 const COMMANDS = [
-  { cmd: '/compact', desc: '压缩上下文（手动触发 compaction）' },
+  { cmd: '/compact', desc: '压缩上下文（可排队，agent 读取到时执行）' },
 ]
 
 const filteredCommands = computed(() => {
@@ -118,15 +120,6 @@ function autoResize() {
 
 watch(message, () => nextTick(autoResize))
 
-function readFileAsDataURL(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
-
 async function addImageFile(file: File) {
   const data_url = await readFileAsDataURL(file)
   pendingImages.value.push({
@@ -148,7 +141,7 @@ async function onImageSelect(event: Event) {
 }
 
 async function onPaste(event: ClipboardEvent) {
-  if (!state.enableVl || state.isStreaming || state.isSubagent) return
+  if (!enableVl.value || state.isStreaming || state.isSubagent) return
   const items = event.clipboardData?.items
   if (!items) return
   let hasImage = false

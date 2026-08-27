@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { computed, reactive } from 'vue'
 import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem, PendingRequest, Project, ModelOption } from './types'
 import * as api from './api'
 
@@ -33,7 +33,6 @@ interface State {
   sealed: boolean
   subagentType: string | null
   subagentDescription: string
-  enableVl: boolean
 }
 
 const state = reactive<State>({
@@ -56,7 +55,17 @@ const state = reactive<State>({
   sealed: false,
   subagentType: null,
   subagentDescription: '',
-  enableVl: false,
+})
+
+// Whether the current session's model supports visual input. Derived from the
+// session's model × the configured models list instead of being pushed once:
+// any change to the session's model (own apply or another tab's, via the
+// sessions poll) flips the upload button immediately, so it always follows
+// the model the session will actually talk to.
+const enableVl = computed(() => {
+  const s = state.sessions.find((x) => x.id === state.currentSession)
+  const opt = s?.model ? state.models.find((m) => m.name === s.model) : undefined
+  return (opt ?? state.models[0])?.enable_vl ?? false
 })
 
 let currentTurnIdx = -1
@@ -181,7 +190,6 @@ function handleSSEEvent(event: SSEEvent) {
       state.sealed = event.sealed ?? false
       state.subagentType = event.subagent_type ?? null
       state.subagentDescription = event.description ?? ''
-      state.enableVl = event.enable_vl ?? false
       closeTurn()
       break
     }
@@ -207,7 +215,10 @@ function handleSSEEvent(event: SSEEvent) {
       const item = state.chatItems.find(
         (it) => it.kind === 'user' && it.id === event.message_id,
       )
-      if (item && item.kind === 'user') item.content = event.text
+      if (item && item.kind === 'user') {
+        item.content = event.text
+        item.images = event.images ?? undefined
+      }
       break
     }
 
@@ -826,10 +837,8 @@ export function useStore() {
     await api.setSessionModel(state.currentSession, modelName)
     const s = state.sessions.find((x) => x.id === state.currentSession)
     if (s) s.model = modelName
-    // VLM 开关跟随主模型：切换后图片按钮立即可见性同步（服务端下次 init
-    // 事件也会带新的 enable_vl）。
-    const opt = state.models.find((m) => m.name === modelName)
-    if (opt) state.enableVl = opt.enable_vl
+    // enableVl derives from the session's model × the models list, so the
+    // upload button follows the switch automatically.
   }
 
   async function addDir(path: string) {
@@ -885,10 +894,14 @@ export function useStore() {
     await api.interruptSession(name)
   }
 
-  async function revert(messageId: string, message: string) {
+  async function revert(
+    messageId: string,
+    message: string,
+    opts: { keepImages?: string[]; newImages?: api.ImageAttachment[] } = {},
+  ) {
     if (!state.currentSession) return
     try {
-      const res = await api.revert(state.currentSession, messageId, message)
+      const res = await api.revert(state.currentSession, messageId, message, opts)
       if (res.status === 'rerun') {
         // Reconnect so init rebuilds chatItems from the truncated history and
         // the replayed buffer carries the new user message + fresh run.
@@ -906,6 +919,7 @@ export function useStore() {
 
   return {
     state,
+    enableVl,
     loadSessions,
     selectSession,
     createSession,

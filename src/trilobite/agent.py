@@ -1077,16 +1077,67 @@ class Agent:
             "user_seq": user_seq,
         })
 
+    def _is_compact_command(self, msg: UserMessage) -> bool:
+        """Whether a real user message is a ``/compact`` command.
+
+        Matching is deliberately loose (any message starting with the word):
+        the full text stays visible to the model in the merged turn anyway,
+        so extra words ride along as context.
+        """
+        return msg.content.strip().startswith("/compact")
+
+    def _has_unread_compact_command(self) -> bool:
+        """Whether an unread real user message is a ``/compact`` command.
+
+        Read state mirrors the run loop: a message counts as read once its
+        ordinal among real user messages is below ``_user_read_cursor``.
+        """
+        ordinal = 0
+        for msg in self.history.raw:
+            if isinstance(msg, UserMessage) and not msg.compact_summary and not msg.is_mode_notification:
+                ordinal += 1
+                if ordinal > self._user_read_cursor and self._is_compact_command(msg):
+                    return True
+        return False
+
+    async def _trigger_compact_command(self) -> None:
+        """Turn a queued ``/compact`` message into a compaction turn.
+
+        The command rides the normal start/steer path as plain text; when the
+        run loop is about to read it, the compact prompt is appended at the
+        end of history so combine_new_messages folds everything pending --
+        the command itself, any steering messages queued around it, and the
+        prompt last -- into one user turn asking for the handoff summary.
+        With nothing to compact, the bare text goes to the model unchanged.
+        """
+        if not self._has_unread_compact_command() or not self._has_compactable_content():
+            return
+        self._need_compact = True
+        prompt = build_compact_prompt(self)
+        user_seq = self._count_user_messages()
+        user = UserMessage(prompt, is_compact_prompt=True)
+        self.history.append(user)
+        await self._send_stream_event({"type": "user", "id": user._id, "text": prompt, "user_seq": user_seq})
+
     def _has_compactable_content(self) -> bool:
-        """Whether there is real conversation after the last compact marker."""
+        """Whether there is real conversation after the last compact marker.
+
+        Synthetic user messages (compact summaries, the compact prompt itself,
+        queued ``/compact`` commands, mode notices) are not conversation
+        content; compaction on a session holding only those would be empty.
+        """
         start = 0
         for i, msg in enumerate(self.history.raw):
             if isinstance(msg, CompactMarker):
                 start = i + 1
         for msg in self.history.raw[start:]:
-            if isinstance(msg, (UserMessage, ModelMessage)) and not (
-                isinstance(msg, UserMessage)
-                and (msg.compact_summary or msg.is_compact_prompt)
+            if isinstance(msg, ModelMessage):
+                return True
+            if isinstance(msg, UserMessage) and not (
+                msg.compact_summary
+                or msg.is_compact_prompt
+                or msg.is_mode_notification
+                or self._is_compact_command(msg)
             ):
                 return True
         return False
@@ -1233,6 +1284,12 @@ class Agent:
                     self._final_result = f"max_steps ({self._max_steps}) exceeded"
                     await self._send_stream_event({"type": "error", "text": self._final_result})
                     break
+                # A queued "/compact" command (sent like any message, so it can
+                # also wait out an in-flight run) turns this turn into the
+                # compaction turn: mark it and append the compact prompt, which
+                # combine_new_messages folds in last among the unread inputs.
+                if not self._need_compact:
+                    await self._trigger_compact_command()
                 messages = self.history.get_api_messages(
                     image_dir=self.session_dir / "images",
                     enable_vl=self.enable_vl,
@@ -1950,7 +2007,13 @@ class Agent:
         for c in list(self._children):
             await c._send_stream_event(event)
 
-    async def revert(self, message_id: str, message: str) -> str:
+    async def revert(
+        self,
+        message_id: str,
+        message: str,
+        keep_images: list[str] | None = None,
+        images: list[Image] | None = None,
+    ) -> str:
         """Edit a previously sent user message and rerun from there.
 
         Two cases:
@@ -1961,11 +2024,19 @@ class Agent:
         * The message has not been read yet (a steering message still pending
           in history): swap its text in place without interrupting the run.
 
+        The edited message keeps its attachments per the image arguments:
+        ``keep_images`` names files (from the original message's own
+        attachments) to preserve, anything unlisted is dropped by the edit,
+        and ``images`` are newly uploaded ones. With no names and no uploads
+        the edit produces the same plain-text result as before.
+
         Returns ``"rerun"`` or ``"queued"`` so the client knows whether to
         reconnect (rerun rebuilds from the truncated history) or just apply a
         local text update (queued).
         """
         target = self._turns.find_user(message_id)
+        kept_names = set(keep_images or [])
+        final_images = [img for img in target.images if img.filename in kept_names] + list(images or [])
         seq = self.history.user_seq_of(target)
         if seq < self._user_read_cursor or not self.is_running():
             # Stop first: the cancelled run's salvage logic may still reference
@@ -1979,44 +2050,17 @@ class Agent:
             # false and the run exits immediately without calling the model.
             self._user_read_cursor = self._count_user_messages()
             await self._broker.commit(len(self.history.raw))
-            await self.start(message)
+            await self.start(message, images=final_images or None)
             return "rerun"
 
         # Not yet read and a run is live (steering message pending): edit in place.
         target.content = message
+        target.images = final_images
         self.history.save()
-        await self._send_stream_event({"type": "user_edit", "message_id": message_id, "text": message})
+        await self._send_stream_event({
+            "type": "user_edit",
+            "message_id": message_id,
+            "text": message,
+            "images": [img.to_frontend_dict() for img in final_images] or None,
+        })
         return "queued"
-
-    async def compact_now(self) -> None:
-        """Manually trigger context compaction (the ``/compact`` command).
-
-        Compacts regardless of the token threshold. The compact prompt is
-        appended as a normal user message and the run loop handles the rest:
-        the next turn asks for a handoff summary (tools advertised but
-        intercepted), then the context is rebuilt and the model continues on
-        the fresh context. If there is no real conversation to compact (e.g.
-        right after a previous
-        compact), a status notice is sent instead.
-        """
-        self._broker.set_running(True)
-
-        if not self._has_compactable_content():
-            await self._send_stream_event({"type": "status", "text": "nothing to compact"})
-            await self._send_stream_event({
-                "type": "usage",
-                "token_count": self._token_count,
-                "max_context_tokens": self.max_context_tokens,
-            })
-            await self._send_stream_event({"type": "done"})
-            self._broker.set_running(False)
-            self._task = None
-            return
-
-        self._need_compact = True
-        prompt = build_compact_prompt(self)
-        user_seq = self._count_user_messages()
-        user = UserMessage(prompt, is_compact_prompt=True)
-        self.history.append(user)
-        await self._send_stream_event({"type": "user", "id": user._id, "text": prompt, "user_seq": user_seq})
-        self._task = asyncio.create_task(self.run())

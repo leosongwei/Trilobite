@@ -148,11 +148,23 @@ export async function sendMessage(
   return res.json()
 }
 
-export async function revert(id: string, messageId: string, message: string): Promise<{ status: string }> {
+export async function revert(
+  id: string,
+  messageId: string,
+  message: string,
+  opts: { keepImages?: string[]; newImages?: ImageAttachment[] } = {},
+): Promise<{ status: string }> {
   const res = await authFetch(`/api/sessions/${encode(id)}/revert`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message_id: messageId, message }),
+    body: JSON.stringify({
+      message_id: messageId,
+      message,
+      // Filenames (from the edited message's own attachments) to keep; images
+      // not listed are dropped by the edit. New uploads reuse the send shape.
+      keep_images: opts.keepImages ?? [],
+      images: opts.newImages?.length ? opts.newImages : undefined,
+    }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
