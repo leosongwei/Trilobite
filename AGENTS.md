@@ -83,7 +83,7 @@ Token 超过 `compaction_trigger_ratio` 阈值时触发压缩：插入 `CompactM
 
 ## 配置 (`src/trilobite/config_example/`)
 
-* `config.yaml` -- `model`、`api_key`、`api_url`、`reasoning_effort`、`max_context_tokens`（上下文窗口）、`max_tokens`（单次输出上限）、`log_level`、`compaction_trigger_ratio`、`enable_vl`、`host`（服务监听地址，默认 127.0.0.1 仅本机可访问）、`port`（服务监听端口）、`skill_dirs`（额外的 skill 搜索目录，相对路径基于工作目录，支持 `~` 展开）、`allowed_dirs`（全局固定授权目录，所有会话默认可访问，不走权限审批、UI 不可移除，支持 `~` 展开、相对路径基于各会话工作目录解析）、`max_stream_retries`（单回合 LLM 流式请求最大尝试次数，含首次，默认 10：任意 HTTP 错误/流中途断开/工具调用缺正文都丢弃部分输出重发，详见 `doc/product/llm_transport.md`）
+* `config.yaml` -- `model`、`api_key`、`api_url`、`reasoning_effort`、`max_context_tokens`（上下文窗口）、`max_tokens`（单次输出上限）、`log_level`、`compaction_trigger_ratio`、`enable_vl`、`host`（服务监听地址，默认 127.0.0.1 仅本机可访问）、`port`（服务监听端口）、`skill_dirs`（额外的 skill 搜索目录，相对路径基于工作目录，支持 `~` 展开）、`allowed_dirs`（全局固定授权目录，所有会话默认可访问，不走权限审批、UI 不可移除，支持 `~` 展开、相对路径基于各会话工作目录解析）、`max_stream_retries`（单回合 LLM 流式请求最大尝试次数，含首次，默认 10：任意 HTTP 错误/流无完成信号断开/完成但无正文都丢弃部分输出重发，详见 `doc/product/llm_transport.md`）
 
 提示词（系统提示词、压缩摘要、subagent 角色）不在配置里，而是硬编码在 `src/trilobite/prompts.py`，不可配置。
 

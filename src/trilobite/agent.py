@@ -102,11 +102,20 @@ class _StreamAttemptError(Exception):
 
     Unified failure signal for every kind of bad stream: any HTTP error
     (status or transport), a premature disconnect (stream ended without a
-    ``[DONE]`` marker and without a finish reason), and a tool-call turn that
-    never emitted visible (non-thinking) content. The turn's partial output
-    is discarded and the identical request is retried; the exception only
-    surfaces after all attempts are exhausted.
+    ``[DONE]`` marker and without a finish reason), and completions that never
+    produced visible content (broken / empty output). The turn's partial
+    output is discarded and the identical request is retried; the exception
+    only surfaces after all attempts are exhausted.
+
+    ``accept_on_exhaustion`` marks completions that are abnormal but still
+    usable: a turn with tool calls but no text is actionable (some providers
+    legitimately pair tool calls with ``content: null``), so after the retry
+    budget it is accepted with a warning instead of failing the run.
     """
+
+    def __init__(self, reason: str, *, accept_on_exhaustion: bool = False):
+        super().__init__(reason)
+        self.accept_on_exhaustion = accept_on_exhaustion
 
     @property
     def status_code(self) -> int | None:
@@ -585,21 +594,41 @@ class Agent:
                 arguments=current_tool_args,
             ))
 
-    async def _stream_turn(self, messages: list[dict], tools: list[dict] | None, model: ModelMessage) -> None:
+    async def _stream_turn(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        model: ModelMessage,
+        *,
+        require_content: bool = True,
+    ) -> None:
         """Run one chat-completion stream, retrying failed attempts.
 
         Unified retry mechanism for every kind of bad stream: any HTTP error,
-        a premature disconnect (stream ended without ``[DONE]`` / finish
-        reason), or a tool-call turn that never emitted visible content. A
-        failed attempt's partial output -- possibly a broken thinking chain, a
-        truncated reply, or tool-call fragments -- is discarded (``model`` was
-        appended unpersisted by the caller) and the *identical* request is
-        re-issued, so the retry is a clean replay of the same turn. Each retry
-        broadcasts a ``status`` banner and a ``turn_restart`` event, then backs
-        off linearly (1s, 2s, ... capped at 5s). After ``max_stream_retries``
-        attempts (config, default 10, total attempts including the first) the
-        partial output is dropped and the last :class:`_StreamAttemptError` is
-        re-raised for the run's error path.
+        a premature disconnect (stream ended without a completion signal --
+        neither a ``[DONE]`` marker nor a ``finish_reason``), or a completion
+        that never produced visible content. A failed attempt's partial output
+        -- possibly a broken thinking chain, a truncated reply, or tool-call
+        fragments -- is discarded (``model`` was appended unpersisted by the
+        caller) and the *identical* request is re-issued, so the retry is a
+        clean replay of the same turn. Each retry broadcasts a ``status``
+        banner carrying the failure reason and a ``turn_restart`` event, then
+        backs off linearly (1s, 2s, ... capped at 5s). After
+        ``max_stream_retries`` attempts (config, default 10, total attempts
+        including the first) the partial output is dropped and the last
+        :class:`_StreamAttemptError` is re-raised for the run's error path --
+        except tool-call turns without content, which are accepted with a
+        warning (some providers legitimately emit ``content: null`` alongside
+        tool calls).
+
+        A turn is "normal" only when the stream carries a completion signal
+        AND the model produced visible (non-thinking) content. Disconnects
+        without the signal, tool calls without content, and empty completions
+        are all retried with their specific reason so the anomaly is visible
+        instead of silently swallowed. ``require_content=False`` (interrupt
+        summaries) skips the content half of the check; ``_need_compact``
+        turns also skip it (their tool calls are intercepted and the loop
+        relies on the interception results instead).
 
         ``model`` is reset in place on retry, so the caller's reference stays
         valid and history holds one clean open model message.
@@ -611,13 +640,19 @@ class Agent:
             try:
                 stream = await self.chat_completion(messages=messages, stream=True, tools=tools)
                 await self._drain_stream(stream, model)
-                if model.tool_calls and not model.content and not self._need_compact:
-                    # A tool-call turn must carry visible (non-thinking)
-                    # content to count as complete: providers that drop the
-                    # connection right after the calls leave the turn without
-                    # any text. Re-request; after the cap the turn is accepted
-                    # anyway (some models never pair text with tool calls).
-                    raise _StreamAttemptError("tool calls without text content")
+                if require_content and not self._need_compact and not model.content:
+                    if model.tool_calls:
+                        # Stream completed (stop signal present) but the model
+                        # paired the calls with no visible text. Suspicious,
+                        # yet some providers do this legitimately, so the
+                        # retry budget ends in accept-with-warning.
+                        raise _StreamAttemptError(
+                            "tool calls without content", accept_on_exhaustion=True)
+                    # Cleanly ended but nothing to show: an empty completion
+                    # is never a usable turn (empty "stop", silent "length",
+                    # filtered output...). Retry; give up with the anomaly
+                    # surfaced once the budget is spent.
+                    raise _StreamAttemptError("empty response")
                 return
             except _StreamAttemptError as e:
                 self._log.warning(
@@ -625,6 +660,14 @@ class Agent:
                     tries, max_tries, e, len(model.think), len(model.content), len(model.tool_calls),
                 )
                 if tries >= max_tries:
+                    if e.accept_on_exhaustion:
+                        # Retry budget spent on a tool-call turn without
+                        # content: the calls are still actionable, so accept
+                        # the anomalous completion (some providers never pair
+                        # text with tool calls) instead of failing the run.
+                        self._log.warning(
+                            "TURN accepting tool-call turn without content after %d attempts", tries)
+                        return
                     # Give up: drop the failed attempt's partial output (never
                     # persisted) so the error state is clean and the next user
                     # message starts a fresh turn; surface the last error to
@@ -1171,9 +1214,9 @@ class Agent:
                 # turn means the previous one completed (or was salvaged).
                 self._tool_output_buffer.clear()
                 # One unified retry loop covers every kind of bad stream (HTTP
-                # errors, premature disconnects, tool calls without visible
-                # content): the partial output is discarded and the identical
-                # request is re-issued (status + turn_restart events) until
+                # errors, premature disconnects without a completion signal):
+                # the partial output is discarded and the identical request is
+                # re-issued (status + turn_restart events) until
                 # max_stream_retries attempts are spent.
                 await self._stream_turn(messages, tools, model)
 
@@ -1816,7 +1859,8 @@ class Agent:
         self.history.append_model(model)
         # Same unified retry loop as regular turns: flaky providers get a
         # second chance instead of failing the interrupted subagent outright.
-        await self._stream_turn(messages, None, model)
+        # require_content=False keeps the [no summary produced] fallback.
+        await self._stream_turn(messages, None, model, require_content=False)
         if not model.content:
             model.content = "[no summary produced]"
         self.history.save()
