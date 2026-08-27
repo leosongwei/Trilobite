@@ -636,14 +636,18 @@ class Agent:
         :class:`_StreamAttemptError` is re-raised for the run's error path.
 
         A turn is "normal" when the stream carries a completion signal AND the
-        model produced at least one of content or tool calls. Tool-call turns
-        routinely ship with ``content: null`` (verified against qwen3.8 via
-        llama.cpp: reasoning deltas + ``finish_reason="tool_calls"`` +
-        ``[DONE]``, no text), so tool calls alone satisfy the content half --
-        only a fully empty completion is abnormal. ``require_content=False``
-        (interrupt summaries) skips the empty-completion check;
-        ``_need_compact`` turns also skip it (their tool calls are intercepted
-        and the loop relies on the interception results instead).
+        model produced at least one of content or tool calls -- where a
+        tool-call turn additionally needs ``finish_reason="tool_calls"`` to
+        seal the calls as complete. Tool-call turns routinely ship with
+        ``content: null`` (verified against qwen3.8 via llama.cpp: reasoning
+        deltas + ``finish_reason="tool_calls"`` + ``[DONE]``, no text), so
+        tool calls alone satisfy the content half; but fragments that never
+        got the seal (``stop``/``length``/missing finish) are half-baked and
+        never executed -- the whole turn is discarded and retried. A fully
+        empty completion (no content, no tool calls) is abnormal too.
+        ``require_content=False`` (interrupt summaries) skips these checks;
+        ``_need_compact`` turns also skip them (their tool calls are
+        intercepted and the loop relies on the interception results instead).
 
         ``model`` is reset in place on retry, so the caller's reference stays
         valid and history holds one clean open model message.
@@ -655,17 +659,27 @@ class Agent:
             try:
                 stream = await self.chat_completion(messages=messages, stream=True, tools=tools)
                 last_finish = await self._drain_stream(stream, model)
-                if require_content and not self._need_compact and not model.content and not model.tool_calls:
-                    # Stream carried a completion signal but produced neither
-                    # text nor tool calls: a useless turn. A length-truncated
-                    # one (verified against qwen3.8: thinking hit the token
-                    # budget, content never started) gets its own reason so
-                    # the anomaly is diagnosable; anything else is a plain
-                    # empty completion. Retry both; give up with the reason
-                    # surfaced once the budget is spent.
-                    if last_finish == "length":
-                        raise _StreamAttemptError("output truncated (length)")
-                    raise _StreamAttemptError("empty response")
+                if require_content and not self._need_compact:
+                    if model.tool_calls and last_finish != "tool_calls":
+                        # Tool-call fragments without a ``finish_reason=
+                        # "tool_calls"`` seal are half-baked by definition:
+                        # the provider never declared the calls complete
+                        # (truncated arguments, protocol contradiction).
+                        # Never execute them -- discard and retry.
+                        if last_finish == "length":
+                            raise _StreamAttemptError("tool calls truncated (length)")
+                        raise _StreamAttemptError("incomplete tool calls")
+                    if not model.content and not model.tool_calls:
+                        # Stream carried a completion signal but produced
+                        # neither text nor tool calls: a useless turn. A
+                        # length-truncated one (verified against qwen3.8:
+                        # thinking hit the token budget, content never
+                        # started) gets its own reason so the anomaly is
+                        # diagnosable. Retry both; give up with the reason
+                        # surfaced once the budget is spent.
+                        if last_finish == "length":
+                            raise _StreamAttemptError("output truncated (length)")
+                        raise _StreamAttemptError("empty response")
                 return
             except _StreamAttemptError as e:
                 self._log.warning(
