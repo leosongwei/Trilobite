@@ -216,6 +216,17 @@ function handleSSEEvent(event: SSEEvent) {
       newTurn()
       break
 
+    case 'turn_restart':
+      // A failed stream attempt is being retried: throw away the partial turn
+      // (broken thinking / truncated text / tool-call fragments streamed so
+      // far) so the retried attempt's deltas land in a clean bubble.
+      if (currentTurnIdx >= 0 && currentTurnIdx < state.chatItems.length) {
+        state.chatItems.splice(currentTurnIdx, 1)
+      }
+      closeTurn()
+      newTurn()
+      break
+
     case 'compact': {
       // Compaction just finished: close the streamed summary turn and insert
       // the divider so the live view matches the rebuilt history on refresh.

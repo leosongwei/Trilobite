@@ -96,6 +96,54 @@ class _StreamChunk:
     choices: list[_Choice] = field(default_factory=list)
     usage: _Usage | None = None
 
+
+class _StreamAttemptError(Exception):
+    """A chat-completion stream attempt failed in a retryable way.
+
+    Unified failure signal for every kind of bad stream: any HTTP error
+    (status or transport), a premature disconnect (stream ended without a
+    ``[DONE]`` marker and without a finish reason), and a tool-call turn that
+    never emitted visible (non-thinking) content. The turn's partial output
+    is discarded and the identical request is retried; the exception only
+    surfaces after all attempts are exhausted.
+    """
+
+    @property
+    def status_code(self) -> int | None:
+        cause = self.__cause__
+        if isinstance(cause, httpx.HTTPStatusError):
+            return cause.response.status_code
+        return None
+
+    @property
+    def body(self) -> dict | None:
+        cause = self.__cause__
+        if isinstance(cause, httpx.HTTPStatusError):
+            try:
+                return cause.response.json()
+            except Exception:
+                return None
+        return None
+
+
+# Provider error → short banner label (shown in the retry status event).
+_STREAM_ERROR_LABELS = {
+    httpx.ConnectError: "连接失败",
+    httpx.ConnectTimeout: "连接超时",
+    httpx.ReadTimeout: "读取超时",
+    httpx.WriteTimeout: "写入超时",
+    httpx.ReadError: "连接中断",
+    httpx.RemoteProtocolError: "连接中断",
+    httpx.LocalProtocolError: "协议错误",
+    httpx.DecodingError: "响应解码失败",
+    httpx.PoolTimeout: "连接池超时",
+}
+
+
+def _stream_error_label(err: Exception) -> str:
+    """Short human-readable label for a stream transport error."""
+    return _STREAM_ERROR_LABELS.get(type(err), type(err).__name__)
+
 PLAN_MODE_NOTIFICATION = (
     '<modeswitch mode="plan">\n'
     "You are now in plan mode (read-only analysis).\n"
@@ -229,14 +277,33 @@ async def _chat_completion_stream(
                     if log:
                         log.warning("STREAM json decode error: %s", data_str[:200])
                     continue
-            if not done_seen:
+            if not done_seen and not finish_reasons:
+                # The connection closed without a [DONE] marker and without a
+                # finish reason -- the provider died mid-stream (broken
+                # thinking chain, truncated output). Retryable.
                 if log:
                     log.warning("STREAM ended WITHOUT [DONE] after %d chunks, finish_reasons=%s",
                                 chunk_count, finish_reasons)
+                raise _StreamAttemptError("连接中断")
+    except _StreamAttemptError:
+        raise
+    except asyncio.CancelledError:
+        raise
+    except httpx.HTTPStatusError as e:
+        # Any HTTP error (503, 429, 400, ...) is worth a retry: flaky
+        # providers degrade with transient errors, and the retry cap bounds
+        # the damage of a genuinely broken request.
+        if log:
+            log.warning("STREAM HTTP error: %r", e)
+        raise _StreamAttemptError(f"HTTP {e.response.status_code}") from e
+    except httpx.HTTPError as e:
+        if log:
+            log.warning("STREAM transport error: %r", e)
+        raise _StreamAttemptError(_stream_error_label(e)) from e
     except Exception as e:
         if log:
             log.exception("STREAM error: %r", e)
-        raise
+        raise _StreamAttemptError(type(e).__name__) from e
 
 
 class Agent:
@@ -428,6 +495,157 @@ class Agent:
             resp = await self._http.post("/chat/completions", json=body, headers=headers)
             resp.raise_for_status()
             return resp.json()
+
+    async def _drain_stream(self, stream, model: ModelMessage) -> None:
+        """Consume one chat-completion stream into ``model``.
+
+        Reasoning/text deltas are appended to the model message and forwarded
+        to subscribers (``thinking``/``text`` events); tool-call fragments are
+        accumulated into ``model.tool_calls``. Token usage carried by the
+        stream is recorded on the agent. Nothing touches disk here -- the turn
+        is persisted only after it is validated by the caller.
+        """
+        current_tool_id = ""
+        current_tool_name = ""
+        current_tool_args = ""
+
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+
+            # Capture real token usage from stream
+            if chunk.usage:
+                self._token_count = chunk.usage.total_tokens
+                self._token_covered = len(self.history)
+                self._persist_token_count()
+
+            if delta is None:
+                continue
+
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                model.think += delta.reasoning_content
+                await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
+
+            if delta.content:
+                model.content += delta.content
+                await self._send_stream_event({"type": "text", "text": delta.content})
+
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    if tc.id:
+                        if current_tool_id:
+                            await self._send_stream_event({
+                                "type": "tool_stream",
+                                "tool_name": current_tool_name,
+                                "args": current_tool_args,
+                                "complete": True,
+                            })
+                            model.tool_calls.append(ToolCall(
+                                id=current_tool_id,
+                                name=current_tool_name,
+                                arguments=current_tool_args,
+                            ))
+                        current_tool_id = tc.id
+                        current_tool_name = tc.function.name if tc.function else ""
+                        current_tool_args = ""
+                        if current_tool_name:
+                            await self._send_stream_event({
+                                "type": "tool_stream",
+                                "tool_name": current_tool_name,
+                                "args": "",
+                                "complete": False,
+                            })
+                    if tc.function:
+                        if tc.function.name:
+                            current_tool_name = tc.function.name
+                            await self._send_stream_event({
+                                "type": "tool_stream",
+                                "tool_name": current_tool_name,
+                                "args": current_tool_args,
+                                "complete": False,
+                            })
+                        if tc.function.arguments:
+                            current_tool_args += tc.function.arguments
+                            await self._send_stream_event({
+                                "type": "tool_stream",
+                                "tool_name": current_tool_name,
+                                "args": current_tool_args,
+                                "complete": False,
+                            })
+
+        if current_tool_id:
+            await self._send_stream_event({
+                "type": "tool_stream",
+                "tool_name": current_tool_name,
+                "args": current_tool_args,
+                "complete": True,
+            })
+            model.tool_calls.append(ToolCall(
+                id=current_tool_id,
+                name=current_tool_name,
+                arguments=current_tool_args,
+            ))
+
+    async def _stream_turn(self, messages: list[dict], tools: list[dict] | None, model: ModelMessage) -> None:
+        """Run one chat-completion stream, retrying failed attempts.
+
+        Unified retry mechanism for every kind of bad stream: any HTTP error,
+        a premature disconnect (stream ended without ``[DONE]`` / finish
+        reason), or a tool-call turn that never emitted visible content. A
+        failed attempt's partial output -- possibly a broken thinking chain, a
+        truncated reply, or tool-call fragments -- is discarded (``model`` was
+        appended unpersisted by the caller) and the *identical* request is
+        re-issued, so the retry is a clean replay of the same turn. Each retry
+        broadcasts a ``status`` banner and a ``turn_restart`` event, then backs
+        off linearly (1s, 2s, ... capped at 5s). After ``max_stream_retries``
+        attempts (config, default 3, total attempts including the first) the
+        partial output is dropped and the last :class:`_StreamAttemptError` is
+        re-raised for the run's error path.
+
+        ``model`` is reset in place on retry, so the caller's reference stays
+        valid and history holds one clean open model message.
+        """
+        max_tries = max(1, int(self.config.get("max_stream_retries", 3)))
+        tries = 0
+        while True:
+            tries += 1
+            try:
+                stream = await self.chat_completion(messages=messages, stream=True, tools=tools)
+                await self._drain_stream(stream, model)
+                if model.tool_calls and not model.content and not self._need_compact:
+                    # A tool-call turn must carry visible (non-thinking)
+                    # content to count as complete: providers that drop the
+                    # connection right after the calls leave the turn without
+                    # any text. Re-request; after the cap the turn is accepted
+                    # anyway (some models never pair text with tool calls).
+                    raise _StreamAttemptError("未输出正文即调用工具")
+                return
+            except _StreamAttemptError as e:
+                self._log.warning(
+                    "TURN stream try %d/%d failed: %s (think=%d content=%d calls=%d)",
+                    tries, max_tries, e, len(model.think), len(model.content), len(model.tool_calls),
+                )
+                if tries >= max_tries:
+                    # Give up: drop the failed attempt's partial output (never
+                    # persisted) so the error state is clean and the next user
+                    # message starts a fresh turn; surface the last error to
+                    # the run handler.
+                    self.history.remove(model)
+                    self.history.close_model()
+                    raise
+                # Discard the partial attempt -- broken thinking, truncated
+                # text, tool-call fragments -- and replay the same request.
+                model.think = ""
+                model.content = ""
+                model.tool_calls = []
+                self.history.remove(model)
+                self.history.append_model(model)
+                await self._send_stream_event({
+                    "type": "status",
+                    "text": f"⚠️ LLM 请求失败（{e}），正在重试（{tries + 1}/{max_tries}）…",
+                })
+                await self._send_stream_event({"type": "turn_restart"})
+                # Linear backoff between attempts: 1s, 2s, ... capped at 5s.
+                await asyncio.sleep(min(tries, 5))
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
@@ -941,12 +1159,6 @@ class Agent:
                 tools = self._permission.filter_definitions(
                     enable_vl=self.enable_vl
                 )
-                stream = await self.chat_completion(
-                    messages=messages,
-                    stream=True,
-                    tools=tools,
-                )
-
                 # Begin the turn: append an empty model message and mutate it as
                 # the stream drains. It is persisted only once finalized, so a
                 # crash mid-turn leaves no half-written entry on disk.
@@ -958,85 +1170,12 @@ class Agent:
                 # needed to salvage a cancelled in-flight command, and a new
                 # turn means the previous one completed (or was salvaged).
                 self._tool_output_buffer.clear()
-                current_tool_id = ""
-                current_tool_name = ""
-                current_tool_args = ""
-
-                async for chunk in stream:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-
-                    # Capture real token usage from stream
-                    if chunk.usage:
-                        self._token_count = chunk.usage.total_tokens
-                        self._token_covered = len(self.history)
-                        self._persist_token_count()
-
-                    if delta is None:
-                        continue
-
-                    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                        model.think += delta.reasoning_content
-                        await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
-
-                    if delta.content:
-                        model.content += delta.content
-                        await self._send_stream_event({"type": "text", "text": delta.content})
-
-                    if delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            if tc.id:
-                                if current_tool_id:
-                                    await self._send_stream_event({
-                                        "type": "tool_stream",
-                                        "tool_name": current_tool_name,
-                                        "args": current_tool_args,
-                                        "complete": True,
-                                    })
-                                    model.tool_calls.append(ToolCall(
-                                        id=current_tool_id,
-                                        name=current_tool_name,
-                                        arguments=current_tool_args,
-                                    ))
-                                current_tool_id = tc.id
-                                current_tool_name = tc.function.name if tc.function else ""
-                                current_tool_args = ""
-                                if current_tool_name:
-                                    await self._send_stream_event({
-                                        "type": "tool_stream",
-                                        "tool_name": current_tool_name,
-                                        "args": "",
-                                        "complete": False,
-                                    })
-                            if tc.function:
-                                if tc.function.name:
-                                    current_tool_name = tc.function.name
-                                    await self._send_stream_event({
-                                        "type": "tool_stream",
-                                        "tool_name": current_tool_name,
-                                        "args": current_tool_args,
-                                        "complete": False,
-                                    })
-                                if tc.function.arguments:
-                                    current_tool_args += tc.function.arguments
-                                    await self._send_stream_event({
-                                        "type": "tool_stream",
-                                        "tool_name": current_tool_name,
-                                        "args": current_tool_args,
-                                        "complete": False,
-                                    })
-
-                if current_tool_id:
-                    await self._send_stream_event({
-                        "type": "tool_stream",
-                        "tool_name": current_tool_name,
-                        "args": current_tool_args,
-                        "complete": True,
-                    })
-                    model.tool_calls.append(ToolCall(
-                        id=current_tool_id,
-                        name=current_tool_name,
-                        arguments=current_tool_args,
-                    ))
+                # One unified retry loop covers every kind of bad stream (HTTP
+                # errors, premature disconnects, tool calls without visible
+                # content): the partial output is discarded and the identical
+                # request is re-issued (status + turn_restart events) until
+                # max_stream_retries attempts are spent.
+                await self._stream_turn(messages, tools, model)
 
                 await self._send_stream_event({
                     "type": "usage",
@@ -1673,16 +1812,11 @@ class Agent:
             image_dir=self.session_dir / "images",
             enable_vl=self.enable_vl,
         )
-        stream = await self.chat_completion(messages=messages, stream=True, tools=None)
         model = ModelMessage()
         self.history.append_model(model)
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta is None:
-                continue
-            if getattr(delta, "content", None):
-                model.content += delta.content
-                await self._send_stream_event({"type": "text", "text": delta.content})
+        # Same unified retry loop as regular turns: flaky providers get a
+        # second chance instead of failing the interrupted subagent outright.
+        await self._stream_turn(messages, None, model)
         if not model.content:
             model.content = "[no summary produced]"
         self.history.save()

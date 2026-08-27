@@ -70,6 +70,18 @@ chunk.usage.total_tokens
 
 > 历史教训：不同 provider 对「没有 tool_calls 的 delta」的表示不一致。DeepSeek 直接省略 `tool_calls` 键，而 GLM（经 opencode zen）会在每个 delta chunk 显式写 `"tool_calls": null`。`dict.get("tool_calls", [])` 仅在键缺失时返回默认值，键存在但值为 `null` 时返回 `None`，迭代 `None` 会抛 `TypeError: 'NoneType' object is not iterable`，表现为切到该 provider 后首轮就崩。解析时统一用 `d.get("tool_calls") or []`，同时覆盖缺失与 null 两种情况。
 
+## 流式回合重试
+
+低质量服务商存在两类典型故障：**请求级失败**（任意 HTTP 错误，如 503/429/4xx）和 **流中途断开**（未收到 `[DONE]` 标记、也没有 finish reason 就关闭连接——思维链刚生成一半或工具调用片段刚发出即断）。二者统一为同一个重试机制：
+
+* **统一异常** `_StreamAttemptError`：`_chat_completion_stream` 把一切失败归一为该异常（HTTP 错误带状态码、传输错误带简短标签、流未正常结束抛「连接中断」），回合层不再关心具体失败种类。
+* **丢弃部分输出**：失败回合的 `model` 消息从未落盘（`append_model(persist=False)`），重试前清空其思维链/正文/工具调用片段并从 history 移除，**重发完全相同的请求**（复用回合开始时快照的 `messages`，保证重放一致、前缀缓存命中）。
+* **完成条件校验**：工具调用回合必须输出非思维链的 `content` 才算完整——「调用工具后连接关闭」的回合（有 tool_calls、无正文）按失败处理重试；compaction 回合（工具调用被拦截、依赖结果连续重试）豁免该校验。
+* **可见的重试流程**：每次重试前广播 `status` 事件（`⚠️ LLM 请求失败（<原因>），正在重试（k/N）…`，前端顶部横幅显示）和 `turn_restart` 事件（前端丢弃本回合已流出的部分输出、开启新泡泡），随后线性退避（1s、2s、…上限 5s）。
+* **尝试上限**：`max_stream_retries` 配置（默认 3，含首次请求），达到上限后丢弃部分输出并把最后一次异常交给 run 的错误路径（`error` 事件，带 status_code/body 供前端展示服务商错误信息）。
+
+中断总结回合（`_summarize_and_exit`）复用同一机制，subagent 总结不会因一次 503 直接失败。
+
 ## 非流式调用
 
 `Agent.chat_completion(messages, stream=False)` -- 用于 compaction 等场景，返回 `resp.json()` 字典。

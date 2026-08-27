@@ -184,6 +184,11 @@ class Renderer:
             self.block(_dim(_usage_text(ev.get("token_count", 0), ev.get("max_context_tokens", 0)) + "\n"))
         elif t == "status":
             self.block(_yellow_dim(ev.get("text", "") + "\n"))
+        elif t == "turn_restart":
+            # A failed stream attempt is being retried (the status banner
+            # marks the retry). Reset the streaming-section marker so the
+            # retried attempt's thinking/text start cleanly after it.
+            self._last_stream = None
         elif t == "compact":
             self.block(_dim("── context compacted ──\n"))
         elif t == "subagents":
