@@ -128,15 +128,15 @@ class _StreamAttemptError(Exception):
 
 # Provider error → short banner label (shown in the retry status event).
 _STREAM_ERROR_LABELS = {
-    httpx.ConnectError: "连接失败",
-    httpx.ConnectTimeout: "连接超时",
-    httpx.ReadTimeout: "读取超时",
-    httpx.WriteTimeout: "写入超时",
-    httpx.ReadError: "连接中断",
-    httpx.RemoteProtocolError: "连接中断",
-    httpx.LocalProtocolError: "协议错误",
-    httpx.DecodingError: "响应解码失败",
-    httpx.PoolTimeout: "连接池超时",
+    httpx.ConnectError: "connection failed",
+    httpx.ConnectTimeout: "connect timed out",
+    httpx.ReadTimeout: "read timed out",
+    httpx.WriteTimeout: "write timed out",
+    httpx.ReadError: "connection interrupted",
+    httpx.RemoteProtocolError: "connection interrupted",
+    httpx.LocalProtocolError: "protocol error",
+    httpx.DecodingError: "decode failed",
+    httpx.PoolTimeout: "pool timeout",
 }
 
 
@@ -284,7 +284,7 @@ async def _chat_completion_stream(
                 if log:
                     log.warning("STREAM ended WITHOUT [DONE] after %d chunks, finish_reasons=%s",
                                 chunk_count, finish_reasons)
-                raise _StreamAttemptError("连接中断")
+                raise _StreamAttemptError("connection closed")
     except _StreamAttemptError:
         raise
     except asyncio.CancelledError:
@@ -617,7 +617,7 @@ class Agent:
                     # connection right after the calls leave the turn without
                     # any text. Re-request; after the cap the turn is accepted
                     # anyway (some models never pair text with tool calls).
-                    raise _StreamAttemptError("未输出正文即调用工具")
+                    raise _StreamAttemptError("tool calls without text content")
                 return
             except _StreamAttemptError as e:
                 self._log.warning(
@@ -641,7 +641,7 @@ class Agent:
                 self.history.append_model(model)
                 await self._send_stream_event({
                     "type": "status",
-                    "text": f"⚠️ LLM 请求失败（{e}），正在重试（{tries + 1}/{max_tries}）…",
+                    "text": f"⚠️ LLM request failed ({e}), retrying ({tries + 1}/{max_tries})...",
                 })
                 await self._send_stream_event({"type": "turn_restart"})
                 # Linear backoff between attempts: 1s, 2s, ... capped at 5s.
