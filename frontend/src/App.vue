@@ -81,6 +81,7 @@ import type { RootInfo } from './components/FileManager.vue'
 import type { OpenFilePayload } from './components/FileTree.vue'
 import type { PendingRequest } from './types'
 import { findSessionRoot } from './utils/sessions'
+import { startFaviconSync } from './utils/favicon'
 
 const { state, loadSessions, setMode, approveRequest, rejectRequest, selectSession } = useStore()
 
@@ -273,6 +274,7 @@ function showAuthDialog() {
 }
 
 onMounted(() => {
+  startFaviconSync()
   document.addEventListener('keydown', handleKeydown)
   window.addEventListener('trilobite:unauthorized', showAuthDialog)
   init()

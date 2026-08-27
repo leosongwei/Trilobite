@@ -447,6 +447,7 @@ async def _make_agent(
             agent.set_additional_dirs(info["additional_dirs"])
         if info.get("plan_mode"):
             agent.set_plan_mode(info["plan_mode"])
+        agent.restore_persisted_tokens(info)
     queue, _snapshot = await agent.attach_subscriber()
     return agent, queue
 

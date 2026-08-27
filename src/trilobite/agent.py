@@ -995,13 +995,29 @@ class Agent:
         self._permission_approved = approved
         self._permission_event.set()
 
+    def restore_persisted_tokens(self, info: dict):
+        """Hydrate the token count persisted in session.json (``info`` is its dict).
+
+        Called on cold load so the token bar reflects the real context length
+        instead of 0 until the next API response reports fresh usage.
+        ``_token_covered`` comes along so compaction's pending estimate stays
+        correct; absent a saved cursor, everything already on disk counts as
+        covered -- it is exactly the input that produced the persisted count.
+        """
+        self._token_count = int(info.get("token_count") or 0)
+        fallback = len(self.history.raw) if self._token_count else 0
+        self._token_covered = int(info.get("token_covered", fallback))
+
     def _persist_additional_dirs(self):
         """Write additional_dirs back to session.json."""
         self._update_session_json({"additional_dirs": [str(d) for d in self._additional_dirs]})
 
     def _persist_token_count(self):
-        """Write token_count back to session.json."""
-        self._update_session_json({"token_count": self._token_count})
+        """Write the token count and its covered cursor back to session.json."""
+        self._update_session_json({
+            "token_count": self._token_count,
+            "token_covered": self._token_covered,
+        })
 
     def _update_session_json(self, updates: dict):
         """Update fields in session.json."""
