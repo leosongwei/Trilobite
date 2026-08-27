@@ -640,7 +640,7 @@ class Agent:
         unpersisted by the caller) and the *identical* request is re-issued,
         so the retry is a clean replay of the same turn. Each retry broadcasts
         a ``status`` banner carrying the failure reason and a ``turn_restart``
-        event, then backs off linearly (1s, 2s, ... capped at 5s). After
+        event, then backs off linearly starting at 5s, +3s each retry. After
         ``max_stream_retries`` attempts (config, default 10, total attempts
         including the first) the partial output is dropped and the last
         :class:`_StreamAttemptError` is re-raised for the run's error path.
@@ -709,6 +709,10 @@ class Agent:
                             # No retry -- fail fast with the reason surfaced.
                             raise _StreamAttemptError("output truncated (length)", retryable=False)
                         raise _StreamAttemptError("empty response")
+                # A successful request retires any retry banner shown so far:
+                # the failure is over, and the next failure starts counting
+                # from 1 again (the attempt counter is per-turn anyway).
+                await self._send_stream_event({"type": "status", "text": ""})
                 return
             except _StreamAttemptError as e:
                 self._log.warning(
@@ -737,8 +741,8 @@ class Agent:
                     "text": f"⚠️ LLM request failed ({e}), retrying ({tries + 1}/{max_tries})...",
                 })
                 await self._send_stream_event({"type": "turn_restart"})
-                # Linear backoff between attempts: 1s, 2s, ... capped at 5s.
-                await asyncio.sleep(min(tries, 5))
+                # Linear backoff between attempts: 5s, then +3s each retry (5, 8, 11, ...).
+                await asyncio.sleep(5 + 3 * (tries - 1))
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""

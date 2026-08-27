@@ -213,6 +213,10 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'turn':
       state.isStreaming = true
+      // A new turn retires any leftover retry banner from the previous turn
+      // (the backend also clears it on success; this is the reconnect-safe
+      // fallback).
+      state.statusText = null
       newTurn()
       break
 
