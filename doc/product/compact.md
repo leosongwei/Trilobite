@@ -58,11 +58,23 @@ steering 在压缩 turn 被模型读到（和压缩指令合并成一条 user）
 
 ## 手动触发：/compact 命令
 
-用户可以在输入框发送 `/compact` 手动触发压缩，无需等到 token 超阈值。
+用户在输入框发送 `/compact` 即可手动触发压缩，无需等到 token 超阈值。
 
-- 前端输入 `/` 时弹出命令补全菜单（纯客户端提示，实际发送的仍是文本，由后端匹配）。
-- 后端 `POST /message` 识别 `message.strip() == "/compact"`：若 agent 正在运行则返回 409，否则调用 `agent.compact_now()`。
-- `compact_now()` 走与自动压缩同一条路：设 `_need_compact=True` + append 压缩指令 + 启动 run，剩余由主循环处理。若没有可压缩的对话内容（如刚压缩完又立即触发），发送 status 提示而非实际压缩。
+- `/compact` 是**一条普通消息**：走与普通输入完全相同的 start/steer 路径（运行中发送则像 steering 一样排队等待当前 run 结束），后端对它没有任何特判。
+- 消息以 `/compact` 开头即视为压缩指令（宽松匹配，反正完整文本会进入合并后的 user turn 对模型可见，多余的词作为上下文顺带带入）。
+- run 循环读取到未读的 `/compact` 消息时将其转为压缩 turn：置 `_need_compact=True` 并把压缩指令追加到历史末尾，由 `combine_new_messages` 合并进同一个 user turn——指令文本在前，其他排队消息随后，压缩提示词固定最后。模型看到形如：
+
+  ```
+  <multi_message/>
+  /compact
+  <multi_message/>
+  （排队的其他消息）
+  <multi_message/>
+  （压缩提示词）
+  ```
+
+- `CompactMarker`、重建 system prompt、compact summary、steering re-append 等后续行为与自动压缩完全一致。
+- 若没有可压缩的对话内容（如刚压缩完又立即触发），`/compact` 作为普通文本发给模型，不进入压缩流程。
 
 ## compact summary 与前端显示
 
@@ -80,7 +92,7 @@ marker 之后如果直接跟 assistant 消息会让模型困惑（没有对应�
 
 compact summary 虽然是 `role: user`，但不是真实的用户消息，不参与 `user_seq` 编号（`_count_user_messages` 排除它），保证 revert/edit 功能的序号正确。
 
-压缩指令（`is_compact_prompt`）目前仍计入 `user_seq` 并显示为普通 user 消息：它是驱动 compact turn 续跑的「新消息」，也向用户表明压缩正在进行。re-append 的 steering 是真实用户消息，正常参与编号。
+压缩指令（`is_compact_prompt`）目前仍计入 `user_seq` 并显示为普通 user 消息：它是驱动 compact turn 续跑的「新消息」，也向用户表明压缩正在进行。re-append 的 steering 是真实用户消息，正常参与编号；排队的 `/compact` 消息同样是真实用户消息，正常编号显示。
 
 ## 重新构建系统提示词
 

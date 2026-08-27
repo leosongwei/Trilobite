@@ -91,7 +91,7 @@
 | 用户发消息（挂起中，idle） | 正常走 `start()` → 新 run 序言清除挂起，模型看到睡前的占位结果 + 用户新消息，**提前唤醒**；蓝点消失，定时唤醒不再触发 |
 | 用户 steer（挂起轮兄弟工具执行中） | run 循环顶部清除挂起并继续循环，模型当轮响应用户消息；若模型再次调用 `sleep_until` 则重新挂起 |
 | `POST /api/sessions/{name}/wake` | 手动立即唤醒（`_do_wake` 路径）；未挂起 409，agent 运行中 409（唤醒已挂起、run 结束后自动触发，发消息可立即 steer） |
-| `/compact` | 挂起中拒绝（409 "session is suspended … send a message or wake it first"），避免压缩轮与挂起状态交叉 |
+| `/compact` | 挂起中发送即提前唤醒（普通消息路径）；若合并后的 turn 正是压缩轮，压缩在清除挂起后照常进行 |
 | `/revert` | 回滚历史的同时取消挂起（清除 `sleep_until`），避免唤醒消息落到缺失上下文里 |
 | 删除 session | `TimerService.remove_session`（丢弃 pending），目录随级联删除 |
 | 模式切换（Tab / `/mode`） | 允许；`session.json` 读-改-写保留 `sleep_until` 字段，唤醒时按新模式运行（`<modeswitch>` 通知随唤醒 run 注入） |
@@ -125,7 +125,7 @@ CLI 的 IDLE 循环阻塞在同步 `input()`（事件循环停摆），tick 无�
 - **仅主 agent 可用**：`sleep_until` 由 `BuildModePermission` 与 `PlanModePermission` 共同暴露与放行（工具无副作用，plan 模式只读语义不受影响；两模式仍暴露同一全量工具前缀，缓存稳定）；subagent 角色（explore/general）工具集不含它，`intercept` 兜底拦截——有界任务不允许睡眠（父 agent 会挂起等待）。
 - **无资源消耗**：挂起仅是一个时间戳 + 每秒一次的字典扫描；不占用 LLM 连接、线程或进程。
 - 上限：单次 ≤365 天、≥5 秒；每 session 至多一个挂起（后设覆盖）。
-- 挂起期间 `/compact` 拒绝、`/revert` 取消挂起、删除 session 级联清理，防止悬挂的 pending 唤醒到已变更的上下文。
+- 挂起期间 `/compact` 提前唤醒（普通消息路径）、`/revert` 取消挂起、删除 session 级联清理，防止悬挂的 pending 唤醒到已变更的上下文。
 
 ## 七、Non-goals
 
@@ -141,7 +141,7 @@ CLI 的 IDLE 循环阻塞在同步 `input()`（事件循环停摆），tick 无�
 3. **`src/trilobite/permission.py`**：删 `CRON_TOOL_NAMES`、`exposes_cron`、`CronSubagentPermission`；主模式（build/plan）允许并放行 `sleep_until`（加入两者 `tool_names`；plan 模式的 `tool_names` 增补 `sleep_until`）。
 4. **`src/trilobite/agent.py`**：删 scheduled/cron 全部代码（构造参数、`CronBoundaryError`、分发分支、`_run_cron_tool`、`start_scheduled_fire`、`is_scheduled`、`kind` 的 scheduled 值等）；增 `timer_service` 构造参数、`_sleeping_until` 状态、`_run_sleep_tool` 分发分支、run 循环顶部的挂起 break、run 启动时的挂起取消。
 5. **`src/trilobite/prompts.py`**：删 `SYSTEM_PROMPT` 的 cron 段与 `CRON_ROLE_PROMPT`；增 timer 段（用法、格式、睡前收尾建议）。
-6. **`src/trilobite/server.py`**：删 CronService 装配/端点/`_scheduled_info`/scheduled 分支；增 TimerService 装配（startup `load_all`+`start`，shutdown）与注入、`GET /api/sessions` 的 `has_sleep`/`sleep_until`、`POST /api/sessions/{name}/wake`、`/compact` 挂起拒绝、`/revert` 取消挂起、删除 session 级联。
+6. **`src/trilobite/server.py`**：删 CronService 装配/端点/`_scheduled_info`/scheduled 分支；增 TimerService 装配（startup `load_all`+`start`，shutdown）与注入、`GET /api/sessions` 的 `has_sleep`/`sleep_until`、`POST /api/sessions/{name}/wake`、`/revert` 取消挂起、删除 session 级联。
 7. **`src/trilobite/cli.py`**：不注入 TimerService（`sleep_until` 报错路径）。
 8. **前端**：`types.ts`（SSEEvent 增 `sleep_start`/`sleep_end` 删 cron 三事件；Session 删 schedule 族字段增 `has_sleep`/`sleep_until`）、`sessionStatus.ts`（蓝点语义）、`store.ts`（事件处理、`⏰` divider、历史重建）、`SessionSidebar.vue`（删 scheduled 徽标/状态点/tooltip，排序字段）、`App.vue`（删 scheduled 面板，增挂起横幅 + 立即唤醒）、`ChatInput.vue`（删 scheduled 只读分支）、`api.ts`（删 `deleteSchedule`，增 `wakeSession`）。
 9. **`pyproject.toml`**：删 `croniter` 依赖；版本号 bump。
