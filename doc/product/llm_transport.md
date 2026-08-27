@@ -78,7 +78,7 @@ chunk.usage.total_tokens
 * **丢弃部分输出**：失败回合的 `model` 消息从未落盘（`append_model(persist=False)`），重试前清空其思维链/正文/工具调用片段并从 history 移除，**重发完全相同的请求**（复用回合开始时快照的 `messages`，保证重放一致、前缀缓存命中）。
 * **完成条件校验**：工具调用回合必须输出非思维链的 `content` 才算完整——「调用工具后连接关闭」的回合（有 tool_calls、无正文）按失败处理重试；compaction 回合（工具调用被拦截、依赖结果连续重试）豁免该校验。
 * **可见的重试流程**：每次重试前广播 `status` 事件（`⚠️ LLM request failed (<原因>), retrying (k/N)...`，前端顶部横幅显示）和 `turn_restart` 事件（前端丢弃本回合已流出的部分输出、开启新泡泡），随后线性退避（1s、2s、…上限 5s）。
-* **尝试上限**：`max_stream_retries` 配置（默认 3，含首次请求），达到上限后丢弃部分输出并把最后一次异常交给 run 的错误路径（`error` 事件，带 status_code/body 供前端展示服务商错误信息）。
+* **尝试上限**：`max_stream_retries` 配置（默认 10，含首次请求），达到上限后丢弃部分输出并把最后一次异常交给 run 的错误路径（`error` 事件，带 status_code/body 供前端展示服务商错误信息）。
 
 中断总结回合（`_summarize_and_exit`）复用同一机制，subagent 总结不会因一次 503 直接失败。
 

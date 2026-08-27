@@ -597,14 +597,14 @@ class Agent:
         re-issued, so the retry is a clean replay of the same turn. Each retry
         broadcasts a ``status`` banner and a ``turn_restart`` event, then backs
         off linearly (1s, 2s, ... capped at 5s). After ``max_stream_retries``
-        attempts (config, default 3, total attempts including the first) the
+        attempts (config, default 10, total attempts including the first) the
         partial output is dropped and the last :class:`_StreamAttemptError` is
         re-raised for the run's error path.
 
         ``model`` is reset in place on retry, so the caller's reference stays
         valid and history holds one clean open model message.
         """
-        max_tries = max(1, int(self.config.get("max_stream_retries", 3)))
+        max_tries = max(1, int(self.config.get("max_stream_retries", 10)))
         tries = 0
         while True:
             tries += 1

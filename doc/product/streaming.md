@@ -30,7 +30,7 @@ per-session 事件总线，维护：
 
 * `start(message)` / `steer(message)`：async，都 append 一条 user 消息并发 `user` 事件。`start` 停机时调用，启动新 run task；`steer` 仅 run 进行中调用，消息直接落 history，run 循环在下一个 turn 边界（续跑判断）拾取。
 * `run()`：不再接收 queue 参数，通过 `_send_stream_event` → `broker.publish` 广播；run 结束在 `finally` 中兜底清除 running 标志。
-* **流式回合统一重试**：任意 HTTP 错误、流未正常结束（无 `[DONE]`/finish reason）或工具调用回合未输出正文，都走同一重试循环（`_stream_turn`）——丢弃本回合部分输出、重发相同请求，每次重试广播 `status` 横幅 + `turn_restart` 事件，上限 `max_stream_retries`（默认 3，含首次）。详见 [llm_transport.md](./llm_transport.md)。
+* **流式回合统一重试**：任意 HTTP 错误、流未正常结束（无 `[DONE]`/finish reason）或工具调用回合未输出正文，都走同一重试循环（`_stream_turn`）——丢弃本回合部分输出、重发相同请求，每次重试广播 `status` 横幅 + `turn_restart` 事件，上限 `max_stream_retries`（默认 10，含首次）。详见 [llm_transport.md](./llm_transport.md)。
 * 工具执行不阻塞事件循环：`execute_tool` 仍是同步函数，但 `run()` 在调用处用 `asyncio.to_thread(...)` 把它丢到工作线程执行。所有 agent / subagent 共享同一个事件循环，若让阻塞调用直接在循环里跑，长 bash 命令会冻住整个循环--SSE 心跳发不出、新连接连 `init` 都拿不到、subagent 跑 bash 时主界面整体卡死（issue #5）。丢线程后循环保持响应；`task` 仍走 `await self._run_subagents`，`execute_tool` 本身不异步化。bash 内部用 `Popen`（`start_new_session=True`）启动命令，两个读取线程逐行 drain stdout/stderr，每行经 `on_output` 回调转发为 `tool_output` 事件流式推送到前端（工作线程通过 `asyncio.run_coroutine_threadsafe` 把事件调度回事件循环）；同时收集所有行用于最终拼接 `[stderr]`/`[exit code]` 标记并按 `max_output_lines`/`max_output_chars` 截断后作为 `tool_result` 返回。进程句柄经 `on_proc` 回注册到 agent，`interrupt()` 杀整个进程组让长命令立即返回再走总结（详见 subagent.md 的「bash 中断」）。
 * `attach_subscriber()` / `detach_subscriber(q)`：供 `/stream` 端点使用。
 * `is_running()`：基于 broker 状态（`start` 时即置 true，先于第一个 `turn` 事件）。
