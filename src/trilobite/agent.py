@@ -99,15 +99,25 @@ class _StreamChunk:
 
 
 class _StreamAttemptError(Exception):
-    """A chat-completion stream attempt failed in a retryable way.
+    """A chat-completion stream attempt failed.
 
     Unified failure signal for every kind of bad stream: any HTTP error
     (status or transport), a premature disconnect (stream ended without a
-    ``[DONE]`` marker and without a finish reason), and completions that
-    produced neither content nor tool calls (empty output). The turn's
+    ``[DONE]`` marker and without a finish reason), and completions whose
+    output contradicts the ``finish_reason`` declaration (half-baked tool
+    calls, stop without content, truncated or empty output). The turn's
     partial output is discarded and the identical request is retried; the
     exception only surfaces after all attempts are exhausted.
+
+    ``retryable=False`` marks failures that are deterministic and therefore
+    not worth re-issuing: a ``length`` truncation replays identically (same
+    request, same ``max_tokens`` budget, same thinking length), so the turn
+    fails immediately instead of burning the retry budget.
     """
+
+    def __init__(self, reason: str, *, retryable: bool = True):
+        super().__init__(reason)
+        self.retryable = retryable
 
     @property
     def status_code(self) -> int | None:
@@ -643,12 +653,15 @@ class Agent:
         content, and tool calls require the ``tool_calls`` seal. Tool-call
         turns routinely ship with ``content: null`` (verified against qwen3.8
         via llama.cpp: reasoning deltas + ``finish_reason="tool_calls"`` +
-        ``[DONE]``, no text), so calls alone satisfy that turn. Every mismatch
-        -- half-baked calls, a seal without calls, stop without content,
-        truncated or empty output -- discards the whole turn and retries.
-        ``require_content=False`` (interrupt summaries) skips these checks;
-        ``_need_compact`` turns also skip them (their tool calls are
-        intercepted and the loop relies on the interception results instead).
+        ``[DONE]``, no text), so calls alone satisfy that turn. Every mismatch --
+        half-baked calls, a seal without calls, stop without content,
+        truncated or empty output -- discards the whole turn. Mismatches are
+        retried except ``length`` truncations, which are deterministic (the
+        identical request would hit the same token budget again) and fail
+        immediately. ``require_content=False`` (interrupt summaries) skips
+        these checks; ``_need_compact`` turns also skip them (their tool calls
+        are intercepted and the loop relies on the interception results
+        instead).
 
         ``model`` is reset in place on retry, so the caller's reference stays
         valid and history holds one clean open model message.
@@ -672,7 +685,10 @@ class Agent:
                         # protocol contradiction) and never executed.
                         if last_finish != "tool_calls":
                             if last_finish == "length":
-                                raise _StreamAttemptError("tool calls truncated (length)")
+                                # Truncated arguments are deterministic: the
+                                # identical request would truncate again, so
+                                # no retry -- fail fast.
+                                raise _StreamAttemptError("tool calls truncated (length)", retryable=False)
                             raise _StreamAttemptError("incomplete tool calls")
                     elif last_finish == "stop":
                         # A "stop" finish declares a completed text reply: it
@@ -688,7 +704,10 @@ class Agent:
                         # thinking hit the token budget, content never
                         # started) or a plain empty completion.
                         if last_finish == "length":
-                            raise _StreamAttemptError("output truncated (length)")
+                            # Truncated thinking is deterministic: the same
+                            # request would hit the same token budget again.
+                            # No retry -- fail fast with the reason surfaced.
+                            raise _StreamAttemptError("output truncated (length)", retryable=False)
                         raise _StreamAttemptError("empty response")
                 return
             except _StreamAttemptError as e:
@@ -696,11 +715,13 @@ class Agent:
                     "TURN stream try %d/%d failed: %s (think=%d content=%d calls=%d)",
                     tries, max_tries, e, len(model.think), len(model.content), len(model.tool_calls),
                 )
-                if tries >= max_tries:
-                    # Give up: drop the failed attempt's partial output (never
-                    # persisted) so the error state is clean and the next user
-                    # message starts a fresh turn; surface the last error to
-                    # the run handler.
+                if not e.retryable or tries >= max_tries:
+                    # Give up: either the failure is deterministic (length
+                    # truncation -- a retry replays identically) or the retry
+                    # budget is spent. Drop the failed attempt's partial
+                    # output (never persisted) so the error state is clean and
+                    # the next user message starts a fresh turn; surface the
+                    # last error to the run handler.
                     self.history.remove(model)
                     self.history.close_model()
                     raise

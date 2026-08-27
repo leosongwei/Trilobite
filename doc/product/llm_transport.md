@@ -76,7 +76,7 @@ chunk.usage.total_tokens
 
 * **统一异常** `_StreamAttemptError`：`_chat_completion_stream` 把一切失败归一为该异常（HTTP 错误带状态码、传输错误带简短标签、流无完成信号即断开抛「connection closed」），回合层不再关心具体失败种类。
 * **丢弃部分输出**：失败回合的 `model` 消息从未落盘（`append_model(persist=False)`），重试前清空其思维链/正文/工具调用片段并从 history 移除，**重发完全相同的请求**（复用回合开始时快照的 `messages`，保证重放一致、前缀缓存命中）。
-* **验收条件（finish_reason ↔ 输出一致性）**：`finish_reason` 是服务商对"这个回合装了什么"的**唯一权威声明**，输出物必须与声明相符（与 openai SDK 语义一致：done 事件以 finish 为准触发、`length`/`content_filter` 视为无效完成）。不一致即作废重试：
+* **验收条件（finish_reason ↔ 输出一致性）**：`finish_reason` 是服务商对"这个回合装了什么"的**唯一权威声明**，输出物必须与声明相符（与 openai SDK 语义一致：done 事件以 finish 为准触发、`length`/`content_filter` 视为无效完成）。不一致即作废重试，**`length` 截断除外——它是确定性失败**（重发相同请求、相同 `max_tokens` 必然再次截断），不浪费重试预算，直接报错：
 
   | finish_reason | 输出 | 判定 | 横幅原因 |
   |---|---|---|---|
@@ -86,8 +86,8 @@ chunk.usage.total_tokens
   | `stop` | 有 content | 正常 | -- |
   | `stop` | 无 content | 作废重试 | `stop without content` |
   | `stop`/缺失 | content + 半截 tool_calls | 作废重试（半截调用绝不执行） | `incomplete tool calls` |
-  | `length` | 有 tool_calls（参数被截断） | 作废重试 | `tool calls truncated (length)` |
-  | `length` | 空输出（思维链耗光 token） | 作废重试 | `output truncated (length)` |
+  | `length` | 有 tool_calls（参数被截断） | 作废**报错（不重试）** | `tool calls truncated (length)` |
+  | `length` | 空输出（思维链耗光 token） | 作废**报错（不重试）** | `output truncated (length)` |
   | `length` | 有 content（部分正文） | 接受（SDK 标准路径同语义） | -- |
   | 缺失（有 `[DONE]`） | 有输出物 | 接受（怪 provider 放行） | -- |
   | 缺失（有 `[DONE]`） | 空 | 作废重试 | `empty response` |
