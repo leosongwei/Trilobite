@@ -73,6 +73,7 @@ class _Function:
 
 @dataclass
 class _ToolCall:
+    index: int = 0
     id: str = ""
     function: _Function = field(default_factory=_Function)
 
@@ -95,6 +96,64 @@ class _Usage:
 class _StreamChunk:
     choices: list[_Choice] = field(default_factory=list)
     usage: _Usage | None = None
+
+
+class _StreamAttemptError(Exception):
+    """A chat-completion stream attempt failed.
+
+    Unified failure signal for every kind of bad stream: any HTTP error
+    (status or transport), a premature disconnect (stream ended without a
+    ``[DONE]`` marker and without a finish reason), and completions whose
+    output contradicts the ``finish_reason`` declaration (half-baked tool
+    calls, stop without content, truncated or empty output). The turn's
+    partial output is discarded and the identical request is retried; the
+    exception only surfaces after all attempts are exhausted.
+
+    ``retryable=False`` marks failures that are deterministic and therefore
+    not worth re-issuing: a ``length`` truncation replays identically (same
+    request, same ``max_tokens`` budget, same thinking length), so the turn
+    fails immediately instead of burning the retry budget.
+    """
+
+    def __init__(self, reason: str, *, retryable: bool = True):
+        super().__init__(reason)
+        self.retryable = retryable
+
+    @property
+    def status_code(self) -> int | None:
+        cause = self.__cause__
+        if isinstance(cause, httpx.HTTPStatusError):
+            return cause.response.status_code
+        return None
+
+    @property
+    def body(self) -> dict | None:
+        cause = self.__cause__
+        if isinstance(cause, httpx.HTTPStatusError):
+            try:
+                return cause.response.json()
+            except Exception:
+                return None
+        return None
+
+
+# Provider error → short banner label (shown in the retry status event).
+_STREAM_ERROR_LABELS = {
+    httpx.ConnectError: "connection failed",
+    httpx.ConnectTimeout: "connect timed out",
+    httpx.ReadTimeout: "read timed out",
+    httpx.WriteTimeout: "write timed out",
+    httpx.ReadError: "connection interrupted",
+    httpx.RemoteProtocolError: "connection interrupted",
+    httpx.LocalProtocolError: "protocol error",
+    httpx.DecodingError: "decode failed",
+    httpx.PoolTimeout: "pool timeout",
+}
+
+
+def _stream_error_label(err: Exception) -> str:
+    """Short human-readable label for a stream transport error."""
+    return _STREAM_ERROR_LABELS.get(type(err), type(err).__name__)
 
 PLAN_MODE_NOTIFICATION = (
     '<modeswitch mode="plan">\n'
@@ -196,6 +255,7 @@ async def _chat_completion_stream(
                         # raises TypeError. ``... or []`` covers both cases.
                         for t in (d.get("tool_calls") or []):
                             tc_list.append(_ToolCall(
+                                index=t.get("index", 0),
                                 id=t.get("id", ""),
                                 function=_Function(
                                     name=t.get("function", {}).get("name", ""),
@@ -229,14 +289,33 @@ async def _chat_completion_stream(
                     if log:
                         log.warning("STREAM json decode error: %s", data_str[:200])
                     continue
-            if not done_seen:
+            if not done_seen and not finish_reasons:
+                # The connection closed without a [DONE] marker and without a
+                # finish reason -- the provider died mid-stream (broken
+                # thinking chain, truncated output). Retryable.
                 if log:
                     log.warning("STREAM ended WITHOUT [DONE] after %d chunks, finish_reasons=%s",
                                 chunk_count, finish_reasons)
+                raise _StreamAttemptError("connection closed")
+    except _StreamAttemptError:
+        raise
+    except asyncio.CancelledError:
+        raise
+    except httpx.HTTPStatusError as e:
+        # Any HTTP error (503, 429, 400, ...) is worth a retry: flaky
+        # providers degrade with transient errors, and the retry cap bounds
+        # the damage of a genuinely broken request.
+        if log:
+            log.warning("STREAM HTTP error: %r", e)
+        raise _StreamAttemptError(f"HTTP {e.response.status_code}") from e
+    except httpx.HTTPError as e:
+        if log:
+            log.warning("STREAM transport error: %r", e)
+        raise _StreamAttemptError(_stream_error_label(e)) from e
     except Exception as e:
         if log:
             log.exception("STREAM error: %r", e)
-        raise
+        raise _StreamAttemptError(type(e).__name__) from e
 
 
 class Agent:
@@ -428,6 +507,242 @@ class Agent:
             resp = await self._http.post("/chat/completions", json=body, headers=headers)
             resp.raise_for_status()
             return resp.json()
+
+    async def _drain_stream(self, stream, model: ModelMessage) -> str | None:
+        """Consume one chat-completion stream into ``model``.
+
+        Reasoning/text deltas are appended to the model message and forwarded
+        to subscribers (``thinking``/``text`` events); tool-call fragments are
+        accumulated into ``model.tool_calls``. Token usage carried by the
+        stream is recorded on the agent. Nothing touches disk here -- the turn
+        is persisted only after it is validated by the caller.
+
+        Returns the last ``finish_reason`` seen on the stream (``None`` if the
+        stream ended without one), which the caller uses to diagnose
+        truncated/empty completions.
+
+        Tool-call fragments are accumulated **per ``index``** (the chunk's
+        ``tool_calls[0].index`` field): providers stream each parallel call's
+        id/name once at its start and then only argument fragments, and while
+        llama.cpp emits calls sequentially (each next call re-sends its id),
+        others may interleave argument fragments of several calls. Keying the
+        accumulator on the id alone would merge interleaved fragments into one
+        call; keying on the index keeps each call's arguments separate, and
+        the final list is emitted in index order. ``tool_stream`` events keep
+        the old id-driven shape (a ``complete: True`` closes the previous
+        bubble when a new id-bearing call starts streaming).
+        """
+        # index -> {id, name, args} accumulators.
+        indexed: dict[int, dict[str, str]] = {}
+        active_index: int | None = None
+        last_finish: str | None = None
+
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+
+            # Capture real token usage from stream
+            if chunk.usage:
+                self._token_count = chunk.usage.total_tokens
+                self._token_covered = len(self.history)
+                self._persist_token_count()
+
+            if chunk.choices:
+                fr = chunk.choices[0].finish_reason
+                if fr:
+                    last_finish = fr
+
+            if delta is None:
+                continue
+
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                model.think += delta.reasoning_content
+                await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
+
+            if delta.content:
+                model.content += delta.content
+                await self._send_stream_event({"type": "text", "text": delta.content})
+
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    entry = indexed.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                    if tc.id:
+                        entry["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name:
+                            entry["name"] = tc.function.name
+                        if tc.function.arguments:
+                            entry["args"] += tc.function.arguments
+                    if tc.id and entry["name"] and active_index != tc.index:
+                        # A new id-bearing call starts streaming: close the
+                        # previous bubble (if any) and open this one.
+                        if active_index is not None:
+                            prev = indexed[active_index]
+                            await self._send_stream_event({
+                                "type": "tool_stream",
+                                "tool_name": prev["name"],
+                                "args": prev["args"],
+                                "complete": True,
+                            })
+                        active_index = tc.index
+                        await self._send_stream_event({
+                            "type": "tool_stream",
+                            "tool_name": entry["name"],
+                            "args": "",
+                            "complete": False,
+                        })
+                    elif (
+                        tc.index == active_index
+                        and entry["name"]
+                        and tc.function
+                        and tc.function.arguments
+                    ):
+                        await self._send_stream_event({
+                            "type": "tool_stream",
+                            "tool_name": entry["name"],
+                            "args": entry["args"],
+                            "complete": False,
+                        })
+
+        if active_index is not None:
+            entry = indexed[active_index]
+            await self._send_stream_event({
+                "type": "tool_stream",
+                "tool_name": entry["name"],
+                "args": entry["args"],
+                "complete": True,
+            })
+        for idx in sorted(indexed):
+            entry = indexed[idx]
+            if entry["id"]:
+                model.tool_calls.append(ToolCall(
+                    id=entry["id"],
+                    name=entry["name"],
+                    arguments=entry["args"],
+                ))
+        return last_finish
+
+    async def _stream_turn(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        model: ModelMessage,
+        *,
+        require_content: bool = True,
+    ) -> None:
+        """Run one chat-completion stream, retrying failed attempts.
+
+        Unified retry mechanism for every kind of bad stream: any HTTP error,
+        a premature disconnect (stream ended without a completion signal --
+        neither a ``[DONE]`` marker nor a ``finish_reason``), or an empty
+        completion (no content and no tool calls). A failed attempt's partial
+        output -- possibly a broken thinking chain, a truncated reply, or
+        tool-call fragments -- is discarded (``model`` was appended
+        unpersisted by the caller) and the *identical* request is re-issued,
+        so the retry is a clean replay of the same turn. Each retry broadcasts
+        a ``status`` banner carrying the failure reason and a ``turn_restart``
+        event, then backs off linearly starting at 5s, +5s each retry. After
+        ``max_stream_retries`` attempts (config, default 10, total attempts
+        including the first) the partial output is dropped and the last
+        :class:`_StreamAttemptError` is re-raised for the run's error path.
+
+        The ``finish_reason`` is the provider's single authoritative declaration of
+        what the turn contains, and the output must match it (mirroring the
+        OpenAI SDK, which fires done events on the finish and treats
+        ``length``/``content_filter`` finishes as invalid completions):
+        ``tool_calls`` requires tool calls, ``stop`` requires non-thinking
+        content, and tool calls require the ``tool_calls`` seal. Tool-call
+        turns routinely ship with ``content: null`` (verified against qwen3.8
+        via llama.cpp: reasoning deltas + ``finish_reason="tool_calls"`` +
+        ``[DONE]``, no text), so calls alone satisfy that turn. Every mismatch --
+        half-baked calls, a seal without calls, stop without content,
+        truncated or empty output -- discards the whole turn. Mismatches are
+        retried except ``length`` truncations, which are deterministic (the
+        identical request would hit the same token budget again) and fail
+        immediately. ``require_content=False`` (interrupt summaries) skips
+        these checks; ``_need_compact`` turns also skip them (their tool calls
+        are intercepted and the loop relies on the interception results
+        instead).
+
+        ``model`` is reset in place on retry, so the caller's reference stays
+        valid and history holds one clean open model message.
+        """
+        max_tries = max(1, int(self.config.get("max_stream_retries", 10)))
+        tries = 0
+        while True:
+            tries += 1
+            try:
+                stream = await self.chat_completion(messages=messages, stream=True, tools=tools)
+                last_finish = await self._drain_stream(stream, model)
+                if require_content and not self._need_compact:
+                    # finish_reason is the provider's single authoritative
+                    # declaration of what the turn contains; the output must
+                    # match it (OpenAI SDK treats it the same way: length /
+                    # content_filter finishes are invalid, done events fire on
+                    # the finish). Every mismatch is discarded and retried:
+                    if model.tool_calls:
+                        # Tool calls need the ``tool_calls`` seal -- without
+                        # it the calls are half-baked (truncated arguments /
+                        # protocol contradiction) and never executed.
+                        if last_finish != "tool_calls":
+                            if last_finish == "length":
+                                # Truncated arguments are deterministic: the
+                                # identical request would truncate again, so
+                                # no retry -- fail fast.
+                                raise _StreamAttemptError("tool calls truncated (length)", retryable=False)
+                            raise _StreamAttemptError("incomplete tool calls")
+                    elif last_finish == "stop":
+                        # A "stop" finish declares a completed text reply: it
+                        # must carry non-thinking content.
+                        if not model.content:
+                            raise _StreamAttemptError("stop without content")
+                    elif last_finish == "tool_calls":
+                        # A tool_calls seal with no calls at all: contradiction.
+                        raise _StreamAttemptError("tool_calls finish without tool calls")
+                    elif not model.content:
+                        # length / content_filter / missing finish with nothing
+                        # produced: truncated (verified against qwen3.8:
+                        # thinking hit the token budget, content never
+                        # started) or a plain empty completion.
+                        if last_finish == "length":
+                            # Truncated thinking is deterministic: the same
+                            # request would hit the same token budget again.
+                            # No retry -- fail fast with the reason surfaced.
+                            raise _StreamAttemptError("output truncated (length)", retryable=False)
+                        raise _StreamAttemptError("empty response")
+                # A successful request retires any retry banner shown so far:
+                # the failure is over, and the next failure starts counting
+                # from 1 again (the attempt counter is per-turn anyway).
+                await self._send_stream_event({"type": "status", "text": ""})
+                return
+            except _StreamAttemptError as e:
+                self._log.warning(
+                    "TURN stream try %d/%d failed: %s (think=%d content=%d calls=%d)",
+                    tries, max_tries, e, len(model.think), len(model.content), len(model.tool_calls),
+                )
+                if not e.retryable or tries >= max_tries:
+                    # Give up: either the failure is deterministic (length
+                    # truncation -- a retry replays identically) or the retry
+                    # budget is spent. Drop the failed attempt's partial
+                    # output (never persisted) so the error state is clean and
+                    # the next user message starts a fresh turn; surface the
+                    # last error to the run handler.
+                    self.history.remove(model)
+                    self.history.close_model()
+                    raise
+                # Discard the partial attempt -- broken thinking, truncated
+                # text, tool-call fragments -- and replay the same request.
+                model.think = ""
+                model.content = ""
+                model.tool_calls = []
+                self.history.remove(model)
+                self.history.append_model(model)
+                await self._send_stream_event({
+                    "type": "status",
+                    "text": f"⚠️ LLM request failed ({e}), retrying ({tries + 1}/{max_tries})...",
+                })
+                await self._send_stream_event({"type": "turn_restart"})
+                # Linear backoff between attempts: 5s, then +5s each retry (5, 10, 15, ...).
+                await asyncio.sleep(5 * tries)
 
     def _load_working_context(self) -> str:
         """Load AGENTS.md and other context from the working directory."""
@@ -941,12 +1256,6 @@ class Agent:
                 tools = self._permission.filter_definitions(
                     enable_vl=self.enable_vl
                 )
-                stream = await self.chat_completion(
-                    messages=messages,
-                    stream=True,
-                    tools=tools,
-                )
-
                 # Begin the turn: append an empty model message and mutate it as
                 # the stream drains. It is persisted only once finalized, so a
                 # crash mid-turn leaves no half-written entry on disk.
@@ -958,85 +1267,12 @@ class Agent:
                 # needed to salvage a cancelled in-flight command, and a new
                 # turn means the previous one completed (or was salvaged).
                 self._tool_output_buffer.clear()
-                current_tool_id = ""
-                current_tool_name = ""
-                current_tool_args = ""
-
-                async for chunk in stream:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-
-                    # Capture real token usage from stream
-                    if chunk.usage:
-                        self._token_count = chunk.usage.total_tokens
-                        self._token_covered = len(self.history)
-                        self._persist_token_count()
-
-                    if delta is None:
-                        continue
-
-                    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                        model.think += delta.reasoning_content
-                        await self._send_stream_event({"type": "thinking", "text": delta.reasoning_content})
-
-                    if delta.content:
-                        model.content += delta.content
-                        await self._send_stream_event({"type": "text", "text": delta.content})
-
-                    if delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            if tc.id:
-                                if current_tool_id:
-                                    await self._send_stream_event({
-                                        "type": "tool_stream",
-                                        "tool_name": current_tool_name,
-                                        "args": current_tool_args,
-                                        "complete": True,
-                                    })
-                                    model.tool_calls.append(ToolCall(
-                                        id=current_tool_id,
-                                        name=current_tool_name,
-                                        arguments=current_tool_args,
-                                    ))
-                                current_tool_id = tc.id
-                                current_tool_name = tc.function.name if tc.function else ""
-                                current_tool_args = ""
-                                if current_tool_name:
-                                    await self._send_stream_event({
-                                        "type": "tool_stream",
-                                        "tool_name": current_tool_name,
-                                        "args": "",
-                                        "complete": False,
-                                    })
-                            if tc.function:
-                                if tc.function.name:
-                                    current_tool_name = tc.function.name
-                                    await self._send_stream_event({
-                                        "type": "tool_stream",
-                                        "tool_name": current_tool_name,
-                                        "args": current_tool_args,
-                                        "complete": False,
-                                    })
-                                if tc.function.arguments:
-                                    current_tool_args += tc.function.arguments
-                                    await self._send_stream_event({
-                                        "type": "tool_stream",
-                                        "tool_name": current_tool_name,
-                                        "args": current_tool_args,
-                                        "complete": False,
-                                    })
-
-                if current_tool_id:
-                    await self._send_stream_event({
-                        "type": "tool_stream",
-                        "tool_name": current_tool_name,
-                        "args": current_tool_args,
-                        "complete": True,
-                    })
-                    model.tool_calls.append(ToolCall(
-                        id=current_tool_id,
-                        name=current_tool_name,
-                        arguments=current_tool_args,
-                    ))
+                # One unified retry loop covers every kind of bad stream (HTTP
+                # errors, premature disconnects without a completion signal):
+                # the partial output is discarded and the identical request is
+                # re-issued (status + turn_restart events) until
+                # max_stream_retries attempts are spent.
+                await self._stream_turn(messages, tools, model)
 
                 await self._send_stream_event({
                     "type": "usage",
@@ -1673,16 +1909,12 @@ class Agent:
             image_dir=self.session_dir / "images",
             enable_vl=self.enable_vl,
         )
-        stream = await self.chat_completion(messages=messages, stream=True, tools=None)
         model = ModelMessage()
         self.history.append_model(model)
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta is None:
-                continue
-            if getattr(delta, "content", None):
-                model.content += delta.content
-                await self._send_stream_event({"type": "text", "text": delta.content})
+        # Same unified retry loop as regular turns: flaky providers get a
+        # second chance instead of failing the interrupted subagent outright.
+        # require_content=False keeps the [no summary produced] fallback.
+        await self._stream_turn(messages, None, model, require_content=False)
         if not model.content:
             model.content = "[no summary produced]"
         self.history.save()

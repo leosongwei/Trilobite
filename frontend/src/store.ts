@@ -213,6 +213,21 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'turn':
       state.isStreaming = true
+      // A new turn retires any leftover retry banner from the previous turn
+      // (the backend also clears it on success; this is the reconnect-safe
+      // fallback).
+      state.statusText = null
+      newTurn()
+      break
+
+    case 'turn_restart':
+      // A failed stream attempt is being retried: throw away the partial turn
+      // (broken thinking / truncated text / tool-call fragments streamed so
+      // far) so the retried attempt's deltas land in a clean bubble.
+      if (currentTurnIdx >= 0 && currentTurnIdx < state.chatItems.length) {
+        state.chatItems.splice(currentTurnIdx, 1)
+      }
+      closeTurn()
       newTurn()
       break
 

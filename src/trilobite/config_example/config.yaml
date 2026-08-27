@@ -48,6 +48,12 @@ skill_dirs: []
 # 不走按会话的权限审批、UI 上不可移除。支持 ~ 展开，相对路径基于各会话
 # 工作目录解析，如 ["/home/user/shared-libs", "~/scripts"]
 allowed_dirs: []
+# 单个 LLM 回合流式请求的最大尝试次数（含首次请求，默认 10）。回合须收到
+# [DONE]/finish_reason 完成信号且产出正文或工具调用才算正常（工具调用回合
+# 正常无正文，content 为 null）；任何 HTTP 错误、无完成信号断开（思维链
+# 中断/调用工具后断链）、或空完成（无正文无工具调用）都会丢弃本轮部分
+# 输出并重发相同请求。
+max_stream_retries: 10
 # bash 沙箱（仅 Linux，依赖 bubblewrap/bwrap）：auto=探测到就用、否则裸跑并提示；
 # on=强制沙箱、不可用则拒绝执行；off=关闭沙箱。沙箱内仅工作目录和已授权目录可写。
 bash_sandbox: auto

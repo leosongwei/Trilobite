@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
     "skill_dirs": [],
     "allowed_dirs": [],
     "bash_sandbox": "auto",
+    "max_stream_retries": 10,
     "models": [],
     "default_model": "",
     "default_vl_model": "",

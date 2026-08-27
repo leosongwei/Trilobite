@@ -53,6 +53,7 @@ export type SSEEvent =
   | { type: 'user'; id: string; text: string; user_seq: number; images?: ImageMeta[] }
   | { type: 'user_edit'; message_id: string; text: string }
   | { type: 'turn' }
+  | { type: 'turn_restart' }
   | { type: 'compact' }
   | { type: 'thinking'; text: string }
   | { type: 'text'; text: string }

@@ -70,6 +70,38 @@ chunk.usage.total_tokens
 
 > 历史教训：不同 provider 对「没有 tool_calls 的 delta」的表示不一致。DeepSeek 直接省略 `tool_calls` 键，而 GLM（经 opencode zen）会在每个 delta chunk 显式写 `"tool_calls": null`。`dict.get("tool_calls", [])` 仅在键缺失时返回默认值，键存在但值为 `null` 时返回 `None`，迭代 `None` 会抛 `TypeError: 'NoneType' object is not iterable`，表现为切到该 provider 后首轮就崩。解析时统一用 `d.get("tool_calls") or []`，同时覆盖缺失与 null 两种情况。
 
+## 流式回合重试
+
+低质量服务商存在两类典型故障：**请求级失败**（任意 HTTP 错误，如 503/429/4xx）和 **流中途断开**（未收到 `[DONE]` 标记、也没有 finish reason 就关闭连接——思维链刚生成一半或工具调用片段刚发出即断）。二者统一为同一个重试机制：
+
+* **统一异常** `_StreamAttemptError`：`_chat_completion_stream` 把一切失败归一为该异常（HTTP 错误带状态码、传输错误带简短标签、流无完成信号即断开抛「connection closed」），回合层不再关心具体失败种类。
+* **丢弃部分输出**：失败回合的 `model` 消息从未落盘（`append_model(persist=False)`），重试前清空其思维链/正文/工具调用片段并从 history 移除，**重发完全相同的请求**（复用回合开始时快照的 `messages`，保证重放一致、前缀缓存命中）。
+* **验收条件（finish_reason ↔ 输出一致性）**：`finish_reason` 是服务商对"这个回合装了什么"的**唯一权威声明**，输出物必须与声明相符（与 openai SDK 语义一致：done 事件以 finish 为准触发、`length`/`content_filter` 视为无效完成）。不一致即作废重试，**`length` 截断除外——它是确定性失败**（重发相同请求、相同 `max_tokens` 必然再次截断），不浪费重试预算，直接报错：
+
+  | finish_reason | 输出 | 判定 | 横幅原因 |
+  |---|---|---|---|
+  | 无完成信号断开 | 任意 | 作废重试 | `connection closed` |
+  | `tool_calls` | 有 tool_calls | 正常（content 可为 null） | -- |
+  | `tool_calls` | 无 tool_calls（有封印没调用） | 作废重试 | `tool_calls finish without tool calls` |
+  | `stop` | 有 content | 正常 | -- |
+  | `stop` | 无 content | 作废重试 | `stop without content` |
+  | `stop`/缺失 | content + 半截 tool_calls | 作废重试（半截调用绝不执行） | `incomplete tool calls` |
+  | `length` | 有 tool_calls（参数被截断） | 作废**报错（不重试）** | `tool calls truncated (length)` |
+  | `length` | 空输出（思维链耗光 token） | 作废**报错（不重试）** | `output truncated (length)` |
+  | `length` | 有 content（部分正文） | 接受（SDK 标准路径同语义） | -- |
+  | 缺失（有 `[DONE]`） | 有输出物 | 接受（怪 provider 放行） | -- |
+  | 缺失（有 `[DONE]`） | 空 | 作废重试 | `empty response` |
+
+  > **实测（qwen3.8 via llama.cpp 本地服务）**：正常的工具调用回合 **content 全程为 `null`**——流先输出思维链（`reasoning_content`）、再输出 `tool_calls` 增量（首个带 id/name、后续只带 arguments 片段），收官 chunk 带 `finish_reason: "tool_calls"`，末尾 `[DONE]`。工具调用是否完整只认 `finish_reason="tool_calls"` 这个封印：没有它的调用片段必然半截（参数没发完或被截断），一律作废重试，**不执行**。多工具并行（实测）为顺序流式：index 0 发完 id+参数后 index 1 再发 id+参数，收官同样 `finish_reason="tool_calls"`。
+
+  > 多工具并行调用：工具片段按 chunk 的 `tool_calls[0].index` 分开累积，结束时按 index 顺序产出。按 index 累积兼容参数片段交错的实现（交错时不重发 id，仅靠 id 切换会把多个调用的参数混进一个调用）。
+
+  compaction 回合（工具调用被拦截、依赖结果连续重试）与中断总结回合（保留 `[no summary produced]` 兜底）豁免一致性校验。
+* **可见的重试流程**：每次重试前广播 `status` 事件（`⚠️ LLM request failed (<原因>), retrying (k/N)...`，前端顶部横幅显示）和 `turn_restart` 事件（前端丢弃本回合已流出的部分输出、开启新泡泡），随后线性退避（5s 起，每次 +5s：5s、10s、15s、…）。回合一旦成功即广播空 `status` 事件撤掉横幅——失败已结束，计数随回合重置，下次失败从 `(1/N)` 重新计；前端收到 `turn` 事件时兜底清空横幅。
+* **尝试上限**：`max_stream_retries` 配置（默认 10，含首次请求），达到上限后丢弃部分输出并把最后一次异常交给 run 的错误路径（`error` 事件，带 status_code/body 供前端展示服务商错误信息）。
+
+中断总结回合（`_summarize_and_exit`）复用同一机制，subagent 总结不会因一次 503 直接失败。
+
 ## 非流式调用
 
 `Agent.chat_completion(messages, stream=False)` -- 用于 compaction 等场景，返回 `resp.json()` 字典。
