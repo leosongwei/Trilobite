@@ -81,10 +81,13 @@ chunk.usage.total_tokens
   | 形态 | 横幅原因 | 重试上限后 |
   |---|---|---|
   | 无完成信号断开（思维链中断/调用工具后断链/正文截断） | `connection closed` | 报错 |
-  | 有完成信号、有 content 或 tool_calls | 正常 | -- |
+  | 完成信号=`length`、无 content 且无 tool_calls（思维链耗光 token 被截断） | `output truncated (length)` | 报错 |
   | 有完成信号、无 content 且无 tool_calls（空完成） | `empty response` | 报错 |
+  | 有完成信号、有 content 或 tool_calls | 正常 | -- |
 
   > **实测（qwen3.8 via llama.cpp 本地服务）**：正常的工具调用回合 **content 全程为 `null`**——流先输出思维链（`reasoning_content`）、再输出 `tool_calls` 增量（首个带 id/name、后续只带 arguments 片段），收官 chunk 带 `finish_reason: "tool_calls"`，末尾 `[DONE]`。因此 tool_calls 本身即构成合法输出，**不需要** content；「完成信号 + tool_calls」直接按正常处理，工具照常执行、结果照常发回 API。
+
+   > 多工具并行调用：工具片段按 chunk 的 `tool_calls[0].index` 分开累积，结束时按 index 顺序产出。llama.cpp 实测为顺序流式（每个调用先发 id/name、发完参数再切下一个），按 index 累积同时兼容参数片段交错的实现（交错时不重发 id，仅靠 id 切换会把多个调用的参数混进一个调用）。
 
   compaction 回合（工具调用被拦截、依赖结果连续重试）与中断总结回合（保留 `[no summary produced]` 兜底）豁免空完成校验。
 * **可见的重试流程**：每次重试前广播 `status` 事件（`⚠️ LLM request failed (<原因>), retrying (k/N)...`，前端顶部横幅显示）和 `turn_restart` 事件（前端丢弃本回合已流出的部分输出、开启新泡泡），随后线性退避（1s、2s、…上限 5s）。

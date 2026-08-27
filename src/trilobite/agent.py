@@ -73,6 +73,7 @@ class _Function:
 
 @dataclass
 class _ToolCall:
+    index: int = 0
     id: str = ""
     function: _Function = field(default_factory=_Function)
 
@@ -244,6 +245,7 @@ async def _chat_completion_stream(
                         # raises TypeError. ``... or []`` covers both cases.
                         for t in (d.get("tool_calls") or []):
                             tc_list.append(_ToolCall(
+                                index=t.get("index", 0),
                                 id=t.get("id", ""),
                                 function=_Function(
                                     name=t.get("function", {}).get("name", ""),
@@ -496,7 +498,7 @@ class Agent:
             resp.raise_for_status()
             return resp.json()
 
-    async def _drain_stream(self, stream, model: ModelMessage) -> None:
+    async def _drain_stream(self, stream, model: ModelMessage) -> str | None:
         """Consume one chat-completion stream into ``model``.
 
         Reasoning/text deltas are appended to the model message and forwarded
@@ -504,10 +506,26 @@ class Agent:
         accumulated into ``model.tool_calls``. Token usage carried by the
         stream is recorded on the agent. Nothing touches disk here -- the turn
         is persisted only after it is validated by the caller.
+
+        Returns the last ``finish_reason`` seen on the stream (``None`` if the
+        stream ended without one), which the caller uses to diagnose
+        truncated/empty completions.
+
+        Tool-call fragments are accumulated **per ``index``** (the chunk's
+        ``tool_calls[0].index`` field): providers stream each parallel call's
+        id/name once at its start and then only argument fragments, and while
+        llama.cpp emits calls sequentially (each next call re-sends its id),
+        others may interleave argument fragments of several calls. Keying the
+        accumulator on the id alone would merge interleaved fragments into one
+        call; keying on the index keeps each call's arguments separate, and
+        the final list is emitted in index order. ``tool_stream`` events keep
+        the old id-driven shape (a ``complete: True`` closes the previous
+        bubble when a new id-bearing call starts streaming).
         """
-        current_tool_id = ""
-        current_tool_name = ""
-        current_tool_args = ""
+        # index -> {id, name, args} accumulators.
+        indexed: dict[int, dict[str, str]] = {}
+        active_index: int | None = None
+        last_finish: str | None = None
 
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None
@@ -517,6 +535,11 @@ class Agent:
                 self._token_count = chunk.usage.total_tokens
                 self._token_covered = len(self.history)
                 self._persist_token_count()
+
+            if chunk.choices:
+                fr = chunk.choices[0].finish_reason
+                if fr:
+                    last_finish = fr
 
             if delta is None:
                 continue
@@ -531,59 +554,62 @@ class Agent:
 
             if delta.tool_calls:
                 for tc in delta.tool_calls:
+                    entry = indexed.setdefault(tc.index, {"id": "", "name": "", "args": ""})
                     if tc.id:
-                        if current_tool_id:
-                            await self._send_stream_event({
-                                "type": "tool_stream",
-                                "tool_name": current_tool_name,
-                                "args": current_tool_args,
-                                "complete": True,
-                            })
-                            model.tool_calls.append(ToolCall(
-                                id=current_tool_id,
-                                name=current_tool_name,
-                                arguments=current_tool_args,
-                            ))
-                        current_tool_id = tc.id
-                        current_tool_name = tc.function.name if tc.function else ""
-                        current_tool_args = ""
-                        if current_tool_name:
-                            await self._send_stream_event({
-                                "type": "tool_stream",
-                                "tool_name": current_tool_name,
-                                "args": "",
-                                "complete": False,
-                            })
+                        entry["id"] = tc.id
                     if tc.function:
                         if tc.function.name:
-                            current_tool_name = tc.function.name
-                            await self._send_stream_event({
-                                "type": "tool_stream",
-                                "tool_name": current_tool_name,
-                                "args": current_tool_args,
-                                "complete": False,
-                            })
+                            entry["name"] = tc.function.name
                         if tc.function.arguments:
-                            current_tool_args += tc.function.arguments
+                            entry["args"] += tc.function.arguments
+                    if tc.id and entry["name"] and active_index != tc.index:
+                        # A new id-bearing call starts streaming: close the
+                        # previous bubble (if any) and open this one.
+                        if active_index is not None:
+                            prev = indexed[active_index]
                             await self._send_stream_event({
                                 "type": "tool_stream",
-                                "tool_name": current_tool_name,
-                                "args": current_tool_args,
-                                "complete": False,
+                                "tool_name": prev["name"],
+                                "args": prev["args"],
+                                "complete": True,
                             })
+                        active_index = tc.index
+                        await self._send_stream_event({
+                            "type": "tool_stream",
+                            "tool_name": entry["name"],
+                            "args": "",
+                            "complete": False,
+                        })
+                    elif (
+                        tc.index == active_index
+                        and entry["name"]
+                        and tc.function
+                        and tc.function.arguments
+                    ):
+                        await self._send_stream_event({
+                            "type": "tool_stream",
+                            "tool_name": entry["name"],
+                            "args": entry["args"],
+                            "complete": False,
+                        })
 
-        if current_tool_id:
+        if active_index is not None:
+            entry = indexed[active_index]
             await self._send_stream_event({
                 "type": "tool_stream",
-                "tool_name": current_tool_name,
-                "args": current_tool_args,
+                "tool_name": entry["name"],
+                "args": entry["args"],
                 "complete": True,
             })
-            model.tool_calls.append(ToolCall(
-                id=current_tool_id,
-                name=current_tool_name,
-                arguments=current_tool_args,
-            ))
+        for idx in sorted(indexed):
+            entry = indexed[idx]
+            if entry["id"]:
+                model.tool_calls.append(ToolCall(
+                    id=entry["id"],
+                    name=entry["name"],
+                    arguments=entry["args"],
+                ))
+        return last_finish
 
     async def _stream_turn(
         self,
@@ -628,13 +654,17 @@ class Agent:
             tries += 1
             try:
                 stream = await self.chat_completion(messages=messages, stream=True, tools=tools)
-                await self._drain_stream(stream, model)
+                last_finish = await self._drain_stream(stream, model)
                 if require_content and not self._need_compact and not model.content and not model.tool_calls:
                     # Stream carried a completion signal but produced neither
-                    # text nor tool calls: an empty completion is never a
-                    # usable turn (empty "stop", silent "length", filtered
-                    # output...). Retry; give up with the anomaly surfaced
-                    # once the budget is spent.
+                    # text nor tool calls: a useless turn. A length-truncated
+                    # one (verified against qwen3.8: thinking hit the token
+                    # budget, content never started) gets its own reason so
+                    # the anomaly is diagnosable; anything else is a plain
+                    # empty completion. Retry both; give up with the reason
+                    # surfaced once the budget is spent.
+                    if last_finish == "length":
+                        raise _StreamAttemptError("output truncated (length)")
                     raise _StreamAttemptError("empty response")
                 return
             except _StreamAttemptError as e:
