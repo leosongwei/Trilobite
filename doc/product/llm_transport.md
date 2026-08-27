@@ -97,7 +97,7 @@ chunk.usage.total_tokens
   > 多工具并行调用：工具片段按 chunk 的 `tool_calls[0].index` 分开累积，结束时按 index 顺序产出。按 index 累积兼容参数片段交错的实现（交错时不重发 id，仅靠 id 切换会把多个调用的参数混进一个调用）。
 
   compaction 回合（工具调用被拦截、依赖结果连续重试）与中断总结回合（保留 `[no summary produced]` 兜底）豁免一致性校验。
-* **可见的重试流程**：每次重试前广播 `status` 事件（`⚠️ LLM request failed (<原因>), retrying (k/N)...`，前端顶部横幅显示）和 `turn_restart` 事件（前端丢弃本回合已流出的部分输出、开启新泡泡），随后线性退避（5s 起，每次 +3s：5s、8s、11s、…）。回合一旦成功即广播空 `status` 事件撤掉横幅——失败已结束，计数随回合重置，下次失败从 `(1/N)` 重新计；前端收到 `turn` 事件时兜底清空横幅。
+* **可见的重试流程**：每次重试前广播 `status` 事件（`⚠️ LLM request failed (<原因>), retrying (k/N)...`，前端顶部横幅显示）和 `turn_restart` 事件（前端丢弃本回合已流出的部分输出、开启新泡泡），随后线性退避（5s 起，每次 +5s：5s、10s、15s、…）。回合一旦成功即广播空 `status` 事件撤掉横幅——失败已结束，计数随回合重置，下次失败从 `(1/N)` 重新计；前端收到 `turn` 事件时兜底清空横幅。
 * **尝试上限**：`max_stream_retries` 配置（默认 10，含首次请求），达到上限后丢弃部分输出并把最后一次异常交给 run 的错误路径（`error` 事件，带 status_code/body 供前端展示服务商错误信息）。
 
 中断总结回合（`_summarize_and_exit`）复用同一机制，subagent 总结不会因一次 503 直接失败。
