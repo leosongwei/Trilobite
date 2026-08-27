@@ -76,16 +76,17 @@ chunk.usage.total_tokens
 
 * **统一异常** `_StreamAttemptError`：`_chat_completion_stream` 把一切失败归一为该异常（HTTP 错误带状态码、传输错误带简短标签、流无完成信号即断开抛「connection closed」），回合层不再关心具体失败种类。
 * **丢弃部分输出**：失败回合的 `model` 消息从未落盘（`append_model(persist=False)`），重试前清空其思维链/正文/工具调用片段并从 history 移除，**重发完全相同的请求**（复用回合开始时快照的 `messages`，保证重放一致、前缀缓存命中）。
-* **验收条件（双重要求）**：回合"正常"须同时满足——① 流带完成信号结束（`[DONE]` 或 `finish_reason`）；② 模型输出了非思维链的 `content`。异常形态及其处理：
+* **验收条件（重试判定）**：回合"正常"须满足——① 流带完成信号结束（`[DONE]` 或 `finish_reason`）；② 模型产出了 content 或 tool_calls 至少其一。异常形态及其处理：
 
   | 形态 | 横幅原因 | 重试上限后 |
   |---|---|---|
-  | 无完成信号断开（思维链中断/调用工具后断链） | `connection closed` | 报错 |
-  | 有完成信号、无 content、有 tool_calls | `tool calls without content` | **降级接受**（工具仍可执行，部分 provider 合法如此） |
-  | 有完成信号、无 content、无 tool_calls（空完成） | `empty response` | 报错 |
-  | 有完成信号、有 content | 正常 | -- |
+  | 无完成信号断开（思维链中断/调用工具后断链/正文截断） | `connection closed` | 报错 |
+  | 有完成信号、有 content 或 tool_calls | 正常 | -- |
+  | 有完成信号、无 content 且无 tool_calls（空完成） | `empty response` | 报错 |
 
-  compaction 回合（工具调用被拦截、依赖结果连续重试）与中断总结回合（保留 `[no summary produced]` 兜底）豁免 content 校验。
+  > **实测（qwen3.8 via llama.cpp 本地服务）**：正常的工具调用回合 **content 全程为 `null`**——流先输出思维链（`reasoning_content`）、再输出 `tool_calls` 增量（首个带 id/name、后续只带 arguments 片段），收官 chunk 带 `finish_reason: "tool_calls"`，末尾 `[DONE]`。因此 tool_calls 本身即构成合法输出，**不需要** content；「完成信号 + tool_calls」直接按正常处理，工具照常执行、结果照常发回 API。
+
+  compaction 回合（工具调用被拦截、依赖结果连续重试）与中断总结回合（保留 `[no summary produced]` 兜底）豁免空完成校验。
 * **可见的重试流程**：每次重试前广播 `status` 事件（`⚠️ LLM request failed (<原因>), retrying (k/N)...`，前端顶部横幅显示）和 `turn_restart` 事件（前端丢弃本回合已流出的部分输出、开启新泡泡），随后线性退避（1s、2s、…上限 5s）。
 * **尝试上限**：`max_stream_retries` 配置（默认 10，含首次请求），达到上限后丢弃部分输出并把最后一次异常交给 run 的错误路径（`error` 事件，带 status_code/body 供前端展示服务商错误信息）。
 
