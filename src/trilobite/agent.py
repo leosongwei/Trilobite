@@ -635,16 +635,17 @@ class Agent:
         including the first) the partial output is dropped and the last
         :class:`_StreamAttemptError` is re-raised for the run's error path.
 
-        A turn is "normal" when the stream carries a completion signal AND the
-        model produced at least one of content or tool calls -- where a
-        tool-call turn additionally needs ``finish_reason="tool_calls"`` to
-        seal the calls as complete. Tool-call turns routinely ship with
-        ``content: null`` (verified against qwen3.8 via llama.cpp: reasoning
-        deltas + ``finish_reason="tool_calls"`` + ``[DONE]``, no text), so
-        tool calls alone satisfy the content half; but fragments that never
-        got the seal (``stop``/``length``/missing finish) are half-baked and
-        never executed -- the whole turn is discarded and retried. A fully
-        empty completion (no content, no tool calls) is abnormal too.
+        The ``finish_reason`` is the provider's single authoritative declaration of
+        what the turn contains, and the output must match it (mirroring the
+        OpenAI SDK, which fires done events on the finish and treats
+        ``length``/``content_filter`` finishes as invalid completions):
+        ``tool_calls`` requires tool calls, ``stop`` requires non-thinking
+        content, and tool calls require the ``tool_calls`` seal. Tool-call
+        turns routinely ship with ``content: null`` (verified against qwen3.8
+        via llama.cpp: reasoning deltas + ``finish_reason="tool_calls"`` +
+        ``[DONE]``, no text), so calls alone satisfy that turn. Every mismatch
+        -- half-baked calls, a seal without calls, stop without content,
+        truncated or empty output -- discards the whole turn and retries.
         ``require_content=False`` (interrupt summaries) skips these checks;
         ``_need_compact`` turns also skip them (their tool calls are
         intercepted and the loop relies on the interception results instead).
@@ -660,23 +661,32 @@ class Agent:
                 stream = await self.chat_completion(messages=messages, stream=True, tools=tools)
                 last_finish = await self._drain_stream(stream, model)
                 if require_content and not self._need_compact:
-                    if model.tool_calls and last_finish != "tool_calls":
-                        # Tool-call fragments without a ``finish_reason=
-                        # "tool_calls"`` seal are half-baked by definition:
-                        # the provider never declared the calls complete
-                        # (truncated arguments, protocol contradiction).
-                        # Never execute them -- discard and retry.
-                        if last_finish == "length":
-                            raise _StreamAttemptError("tool calls truncated (length)")
-                        raise _StreamAttemptError("incomplete tool calls")
-                    if not model.content and not model.tool_calls:
-                        # Stream carried a completion signal but produced
-                        # neither text nor tool calls: a useless turn. A
-                        # length-truncated one (verified against qwen3.8:
+                    # finish_reason is the provider's single authoritative
+                    # declaration of what the turn contains; the output must
+                    # match it (OpenAI SDK treats it the same way: length /
+                    # content_filter finishes are invalid, done events fire on
+                    # the finish). Every mismatch is discarded and retried:
+                    if model.tool_calls:
+                        # Tool calls need the ``tool_calls`` seal -- without
+                        # it the calls are half-baked (truncated arguments /
+                        # protocol contradiction) and never executed.
+                        if last_finish != "tool_calls":
+                            if last_finish == "length":
+                                raise _StreamAttemptError("tool calls truncated (length)")
+                            raise _StreamAttemptError("incomplete tool calls")
+                    elif last_finish == "stop":
+                        # A "stop" finish declares a completed text reply: it
+                        # must carry non-thinking content.
+                        if not model.content:
+                            raise _StreamAttemptError("stop without content")
+                    elif last_finish == "tool_calls":
+                        # A tool_calls seal with no calls at all: contradiction.
+                        raise _StreamAttemptError("tool_calls finish without tool calls")
+                    elif not model.content:
+                        # length / content_filter / missing finish with nothing
+                        # produced: truncated (verified against qwen3.8:
                         # thinking hit the token budget, content never
-                        # started) gets its own reason so the anomaly is
-                        # diagnosable. Retry both; give up with the reason
-                        # surfaced once the budget is spent.
+                        # started) or a plain empty completion.
                         if last_finish == "length":
                             raise _StreamAttemptError("output truncated (length)")
                         raise _StreamAttemptError("empty response")
