@@ -25,7 +25,7 @@ estimated = token_count（上次 API 返回的真实 token 数，仅反映 marke
           + estimate(工具定义)
 ```
 
-当 `estimated >= max_context_tokens * compaction_trigger_ratio` 时，标记 `_need_compact=True` 并把压缩指令作为一条普通 user 消息 append 进 history。下一轮因此有「新消息」而续跑。
+`token_count` 连同其覆盖游标 `token_covered`（上次用量已计入的历史前缀长度）一起持久化在 `session.json`；会话冷加载时一并恢复，估算不会把已在盘上的消息重复计入。当 `estimated >= max_context_tokens * compaction_trigger_ratio` 时，标记 `_need_compact=True` 并把压缩指令作为一条普通 user 消息 append 进 history。下一轮因此有「新消息」而续跑。
 
 触发阈值与上下文窗口都是**模型定义**的一部分（`models[].max_context` / `models[].compaction_trigger_ratio`），会话切换主模型时同步更新。默认值：
 - `max_context`：400,000（400k）

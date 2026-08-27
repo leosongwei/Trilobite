@@ -435,6 +435,7 @@ def _get_or_create_agent(name: str) -> Agent:
     )
     agent.set_plan_mode(info.get("plan_mode", False))
     agent.set_additional_dirs(info.get("additional_dirs", []))
+    agent.restore_persisted_tokens(info)
     agents[name] = agent
     return agent
 

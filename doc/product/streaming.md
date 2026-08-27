@@ -72,6 +72,35 @@ per-session 事件总线，维护：
 * **compaction**：重写历史后 `commit` 推进 `persisted_len` 并清空缓冲。
 * **done/cancelled**：agent 已把本 run 结果 append 到 history，`publish` 推进 `persisted_len` 并清空缓冲，避免与下一次 `init` 重复。
 
+## Token 计数与 favicon 状态
+
+### Token 计数持久化
+
+每次 API 流式返回真实用量（`chunk.usage.total_tokens`）时，agent 把两个字段写入 `session.json`：
+
+* `token_count` -- 上次 API 报告的真实 token 数；
+* `token_covered` -- 该用量已覆盖的历史长度游标（`_token_covered`），供压缩估算切分「已计费」与「新增 pending」消息。
+
+压缩重建后计数归零时同样落盘。会话冷加载（web 的 `_get_or_create_agent`、CLI resume）调用 `restore_persisted_tokens` 恢复两者：
+
+* 切到某个 session 时，SSE `init` 快照即携带磁盘上的 token 计数，底部显示条直接呈现当前 context 长度，无需等下一次 API 调用；
+* 缺少精确游标的旧数据视为全部历史均已覆盖——盘上的消息正是产生该计数的那批输入，不会重复计入压缩估算。
+
+运行期间 `usage` 事件随后端轮次持续刷新前端计数。
+
+### 动态 favicon
+
+浏览器标签页图标镜像侧边栏的会话状态点，逻辑与配色同源（`utils/sessionStatus.ts` 的聚合 + `style.css` 的色值），按固定优先级取全局状态：
+
+| 全局状态 | 图标 |
+|---|---|
+| 任一 session（含 subagent）运行中 | 绿点动画 GIF（闪烁节奏对齐侧边栏 pulse） |
+| 无运行中、任一 session 处于 sleep_until 挂起 | 蓝点静态 PNG |
+| 其余（空闲） | 灰点静态 PNG |
+
+图标资产在 `frontend/public/favicon-*.{png,gif}`，随构建产物分发；`utils/favicon.ts` 监听 sessions 列表切换 `<link rel="icon">` 的 href（href 未变化时不重写，避免 gif 动画重启）。配合这一用途，后台标签页的 session 列表轮询降频为 30s（前台 3s），而不是完全暂停——favicon 的意义恰在于标签页不可见时仍能反映运行状态。
+
+
 ## 前端 (`frontend/src/store.ts`)
 
 * `selectSession` → `connectStream`：建立 SSE 订阅（取代旧的 `loadHistory` + 请求式流）。

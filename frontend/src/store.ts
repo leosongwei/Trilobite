@@ -687,7 +687,14 @@ async function runStream(name: string, gen: number) {
 // The sidebar lists every session, so it is refreshed on a short poll: cheap
 // (the endpoint just reads session.json files) and enough to make new/deleted
 // sessions and running state appear across multiple browsers.
+const POLL_MS_FOREGROUND = 3000
+// Background tabs slow down instead of stopping: the dynamic favicon must
+// keep mirroring run/sleep state while the tab itself is hidden -- which is
+// exactly where the favicon matters. A 30s poll is negligible traffic.
+const POLL_MS_BACKGROUND = 30000
+
 let sessionPollTimer: ReturnType<typeof setInterval> | null = null
+let sessionPollIntervalMs = POLL_MS_FOREGROUND
 
 function stopSessionPolling() {
   if (sessionPollTimer !== null) {
@@ -696,13 +703,12 @@ function stopSessionPolling() {
   }
 }
 
-// 后台 tab 暂停轮询（省掉每 3s 一次的请求，也避免后台 tab 与前台抢占
-// 浏览器每主机的连接配额）；切回前台立即恢复并马上刷一次列表。
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
-    stopSessionPolling()
-  } else if (state.sessions.length > 0 && sessionPollTimer === null) {
-    ensureSessionPolling()
+    ensureSessionPolling(POLL_MS_BACKGROUND)
+  } else if (state.sessions.length > 0) {
+    // Back in the foreground: restore the fast pace and refresh right away.
+    ensureSessionPolling(POLL_MS_FOREGROUND)
     void loadSessionsRefresher()
   }
 })
@@ -717,8 +723,12 @@ async function loadSessionsRefresher() {
   }
 }
 
-function ensureSessionPolling() {
-  if (sessionPollTimer !== null) return
+function ensureSessionPolling(intervalMs: number = POLL_MS_FOREGROUND) {
+  if (sessionPollTimer !== null) {
+    if (sessionPollIntervalMs === intervalMs) return
+    stopSessionPolling()
+  }
+  sessionPollIntervalMs = intervalMs
   sessionPollTimer = setInterval(async () => {
     await loadSessionsRefresher()
     // Unresolved requests block their agent's run; a session that stopped
@@ -726,7 +736,7 @@ function ensureSessionPolling() {
     // approval, so prune those entries.
     const running = new Set(state.sessions.filter((s) => s.is_running).map((s) => s.id))
     state.pendingRequests = state.pendingRequests.filter((r) => running.has(r.session))
-  }, 3000)
+  }, intervalMs)
 }
 
 export function useStore() {
