@@ -27,6 +27,7 @@
         class="user-edit-input"
         rows="2"
         @keydown.esc="cancelEdit"
+        @paste="onEditPaste"
       ></textarea>
       <div v-if="draftImages.length || draftNew.length || enableVl" class="edit-images">
         <div v-for="(img, idx) in draftImages" :key="'kept-' + img.filename" class="edit-image-thumb">
@@ -132,18 +133,39 @@ function removeNew(idx: number) {
   draftNew.value.splice(idx, 1)
 }
 
+async function addDraftNew(file: File) {
+  const data_url = await readFileAsDataURL(file)
+  draftNew.value.push({
+    mime_type: file.type,
+    original_name: file.name,
+    preview_url: URL.createObjectURL(file),
+    data_url,
+  })
+}
+
 async function onImageSelect(event: Event) {
   const target = event.target as HTMLInputElement
   for (const file of Array.from(target.files || [])) {
-    const data_url = await readFileAsDataURL(file)
-    draftNew.value.push({
-      mime_type: file.type,
-      original_name: file.name,
-      preview_url: URL.createObjectURL(file),
-      data_url,
-    })
+    await addDraftNew(file)
   }
   target.value = ''
+}
+
+// Paste clipboard images into the edit's attachment list (screenshots land
+// here too); plain-text paste passes through untouched.
+async function onEditPaste(event: ClipboardEvent) {
+  if (!enableVl.value) return
+  const items = event.clipboardData?.items
+  if (!items) return
+  let hasImage = false
+  for (const item of items) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      hasImage = true
+      const file = item.getAsFile()
+      if (file) await addDraftNew(file)
+    }
+  }
+  if (hasImage) event.preventDefault()
 }
 
 async function confirmEdit() {
