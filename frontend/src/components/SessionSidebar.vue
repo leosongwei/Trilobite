@@ -1,7 +1,16 @@
 <template>
   <aside class="sidebar" :style="{ '--sidebar-width': sidebarWidth + 'px' }">
     <div class="sidebar-header">
-      <h1>Trilobite<span v-if="version" class="version"> v{{ version }}</span></h1>
+      <div class="sidebar-title-row">
+        <h1>Trilobite<span v-if="version" class="version"> v{{ version }}</span></h1>
+        <button
+          class="icon-btn theme-toggle"
+          :title="theme === 'beige' ? 'Switch to dark theme' : 'Switch to beige theme'"
+          @click="toggleTheme"
+        >
+          <span class="ms" :class="theme === 'beige' ? 'ms-dark-mode' : 'ms-light-mode'"></span>
+        </button>
+      </div>
       <input v-model="name" type="text" placeholder="Session / Project name" />
       <label>Working directory:</label>
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
@@ -207,6 +216,7 @@ import type { Session, PendingRequest, Project } from '../types'
 import { findSessionRoot } from '../utils/sessions'
 import { projectStatus, sessionStatus, statusDot } from '../utils/sessionStatus'
 import type { SessionStatus } from '../utils/sessionStatus'
+import { useTheme } from '../theme'
 import FileTree from './FileTree.vue'
 import type { FsRoot } from './FileTree.vue'
 
@@ -221,6 +231,7 @@ const emit = defineEmits<{
 const props = defineProps<{ base: string; requestsTick?: number; sidebarWidth: number }>()
 
 const { state, selectSession, createSession, deleteSession, addDir, renameSession, approveRequest, rejectRequest, createProject, deleteProject, setSessionProject, selectModel } = useStore()
+const { theme, toggleTheme } = useTheme()
 const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
@@ -677,23 +688,55 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
 </script>
 
 <style scoped>
+/* Title row: app name on the left, the theme toggle on the right. */
+/* h1's own bottom margin lives here (on the row) so flex centering aligns
+   the toggle with the title text instead of the title's margin box. */
+.sidebar-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.sidebar-title-row h1 {
+  margin-bottom: 0;
+}
+/* Extra specificity so the global `.sidebar-header button` rule (full-width,
+   accent background) does not stretch this icon button. */
+.sidebar-header .theme-toggle {
+  width: auto;
+  margin-top: 0;
+  padding: 2px 4px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.sidebar-header .theme-toggle:hover {
+  color: var(--text);
+}
+
 .model-conf-btn {
   flex-shrink: 0;
   padding: 2px 8px;
-  background: #0e639c;
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--text-contrast);
   border: none;
   border-radius: 3px;
   font-family: inherit;
   font-size: 11px;
   cursor: pointer;
 }
-.model-conf-btn:hover { background: #1177bb; }
+.model-conf-btn:hover { background: var(--accent-hover); }
 
 .model-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--overlay);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -706,8 +749,8 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  background: #252526;
-  border: 1px solid #3c3c3c;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
@@ -717,25 +760,25 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--border);
 }
 
 .model-modal-title {
   font-size: 13px;
   font-weight: 600;
-  color: #cccccc;
+  color: var(--text);
 }
 
 .model-modal-close {
   background: none;
   border: none;
-  color: #858585;
+  color: var(--text-muted);
   font-size: 14px;
   cursor: pointer;
   line-height: 1;
   padding: 2px;
 }
-.model-modal-close:hover { color: #ffffff; }
+.model-modal-close:hover { color: var(--text-bright); }
 
 .model-modal-body {
   padding: 10px 14px;
@@ -745,7 +788,7 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
 .model-modal-hint {
   margin: 0 0 10px;
   font-size: 11px;
-  color: #858585;
+  color: var(--text-muted);
 }
 
 .model-option {
@@ -754,13 +797,13 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
   gap: 10px;
   padding: 8px 10px;
   margin-bottom: 6px;
-  background: #2d2d2d;
-  border: 1px solid #3c3c3c;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
 }
-.model-option:hover { border-color: #0e639c; }
-.model-option.active { border-color: #0e639c; background: #2a3a4a; }
+.model-option:hover { border-color: var(--accent); }
+.model-option.active { border-color: var(--accent); background: var(--bg-selected); }
 .model-option input[type='radio'] { flex-shrink: 0; }
 
 .model-option-main {
@@ -770,17 +813,17 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
   min-width: 0;
   flex-shrink: 1;
 }
-.model-name { font-size: 13px; color: #cccccc; font-weight: 600; white-space: nowrap; }
-.model-id { font-size: 11px; color: #9cdcfe; white-space: nowrap; }
+.model-name { font-size: 13px; color: var(--text); font-weight: 600; white-space: nowrap; }
+.model-id { font-size: 11px; color: var(--accent-soft); white-space: nowrap; }
 .model-badge.vl {
   font-size: 10px;
-  color: #7ee787;
-  border: 1px solid #7ee787;
+  color: var(--success);
+  border: 1px solid var(--success);
   border-radius: 3px;
   padding: 0 4px;
   flex-shrink: 0;
 }
-.model-check { font-size: 12px; color: #3fb950; flex-shrink: 0; }
+.model-check { font-size: 12px; color: var(--success); flex-shrink: 0; }
 
 .model-meta {
   display: flex;
@@ -791,18 +834,18 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
 }
 .model-url {
   font-size: 10px;
-  color: #858585;
+  color: var(--text-muted);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-limits { font-size: 10px; color: #6e7681; white-space: nowrap; }
+.model-limits { font-size: 10px; color: var(--text-ghost); white-space: nowrap; }
 
 .model-empty {
   padding: 12px;
   font-size: 12px;
-  color: #858585;
+  color: var(--text-muted);
   text-align: center;
 }
 
@@ -811,7 +854,7 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
   justify-content: flex-end;
   gap: 8px;
   padding: 10px 14px;
-  border-top: 1px solid #3c3c3c;
+  border-top: 1px solid var(--border);
 }
 .modal-btn {
   padding: 5px 14px;
@@ -819,15 +862,15 @@ async function handleRemoveGroupDir(entry: GroupDirEntry) {
   font-family: inherit;
   font-size: 12px;
   cursor: pointer;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
 }
 .modal-btn.primary {
-  background: #0e639c;
-  color: #ffffff;
-  border-color: #0e639c;
+  background: var(--accent);
+  color: var(--text-contrast);
+  border-color: var(--accent);
 }
-.modal-btn.primary:hover:not(:disabled) { background: #1177bb; }
+.modal-btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
 .modal-btn.primary:disabled { opacity: 0.5; cursor: default; }
-.modal-btn.secondary { background: #3c3c3c; color: #cccccc; }
-.modal-btn.secondary:hover { background: #4a4a4a; }
+.modal-btn.secondary { background: var(--bg-input); color: var(--text); }
+.modal-btn.secondary:hover { background: var(--bg-input-hover); }
 </style>
