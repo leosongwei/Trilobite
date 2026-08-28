@@ -199,7 +199,7 @@ async function confirmEdit() {
   height: 120px;
   object-fit: cover;
   border-radius: 6px;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   cursor: pointer;
 }
 
@@ -216,7 +216,7 @@ async function confirmEdit() {
   height: 64px;
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
 }
 .edit-image-thumb img {
   width: 100%;
@@ -242,9 +242,9 @@ async function confirmEdit() {
   width: 64px;
   height: 64px;
   border-radius: 6px;
-  border: 1px dashed #3c3c3c;
+  border: 1px dashed var(--border);
   background: transparent;
-  color: #999;
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 16px;
 }
@@ -265,7 +265,7 @@ async function confirmEdit() {
   right: 16px;
   background: transparent;
   border: none;
-  color: #ffffff;
+  color: #ffffff; /* stays white in every theme: it sits on the dark overlay */
   font-size: 24px;
   cursor: pointer;
   line-height: 1;

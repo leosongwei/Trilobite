@@ -67,7 +67,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import hljs from 'highlight.js'
-import 'highlight.js/styles/vs2015.css'
 import { getFileContent, getFileDiff, saveFile } from '../api'
 import type { DiffRow } from '../types'
 import DiffView from './DiffView.vue'
@@ -321,13 +320,13 @@ function tryClose() {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #252526;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .fm-back {
-  background: #3a3d3e;
-  color: #cccccc;
+  background: var(--bg-widget);
+  color: var(--text);
   border: none;
   border-radius: 3px;
   padding: 4px 10px;
@@ -336,11 +335,11 @@ function tryClose() {
   flex-shrink: 0;
 }
 .fm-back:hover {
-  background: #4a4d4e;
+  background: var(--bg-widget-hover);
 }
 .fm-filepath {
   font-size: 12px;
-  color: #cccccc;
+  color: var(--text);
   font-family: ui-monospace, 'Cascadia Code', monospace;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -348,7 +347,7 @@ function tryClose() {
 }
 .fm-saved {
   font-size: 11px;
-  color: #3fb950;
+  color: var(--success);
   flex-shrink: 0;
 }
 .fm-actions {
@@ -360,13 +359,13 @@ function tryClose() {
 }
 .fm-vs {
   font-size: 12px;
-  color: #858585;
+  color: var(--text-muted);
   white-space: nowrap;
 }
 .fm-base {
-  background: #3a3d3e;
-  color: #cccccc;
-  border: 1px solid #4a4d4e;
+  background: var(--bg-widget);
+  color: var(--text);
+  border: 1px solid var(--border-widget);
   border-radius: 3px;
   padding: 3px 10px;
   cursor: pointer;
@@ -374,20 +373,20 @@ function tryClose() {
   font-family: inherit;
 }
 .fm-base:hover {
-  background: #4a4d4e;
+  background: var(--bg-widget-hover);
 }
 /* View tabs: a joined segmented control, the active view stands out. */
 .fm-tabs {
   display: flex;
-  border: 1px solid #4a4d4e;
+  border: 1px solid var(--border-widget);
   border-radius: 3px;
   overflow: hidden;
 }
 .fm-tabs button {
-  background: #2d2d2d;
-  color: #cccccc;
+  background: var(--bg-inset);
+  color: var(--text);
   border: none;
-  border-left: 1px solid #4a4d4e;
+  border-left: 1px solid var(--border-widget);
   padding: 3px 12px;
   cursor: pointer;
   font-size: 12px;
@@ -397,11 +396,11 @@ function tryClose() {
   border-left: none;
 }
 .fm-tabs button:hover:not(:disabled):not(.active) {
-  background: #3a3d3e;
+  background: var(--bg-widget);
 }
 .fm-tabs button.active {
-  background: #0e639c;
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--text-contrast);
   font-weight: 600;
 }
 .fm-tabs button:disabled {
@@ -409,9 +408,9 @@ function tryClose() {
   cursor: default;
 }
 .fm-actions .fm-primary {
-  background: #0e639c;
-  border: 1px solid #0e639c;
-  color: #ffffff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--text-contrast);
   border-radius: 3px;
   padding: 3px 10px;
   cursor: pointer;
@@ -419,16 +418,16 @@ function tryClose() {
   font-family: inherit;
 }
 .fm-actions .fm-primary:hover:not(:disabled) {
-  background: #1177bb;
+  background: var(--accent-hover);
 }
 .fm-actions .fm-primary:disabled {
   opacity: 0.5;
   cursor: default;
 }
 .fm-actions .fm-cancel {
-  background: #3a3d3e;
-  color: #cccccc;
-  border: 1px solid #4a4d4e;
+  background: var(--bg-widget);
+  color: var(--text);
+  border: 1px solid var(--border-widget);
   border-radius: 3px;
   padding: 3px 10px;
   cursor: pointer;
@@ -436,7 +435,7 @@ function tryClose() {
   font-family: inherit;
 }
 .fm-actions .fm-cancel:hover {
-  background: #4a4d4e;
+  background: var(--bg-widget-hover);
 }
 .fm-body {
   flex: 1;
@@ -445,20 +444,20 @@ function tryClose() {
 .fm-content {
   height: 100%;
   overflow: auto;
-  background: #1e1e1e;
+  background: var(--bg);
   min-width: 0;
 }
 .fm-empty {
   padding: 24px 16px;
-  color: #6e7681;
+  color: var(--text-ghost);
   font-size: 13px;
 }
 .fm-error {
   padding: 8px 16px;
-  background: rgba(244, 71, 71, 0.08);
-  color: #f14c4c;
+  background: var(--danger-wash);
+  color: var(--danger-text);
   font-size: 12px;
-  border-bottom: 1px solid rgba(244, 71, 71, 0.2);
+  border-bottom: 1px solid var(--danger-border);
 }
 .fm-code {
   margin: 0;
@@ -479,8 +478,8 @@ function tryClose() {
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--bg);
+  color: var(--text-bright);
   border: none;
   outline: none;
   resize: none;

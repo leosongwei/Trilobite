@@ -6,6 +6,17 @@
   <!-- Default idle favicon; utils/favicon.ts swaps href as session state changes. -->
   <link rel="icon" type="image/png" href="/favicon-idle.png">
   <title>Trilobite</title>
+  <script>
+    // Restore the theme before the bundle loads to avoid a flash of the
+    // wrong palette (same rule as src/theme.ts).
+    (function () {
+      var m = document.cookie.match(/(?:^|; )trilobite\.theme=(beige|dark)/)
+      var legacy = !m && localStorage.getItem('trilobite.theme') === 'beige'
+      if ((m && m[1] === 'beige') || legacy) {
+        document.documentElement.dataset.theme = 'beige'
+      }
+    })()
+  </script>
 </head>
 <body>
   <div id="app"></div>

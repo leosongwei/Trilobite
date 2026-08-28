@@ -244,16 +244,16 @@ defineExpose({
   overflow: hidden;
 }
 .tree-row:hover {
-  background: #2a2d2e;
+  background: var(--bg-hover);
 }
 .tree-row.dir {
-  color: #d4d4d4;
+  color: var(--text-bright);
 }
 .tree-arrow {
   display: inline-block;
   width: 10px;
   font-size: 10px;
-  color: #858585;
+  color: var(--text-muted);
   transition: transform 0.1s;
   flex-shrink: 0;
   /* expand_more points down; rotate to point right when collapsed. */
@@ -276,30 +276,30 @@ defineExpose({
   padding-left: 16px;
 }
 .tree-row.file {
-  color: #cccccc;
+  color: var(--text);
 }
 /* Diff mode: entries with changes vs the base branch get a yellow name;
    directories whose subtree contains a change are marked the same way. */
 .tree-row.changed .tree-name {
-  color: #d29922;
+  color: var(--amber);
 }
 /* File name highlight by git status: modified yellow, added green,
    untracked blue (in diff mode untracked files are mapped to added). */
-.tree-row.file.modified .tree-name { color: #d29922; }
-.tree-row.file.added .tree-name { color: #3fb950; }
-.tree-row.file.untracked .tree-name { color: #9cdcfe; }
+.tree-row.file.modified .tree-name { color: var(--amber); }
+.tree-row.file.added .tree-name { color: var(--success); }
+.tree-row.file.untracked .tree-name { color: var(--accent-soft); }
 /* Deleted files (in the base branch, gone from the worktree): red + strike. */
 .tree-row.file.deleted .tree-name {
-  color: #f14c4c;
+  color: var(--danger-text);
   text-decoration: line-through;
 }
 .tree-hint {
   padding: 3px 10px;
   font-size: 11px;
-  color: #6e7681;
+  color: var(--text-ghost);
 }
 .tree-error {
-  color: #f14c4c;
+  color: var(--danger-text);
 }
 .tree-badge {
   font-size: 9px;
@@ -308,11 +308,11 @@ defineExpose({
   border-radius: 3px;
   margin-left: auto;
   flex-shrink: 0;
-  background: #3a3d3e;
-  color: #cccccc;
+  background: var(--bg-widget);
+  color: var(--text);
 }
-.tree-badge.modified { background: #4a3a1f; color: #d29922; }
-.tree-badge.added { background: #1f3a2e; color: #3fb950; }
-.tree-badge.untracked { background: #1f3a5f; color: #9cdcfe; }
-.tree-badge.deleted { background: #3a2f3a; color: #b18c8c; }
+.tree-badge.modified { background: var(--chip-amber-bg); color: var(--amber); }
+.tree-badge.added { background: var(--chip-green-bg); color: var(--success); }
+.tree-badge.untracked { background: var(--chip-blue-bg); color: var(--accent-soft); }
+.tree-badge.deleted { background: var(--chip-red-bg); color: var(--diff-removed-text); }
 </style>

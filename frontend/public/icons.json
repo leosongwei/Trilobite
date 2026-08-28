@@ -116,5 +116,23 @@
     "std_name": "page",
     "std_codepoint": "U+1F4C4",
     "class": "description"
+  },
+  {
+    "use": "switch to beige theme",
+    "name": "light_mode",
+    "codepoint": "e518",
+    "std": "☀",
+    "std_name": "sun",
+    "std_codepoint": "U+2600",
+    "class": "light-mode"
+  },
+  {
+    "use": "switch to dark theme",
+    "name": "dark_mode",
+    "codepoint": "e51c",
+    "std": "🌙",
+    "std_name": "crescent moon",
+    "std_codepoint": "U+1F319",
+    "class": "dark-mode"
   }
 ]

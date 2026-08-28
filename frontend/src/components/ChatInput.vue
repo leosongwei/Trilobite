@@ -209,7 +209,7 @@ async function toggleMode() {
   height: 64px;
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
 }
 .image-preview img {
   width: 100%;
