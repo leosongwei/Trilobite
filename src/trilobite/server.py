@@ -579,9 +579,10 @@ async def interrupt_session(name: str):
     """Interrupt a running subagent: it stops work and produces a summary.
 
     A session suspended via sleep_until has no run to interrupt -- the stop
-    button aborts the sleep instead: the deferred results are delivered as
-    aborted and the wake-up run starts now. A run that is still executing
-    the sleeping turn's batch takes the normal interrupt path (its Cancelled
+    button cancels the sleep instead: the deferred results are delivered as
+    aborted, no wake-up run starts, and the session idles waiting for user
+    input (like any stopped tool call). A run that is still executing the
+    sleeping turn's batch takes the normal interrupt path (its Cancelled
     handler drops the armed suspension too).
     """
     agent = agents.get(name)

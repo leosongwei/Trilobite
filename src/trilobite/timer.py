@@ -18,6 +18,9 @@ Design notes:
   (marked as interrupted) is delivered right before the user's message, the
   suspension is gone, and whether to sleep again is the model's own next
   decision.
+- The stop button cancels the suspension without a run: the deferred result
+  (marked aborted) sits in history like any stopped tool call's, and the
+  session idles waiting for user input.
 - Wake times that fell during downtime stay armed and fire right after
   startup; the deferred result carries the real current time, so a late
   wake still tells the model the truth.
@@ -170,8 +173,8 @@ def sleep_result_text(wake_at: float | None, reason: str) -> str:
     if reason == SLEEP_ABORTED:
         return (
             f"sleep_until interrupted by the user at {now_s} (target was "
-            f"{target}). The wait is cancelled -- decide how to continue "
-            "without it."
+            f"{target}). The suspension is over -- the session is idle; wait "
+            "for the user's next message."
         )
     # SLEEP_WOKE: on time, early (manual wake), or late (downtime).
     late = now.timestamp() - wake_at if wake_at is not None else 0.0
@@ -291,9 +294,21 @@ class TimerService:
 
     async def abort(self, name: str) -> bool:
         """Stop-button interrupt of a suspension: deliver the deferred
-        results as aborted and start the wake-up run now. False when the
-        session is not suspended."""
-        return await self._do_wake(name, SLEEP_ABORTED)
+        results as aborted and stop -- no wake-up run starts. Like any
+        stopped tool call, the interrupted result sits in history (the model
+        sees it on the next run) and the session idles, waiting for user
+        input. False when the session is not suspended."""
+        wake_at = self._pending.pop(name, None)
+        if wake_at is None:
+            return False
+        self._clear_field(name)
+        try:
+            agent = self._get_agent(name)
+        except Exception:
+            # The session was deleted behind our back (the endpoint's 404).
+            return True
+        await agent.interrupt_sleep(wake_at)
+        return True
 
     # ── tick loop ──────────────────────────────────────────────────────────
 

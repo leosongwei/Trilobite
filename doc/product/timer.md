@@ -82,7 +82,7 @@
 |---|---|---|
 | 准点 / 迟到 / 提前（按时钟判定） | 到点 tick、`POST /wake` | `Woke on schedule…` / `Woke at <now> -- <时长> late (the server was down or busy)` / `Woken early by the user` |
 | 用户打断 | 挂起中收到用户消息 | `Interrupted by a user message…The user's message follows`（结果位于用户消息**之前**） |
-| 中断挂起（停止按钮） | 挂起中 `POST /interrupt` | `sleep_until interrupted by the user…The wait is cancelled` |
+| 中断挂起（停止按钮） | 挂起中 `POST /interrupt` | `sleep_until interrupted by the user…The suspension is over`（不启动唤醒 run，结果等下次 run 才被看到） |
 | 批内取消 | 挂起轮批尾执行期间收到 steer | `sleep_until cancelled before the suspension started`，当轮继续响应用户 |
 | superseded | 同轮第二次 `sleep_until` | `Superseded by a later sleep_until call` |
 
@@ -93,7 +93,7 @@
 | 到点 tick | `resume_from_sleep(准点/迟到)`，唤醒 run 无 user 消息——交付的工具结果即新输入 |
 | 用户发消息（挂起中，idle） | `start()` run 序言交付延迟结果（标注被打断，位于用户消息之前），取消挂起，模型当轮响应；是否再睡由模型自己决定（重新调用 `sleep_until` 即重新挂起） |
 | 用户 steer（挂起轮批尾执行中） | run 循环顶部交付延迟结果（标注批内取消）并继续当轮 |
-| 停止按钮（挂起中） | `/interrupt` → `TimerService.abort` → 中断挂起并当场唤醒 |
+| 停止按钮（挂起中） | `/interrupt` → `TimerService.abort`：交付延迟结果（标注已中断），**不启动唤醒 run**——与普通工具调用被停止同构，会话回到空闲等待输入 |
 | 停止按钮（运行中） | 正常中断；Cancelled 处理器同时丢弃已武装的挂起（未应答调用补 `[interrupted]`，timer 清除），不会留下孤儿唤醒 |
 | `POST /wake` | 手动立即唤醒；未挂起 409，agent 运行中 409（唤醒已挂起、run 结束后自动触发，发消息可立即 steer） |
 | `/compact` | 挂起中发送即用户消息路径（打断挂起）；合并后的 turn 若是压缩轮，压缩在交付结果后照常进行 |
@@ -119,7 +119,7 @@ CLI 的 IDLE 循环阻塞在同步 `input()`（事件循环停摆），tick 无�
   - `sleep_start {session, until}`：挂起生效，前端即时置 `sleep_until`（蓝点不等 3s 轮询）。
   - `sleep_end {session}`：挂起结束，前端即时清除。
 - **工具条目**：`sleep_until` 的调用在挂起期间是 pending 态，条目显示 `sleeping...`；唤醒时 `tool_result` 事件补全结果（跨 run 到达，前端按 `tool_call_id` 回落匹配）。重建历史时结果按 `tool_call_id` 与调用配对（执行重排使结果位置与声明顺序不同），未应答调用标记为 pending。
-- **停止按钮**：挂起中的会话停止按钮保持红色可按——按下即中断挂起、当场唤醒模型；仅空闲态置灰。
+- **停止按钮**：挂起中的会话停止按钮保持红色可按——按下即中断挂起（交付"已中断"结果，无唤醒 run），会话回到空闲等待输入，与普通工具调用被停止同构；仅空闲态置灰。
 - **挂起横幅**：当前查看的会话处于挂起时，顶部显示 `⏳ 挂起至 <时间>` 横幅 + **立即唤醒**按钮（调 `/wake`）；输入框保持可用（发消息即打断挂起，语义一致）。
 
 ## 五、持久化

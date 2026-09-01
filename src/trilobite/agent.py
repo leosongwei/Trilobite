@@ -47,6 +47,7 @@ from src.trilobite.permission import (
 )
 from src.trilobite.skills import discover_skills, format_skill_listing
 from src.trilobite.timer import (
+    SLEEP_ABORTED,
     SLEEP_CANCELLED,
     SLEEP_INTERRUPTED,
     SLEEP_SUPERSEDED,
@@ -1899,15 +1900,13 @@ class Agent:
             })
 
     async def resume_from_sleep(self, wake_at: float, reason: str = SLEEP_WOKE) -> None:
-        """Wake a suspended session (timer tick, POST /wake, or a stop-button
-        abort routed through TimerService).
+        """Wake a suspended session (timer tick or POST /wake).
 
         The TimerService has already dropped its pending entry and the
         session.json field. Deliver the deferred sleep results -- on time,
-        late, early, or aborted depending on the clock and the reason -- then
-        start the run. No user message is involved: the delivered results are
-        the new input, and the model sees the whole sleeping batch's results
-        together.
+        late, or early depending on the clock -- then start the run. No user
+        message is involved: the delivered results are the new input, and
+        the model sees the whole sleeping batch's results together.
         """
         # set_running must flip before the first await: between the
         # TimerService's is_running check and here, an incoming /message must
@@ -1920,6 +1919,18 @@ class Agent:
         await self._deliver_sleep_results(wake_at, reason)
         await self._send_stream_event({"type": "sleep_end", "session": self.name})
         self._task = asyncio.create_task(self.run())
+
+    async def interrupt_sleep(self, wake_at: float) -> None:
+        """Stop-button interrupt of a suspension (no run starts).
+
+        Deliver the deferred results -- marked aborted -- and end the
+        suspension. Like any stopped tool call, the interrupted result just
+        sits in history: the model sees it on the next run, and the session
+        goes idle waiting for user input.
+        """
+        self._sleeping_until = None
+        await self._deliver_sleep_results(wake_at, SLEEP_ABORTED)
+        await self._send_stream_event({"type": "sleep_end", "session": self.name})
 
     async def _run_subagents(self, args: dict) -> dict[str, Any]:
         """Spawn one or more subagents in parallel, gather their results."""

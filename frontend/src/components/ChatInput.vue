@@ -66,6 +66,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { useStore } from '../store'
+import { interruptSession } from '../api'
 import type { ImageAttachment } from '../api'
 import { readFileAsDataURL } from '../utils/images'
 
@@ -191,12 +192,14 @@ async function handleSend() {
 async function stop() {
   if (!state.currentSession) return
   // A subagent's stop is an interrupt: hard-stop its current work, then it
-  // runs one summary turn and exits. The main agent's stop is a plain
-  // cancel -- or, while the session is suspended via sleep_until, an abort
-  // of the sleep that wakes the model at once (the backend routes
-  // /interrupt by the session's state).
+  // runs one summary turn and exits. A suspended main session has no run to
+  // cancel -- stop means abort the sleep (interrupt endpoint; the deferred
+  // result is delivered as aborted and the session idles). Otherwise the
+  // main agent's stop is a plain cancel.
   if (state.isSubagent) {
     await interruptSubagent(state.currentSession)
+  } else if (sessionSleeping.value) {
+    await interruptSession(state.currentSession)
   } else {
     await stopAgent()
   }
