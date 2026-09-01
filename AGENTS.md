@@ -63,7 +63,7 @@ Agent 有两种运行模式：
 
 ## Timer（sleep_until 定时挂起）
 
-主 agent 的虚拟 `sleep_until` 工具把**当前会话**挂起到指定时间（相对时长 `+30m` 或绝对本地时间 `YYYY-MM-DD HH:MM` 两种格式，5 秒~365 天）：工具返回占位结果并落历史，本轮 run 结束（挂起零 token 消耗）；到点由 `TimerService` 追加 `⏰ 定时唤醒（<当前时间>）` 合成 user 消息并启动新 run，模型在**同一上下文**续跑。挂起状态持久化在 `session.json` 的 `sleep_until` 字段，重启后重载、停机期间错过的唤醒立即补触发。挂起中的会话侧边栏显示蓝点（`has_sleep`）、排序置顶，顶栏有挂起横幅 + 立即唤醒按钮；用户发消息（含运行中 steer）即提前唤醒。仅主 agent（build/plan 双模式一致暴露，缓存稳定）可用，subagent 与 CLI 不可用。取代已移除的定时 subagent（cron），旧规格存档于 `doc/product/archived/scheduled_subagent.md`。详见 `doc/product/timer.md`。
+主 agent 的虚拟 `sleep_until` 工具把**当前会话**挂起到指定时间（相对时长 `+30m` 或绝对本地时间 `YYYY-MM-DD HH:MM` 两种格式，5 秒~365 天）。模型视角它是一个执行得特别慢的普通工具：调用**不产生结果**，结果延迟到唤醒时构造（文案标注准点/提前/迟到/被打断，携带当前时间）并插入本批 ToolResults，与兄弟调用的结果一起在唤醒后的第一个请求里交给模型——无合成 user 消息。同一批内 `sleep_until` 总是最后执行（稳定重排），挂起在其他调用完成后开始。本轮 run 结束（挂起零 token 消耗），到点由 `TimerService` 触发唤醒 run，模型在**同一上下文**续跑。挂起状态持久化在 `session.json` 的 `sleep_until` 字段，重启后重载、停机期间错过的唤醒立即补触发；延迟结果靠扫描历史定位（无内存态依赖）。挂起中的会话侧边栏显示蓝点（`has_sleep`）、排序置顶，顶栏有挂起横幅 + 立即唤醒按钮；**停止按钮保持可按**（按下即中断挂起、当场唤醒），用户发消息（含运行中 steer）即打断挂起、当轮响应，是否再睡由模型自决。仅主 agent（build/plan 双模式一致暴露，缓存稳定）可用，subagent 与 CLI 不可用。取代已移除的定时 subagent（cron），旧规格存档于 `doc/product/archived/scheduled_subagent.md`。详见 `doc/product/timer.md`。
 
 ## VLM 图片输入
 

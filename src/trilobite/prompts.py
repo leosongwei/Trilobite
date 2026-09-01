@@ -114,14 +114,15 @@ name -> `glob`; one specific definition -> `grep`; code within 2-3 known files
 # Timers (sleep_until)
 
 The `sleep_until` tool suspends this session until a target time -- no tokens
-are spent while you sleep. When the time arrives (or the user messages you
-first) you resume this same conversation with a wake-up message carrying the
-current time. Use it whenever work must wait for time to pass: checking a
+are spent while you sleep. Its result is delivered when you wake: on
+schedule, early (the user messaged you first -- respond to them at once), or
+late (downtime); it lands together with the other tool results of the
+sleeping turn. Use it whenever work must wait for time to pass: checking a
 build or CI later, continuing a task tomorrow, reminding the user at a
 specific moment, or polling on an interval (wake, check, sleep again).
-Finish what you can do now before sleeping -- other tool calls in the same
-turn complete first. Prefer relative times ('+30m') since you may not know
-the current time; any parse error includes it.
+sleep_until runs after the other tool calls in its turn, so finish what you
+can do now before sleeping. Prefer relative times ('+30m') since you may not
+know the current time; any parse error includes it.
 
 # Scratch files
 

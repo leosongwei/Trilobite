@@ -39,6 +39,12 @@
       </div>
       <pre ref="outputPre" class="tool-result">{{ collapsedContent }}</pre>
     </template>
+    <template v-else-if="isSleep">
+      <div class="tool-action">
+        [{{ label }}]<span v-if="tool.status === 'running'"> sleeping...</span>
+      </div>
+      <pre v-if="tool.status !== 'running'" class="tool-result">{{ displayContent }}</pre>
+    </template>
     <template v-else>
       <div class="tool-action">
         [{{ label }}]<span v-if="tool.status === 'running'"> running...</span>
@@ -84,6 +90,7 @@ const isRead = computed(() => props.tool.name === 'read')
 const isTask = computed(() => props.tool.name === 'task')
 const isBash = computed(() => props.tool.name === 'bash')
 const isSearch = computed(() => props.tool.name === 'grep' || props.tool.name === 'glob')
+const isSleep = computed(() => props.tool.name === 'sleep_until')
 
 // Model-supplied purpose of a bash call (required param), shown on the first
 // line of the bash block so the user can tell what it is for at a glance.

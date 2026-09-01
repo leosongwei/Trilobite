@@ -46,7 +46,14 @@ from src.trilobite.permission import (
     PlanModePermission,
 )
 from src.trilobite.skills import discover_skills, format_skill_listing
-from src.trilobite.timer import parse_sleep_until, sleep_placeholder
+from src.trilobite.timer import (
+    SLEEP_CANCELLED,
+    SLEEP_INTERRUPTED,
+    SLEEP_SUPERSEDED,
+    SLEEP_WOKE,
+    parse_sleep_until,
+    sleep_result_text,
+)
 from src.trilobite.tools.bash import kill_process_group, truncate_output
 from src.trilobite.tool_call import execute_tool
 
@@ -468,9 +475,10 @@ class Agent:
         # The TimerService backing the sleep_until virtual tool (injected by
         # the server for primary agents; None for CLI/subagents -> the tool
         # returns an error). ``_sleeping_until`` holds the armed suspension's
-        # target (epoch seconds) from the sleep_until call until the next run
-        # starts: the run loop breaks on it, and any new run (timer wake-up or
-        # an early user message) clears it in its prologue.
+        # target (epoch seconds) from the sleep_until call until the session
+        # wakes: the run loop breaks on it, and the deferred tool result is
+        # delivered when the suspension ends (timer / /wake / user interrupt)
+        # -- see _deliver_sleep_results.
         self._timer_service = timer_service
         self._sleeping_until: float | None = None
 
@@ -1218,18 +1226,23 @@ class Agent:
         self._task = asyncio.current_task()
         self._loop = asyncio.get_running_loop()
 
-        # A run starting on a suspended session ends the suspension: either
-        # the timer fired (the pending entry is already dropped) or the user
-        # sent a message (an early wake-up). Cancel whatever suspension state
-        # is left and tell the frontend the blue dot can go. The in-memory
-        # flag alone is not enough after a restart: an instance restored from
-        # disk starts with no flag while the TimerService still holds the
-        # armed suspension, so consult the service too -- otherwise an early
-        # user message would leave the stale timer armed and the session
-        # would be woken twice.
+        # A run starting on a suspended session is a user interrupt: the
+        # user message (already appended by start()) wakes the session
+        # early. Deliver the deferred sleep results -- marked as
+        # interrupted, ahead of the user's message -- cancel the timer and
+        # clear the blue dot; whether to sleep again is the model's next
+        # decision. The in-memory flag alone is not enough after a restart:
+        # an instance restored from disk starts with no flag while the
+        # TimerService still holds the armed suspension, so consult the
+        # service too -- otherwise an early user message would leave the
+        # stale timer armed and the session would be woken twice.
         if self._sleeping_until is not None or (
             self._timer_service is not None and self._timer_service.is_sleeping(self.name)
         ):
+            wake_at = self._sleeping_until
+            if wake_at is None and self._timer_service is not None:
+                wake_at = self._timer_service.sleep_until(self.name)
+            await self._deliver_sleep_results(wake_at, SLEEP_INTERRUPTED)
             self._sleeping_until = None
             if self._timer_service is not None:
                 self._timer_service.cancel(self.name)
@@ -1273,15 +1286,17 @@ class Agent:
                 if not (self._pending_tool_results or has_unread_user or self._force_run):
                     break
                 # A sleep_until suspension ends this run here. The flags are
-                # intentionally NOT cleared: the pending tool results (with
-                # the sleep placeholder) stay armed so the wake-up run
-                # resumes the loop exactly where this one stopped, and the
-                # wake-up message arrives as the new unread user input. A
-                # steering message that landed meanwhile is an early wake-up:
-                # it clears the suspension and the run continues, so the
-                # user gets their response now instead of at the target time.
+                # intentionally NOT cleared: the deferred results stay
+                # undelivered so the wake-up run resumes the loop exactly
+                # where this one stopped. A steering message that landed
+                # meanwhile (sleep runs last, so this window is the tail of
+                # the batch) means the suspension never took effect: deliver
+                # the results as cancelled and keep answering in this run --
+                # the user gets their response now instead of at the target
+                # time.
                 if self._sleeping_until is not None:
                     if has_unread_user:
+                        await self._deliver_sleep_results(self._sleeping_until, SLEEP_CANCELLED)
                         self._sleeping_until = None
                         if self._timer_service is not None:
                             self._timer_service.cancel(self.name)
@@ -1370,7 +1385,11 @@ class Agent:
                     current_model_persisted = True
                     self._pending_tool_results = True
 
-                    for tc in model.tool_calls:
+                    # sleep_until suspends the session, so it always runs
+                    # after every sibling call of the batch (stable sort):
+                    # "other calls run to completion before the suspension
+                    # starts" holds by construction.
+                    for tc in sorted(model.tool_calls, key=lambda c: c.name == "sleep_until"):
                         args = {}
                         try:
                             args = json.loads(tc.arguments)
@@ -1460,6 +1479,16 @@ class Agent:
                                 if "image" in tool_result and self.enable_vl:
                                     await self._append_image_user_message(tool_result["image"])
                             # else: keep original error result
+
+                        if tool_result.get("sleeping"):
+                            # Suspension armed: no result yet. The deferred
+                            # result is inserted into this batch's ToolResults
+                            # entry when the session wakes (timer, /wake, or a
+                            # user interrupt), so the model sees the whole
+                            # batch's results together. No tool_result event
+                            # either -- the entry stays pending, which is the
+                            # frontend's "suspended" visual.
+                            continue
 
                         result_event: dict[str, Any] = {"type": "tool_result", "tool": tool_name, "result": tool_result["result"], "tool_call_id": tc.id}
                         if "diff" in tool_result:
@@ -1570,6 +1599,16 @@ class Agent:
             # Hard cancel: salvage partial output from the in-flight turn.
             self._final_state = "error"
             self._final_result = "cancelled"
+            # A cancel during the sleeping turn (its batch still executing)
+            # must also drop the armed suspension: _patch_dangling below
+            # fills "[interrupted]" for the unanswered sleep call, and a
+            # stale timer would otherwise wake a session whose history says
+            # the sleep was interrupted.
+            if self._sleeping_until is not None:
+                self._sleeping_until = None
+                if self._timer_service is not None:
+                    self._timer_service.cancel(self.name)
+                await self._send_stream_event({"type": "sleep_end", "session": self.name})
             # Propagate cancellation to running subagents (hard stop, no summary).
             for c in list(self._children):
                 if c._task and not c._task.done():
@@ -1795,9 +1834,11 @@ class Agent:
 
         Registers the suspension with the TimerService (persisted to the
         session's session.json) and arms ``_sleeping_until`` -- the run loop
-        breaks on it once this turn's tool calls are done. The returned
-        placeholder is recorded as the tool result, so on wake-up the model
-        sees what it asked for (and when) next to the wake-up message.
+        breaks on it once this turn's tool calls are done. No tool result is
+        produced here: it is deferred until the session wakes (timer, /wake,
+        or a user interrupt) and inserted into the batch's ToolResults then
+        (``_deliver_sleep_results``), so from the model's view sleep_until is
+        just an ordinary tool whose result takes until the wake-up to arrive.
         """
         if self._timer_service is None:
             return {"result": "Error: sleep_until is only available for server sessions."}
@@ -1811,7 +1852,74 @@ class Agent:
             "session": self.name,
             "until": wake_at,
         })
-        return {"result": sleep_placeholder(wake_at)}
+        # Sentinel for the tool loop: skip the result event and the
+        # ToolResults insert for this call.
+        return {"sleeping": True}
+
+    async def _deliver_sleep_results(self, wake_at: float | None, reason: str) -> None:
+        """Deliver the deferred sleep_until results (insert + stream events).
+
+        The sleeping batch's sibling results are already in history; only the
+        sleep_until call(s) lack theirs. Find them on the last model message
+        carrying unanswered sleep calls -- scanning history instead of
+        keeping in-memory ids also covers an agent restored from disk -- and
+        extend the existing ToolResults entry, so the "ModelMessage +
+        ToolResults" shape and the results-before-users invariant stay
+        intact. A second sleep_until in the same batch never took effect
+        (the last one re-registered the target) and is marked superseded.
+        """
+        raw = self.history.raw
+        model = None
+        for m in raw:
+            if (
+                isinstance(m, ModelMessage)
+                and m.tool_calls
+                and any(tc.name == "sleep_until" for tc in m.tool_calls)
+            ):
+                model = m
+        if model is None:
+            return
+        entry = self.history.tool_results_of(model)
+        answered = {tr.tool_call_id for tr in entry.results} if entry else set()
+        pending = [
+            tc for tc in model.tool_calls
+            if tc.name == "sleep_until" and tc.id and tc.id not in answered
+        ]
+        if not pending:
+            return
+        texts = [SLEEP_SUPERSEDED] * (len(pending) - 1) + [reason]
+        for tc, text_reason in zip(pending, texts):
+            content = sleep_result_text(wake_at, text_reason)
+            self.history.insert_result(ToolResult(tool_call_id=tc.id, content=content), after=model)
+            await self._send_stream_event({
+                "type": "tool_result",
+                "tool": "sleep_until",
+                "result": content,
+                "tool_call_id": tc.id,
+            })
+
+    async def resume_from_sleep(self, wake_at: float, reason: str = SLEEP_WOKE) -> None:
+        """Wake a suspended session (timer tick, POST /wake, or a stop-button
+        abort routed through TimerService).
+
+        The TimerService has already dropped its pending entry and the
+        session.json field. Deliver the deferred sleep results -- on time,
+        late, early, or aborted depending on the clock and the reason -- then
+        start the run. No user message is involved: the delivered results are
+        the new input, and the model sees the whole sleeping batch's results
+        together.
+        """
+        # set_running must flip before the first await: between the
+        # TimerService's is_running check and here, an incoming /message must
+        # see the session as running (and ride as a steer) instead of
+        # starting a second run -- the same race-free shape start() relies
+        # on. A steer landing before the run task starts is picked up by the
+        # run loop's continuation check.
+        self._broker.set_running(True)
+        self._sleeping_until = None
+        await self._deliver_sleep_results(wake_at, reason)
+        await self._send_stream_event({"type": "sleep_end", "session": self.name})
+        self._task = asyncio.create_task(self.run())
 
     async def _run_subagents(self, args: dict) -> dict[str, Any]:
         """Spawn one or more subagents in parallel, gather their results."""

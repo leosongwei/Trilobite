@@ -486,9 +486,11 @@ class RevertRequest(BaseModel):
 @app.post("/api/sessions/{name}/revert")
 async def revert_message(name: str, req: RevertRequest):
     agent = _get_or_create_agent(name)
-    # Rolling back history also drops any armed suspension: the wake-up
-    # message would otherwise land in a context that no longer matches what
-    # the model asked to sleep on.
+    # Rolling back history also drops any armed suspension: the deferred
+    # wake result would otherwise land in a context that no longer matches
+    # what the model asked to sleep on. (The sleeping turn is the last
+    # turn, so any revert point truncates it away entirely.)
+    agent._sleeping_until = None
     if timer_service is not None and timer_service.is_sleeping(name):
         timer_service.cancel(name)
     new_images: list[Image] = []
@@ -574,10 +576,20 @@ async def wake_session(name: str):
 
 @app.post("/api/sessions/{name}/interrupt")
 async def interrupt_session(name: str):
-    """Interrupt a running subagent: it stops work and produces a summary."""
+    """Interrupt a running subagent: it stops work and produces a summary.
+
+    A session suspended via sleep_until has no run to interrupt -- the stop
+    button aborts the sleep instead: the deferred results are delivered as
+    aborted and the wake-up run starts now. A run that is still executing
+    the sleeping turn's batch takes the normal interrupt path (its Cancelled
+    handler drops the armed suspension too).
+    """
     agent = agents.get(name)
     if agent and agent.is_running():
         agent.interrupt()
+        return {"status": "ok"}
+    if timer_service is not None and timer_service.is_sleeping(name):
+        await timer_service.abort(name)
     return {"status": "ok"}
 
 
