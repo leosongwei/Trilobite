@@ -94,11 +94,11 @@ per-session 事件总线，维护：
 
 | 全局状态 | 图标 |
 |---|---|
-| 任一 session（含 subagent）运行中 | 绿点动画 GIF（闪烁节奏对齐侧边栏 pulse） |
+| 任一 session（含 subagent）运行中 | 绿点静态 PNG（#3fb950） |
 | 无运行中、任一 session 处于 sleep_until 挂起 | 蓝点静态 PNG |
 | 其余（空闲） | 灰点静态 PNG |
 
-图标资产在 `frontend/public/favicon-*.{png,gif}`，随构建产物分发；`utils/favicon.ts` 监听 sessions 列表切换 `<link rel="icon">` 的 href（href 未变化时不重写，避免 gif 动画重启）。配合这一用途，后台标签页的 session 列表轮询降频为 30s（前台 3s），而不是完全暂停——favicon 的意义恰在于标签页不可见时仍能反映运行状态。
+图标资产在 `frontend/public/favicon-*.png`，随构建产物分发；`utils/favicon.ts` 监听 sessions 列表切换 `<link rel="icon">` 的 href（href 未变化时不重写，避免无谓请求）。配合这一用途，后台标签页的 session 列表轮询降频为 30s（前台 3s），而不是完全暂停——favicon 的意义恰在于标签页不可见时仍能反映运行状态。
 
 
 ## 前端 (`frontend/src/store.ts`)
