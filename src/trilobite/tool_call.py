@@ -103,12 +103,18 @@ SLEEP_UNTIL_DEF: dict = {
         "description": (
             "Suspend this session until a target time, then resume this "
             "conversation automatically. No tokens are spent while suspended. "
-            "Use it when future work depends on time passing: waiting for a "
+            "The result of this call is delivered when the session wakes -- "
+            "on schedule, early (a user message or an explicit wake-up), or "
+            "late (downtime) -- together with the other tool results of the "
+            "same turn. sleep_until always executes after the other calls in "
+            "its turn; the suspension starts once they finish. A user message "
+            "sent during the suspension interrupts it: the result (marked as "
+            "interrupted) arrives right before the user's message, and you "
+            "respond at once -- then decide whether to sleep again. Use it "
+            "when future work depends on time passing: waiting for a "
             "build/CI to finish, resuming a task later or tomorrow, reminding "
             "the user at a specific moment, or polling on an interval (wake, "
-            "check, sleep again). Other tool calls in the same turn run to "
-            "completion before the suspension starts, so finish everything "
-            "you can do now before sleeping."
+            "check, sleep again)."
         ),
         "parameters": {
             "type": "object",

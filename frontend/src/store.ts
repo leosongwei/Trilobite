@@ -91,6 +91,20 @@ function getCurrentTool(): ToolDisplay | null {
   return turn.tools[currentToolIdx] ?? null
 }
 
+// A deferred sleep_until result arrives between runs (timer wake-up or a
+// user interrupt), after the sleeping turn already closed -- locate its
+// pending entry by tool_call_id, scanning newest first.
+function findPendingToolByCallId(callId?: string): ToolDisplay | null {
+  if (!callId) return null
+  for (let i = state.chatItems.length - 1; i >= 0; i--) {
+    const item = state.chatItems[i]
+    if (item.kind !== 'turn') continue
+    const tool = item.tools.find((t) => t.toolCallId === callId && t.status === 'running')
+    if (tool) return tool
+  }
+  return null
+}
+
 function parseSubagentsFromResult(result: string): SubagentChild[] {
   // Recover the subagent tree from a persisted <task_result> on reconnect.
   const children: SubagentChild[] = []
@@ -315,11 +329,12 @@ function handleSSEEvent(event: SSEEvent) {
       if (event.tool && FILE_CHANGING_TOOLS.has(event.tool)) {
         state.fsRefreshTick++
       }
+      // A deferred sleep_until result lands between runs (after the sleeping
+      // turn closed); fall back to the tool_call_id scan for those.
       const turn = getCurrentTurn()
-      if (!turn) break
-      const running = turn.tools.find(
-        (t) => t.name === event.tool && t.status === 'running',
-      )
+      const running =
+        turn?.tools.find((t) => t.name === event.tool && t.status === 'running') ??
+        findPendingToolByCallId(event.tool_call_id)
       if (running) {
         running.status = 'done'
         running.result = event.result
@@ -534,28 +549,43 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
             status: 'done',
             args: tc.function.arguments,
             startArgs,
+            toolCallId: tc.id,
           })
         }
 
         i++
-        let toolIdx = 0
+        const results: HistoryMessage[] = []
         while (i < history.length && history[i].role === 'tool') {
-          if (toolIdx < turn.tools.length) {
-            const tw = turn.tools[toolIdx]
-            tw.result = history[i].content || ''
-            if ((history[i] as any).diff) {
-              tw.diff = (history[i] as any).diff
-            } else if ((history[i] as any).diff_prev) {
-              tw.diffPrev = (history[i] as any).diff_prev
-              tw.diffCurrent = (history[i] as any).diff_current
-            }
-            if (tw.name === 'task' && tw.result) {
-              tw.subagents = parseSubagentsFromResult(tw.result)
-            }
-          }
-          toolIdx++
+          results.push(history[i])
           i++
         }
+        // Results pair with calls by tool_call_id: execution may reorder
+        // calls within a batch (sleep_until always runs last), so result
+        // positions need not match the tool_calls array. Index order is the
+        // fallback for legacy entries recorded without ids.
+        const byId = new Map(
+          results.filter((r) => r.tool_call_id).map((r) => [r.tool_call_id as string, r]),
+        )
+        turn.tools.forEach((tw, k) => {
+          const r = (tw.toolCallId ? byId.get(tw.toolCallId) : undefined) ?? results[k]
+          if (!r) {
+            // A call whose result never arrived (a suspended sleep_until, or
+            // a crash leftover) stays pending, matching the live view's
+            // running state instead of a result-less done entry.
+            tw.status = 'running'
+            return
+          }
+          tw.result = r.content || ''
+          if ((r as any).diff) {
+            tw.diff = (r as any).diff
+          } else if ((r as any).diff_prev) {
+            tw.diffPrev = (r as any).diff_prev
+            tw.diffCurrent = (r as any).diff_current
+          }
+          if (tw.name === 'task' && tw.result) {
+            tw.subagents = parseSubagentsFromResult(tw.result)
+          }
+        })
 
         items.push(turn)
         continue

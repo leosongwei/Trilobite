@@ -971,7 +971,15 @@ button[title="Stop"] {
   cursor: pointer;
   font-weight: 600;
 }
-button[title="Stop"]:disabled { background: var(--border-strong); opacity: 0.4; }
+/* Plain idle (no run, no suspension): a solid gray, clearly distinct from
+   the armed red -- there is nothing to stop. A suspended session keeps the
+   button armed: pressing it aborts the sleep and wakes the model at once. */
+button[title="Stop"]:disabled {
+  background: var(--border-strong);
+  color: var(--text-muted);
+  opacity: 1;
+  cursor: not-allowed;
+}
 button[title="Stop"]:not(:disabled):hover { background: var(--danger-hover); }
 
 /* ── Token bar ── */

@@ -58,7 +58,7 @@
         <span class="ms ms-attach-file"></span>
       </button>
       <button @click="handleSend">Send</button>
-      <button @click="stop" :disabled="!state.isStreaming" title="Stop"><span class="ms ms-stop ms-fill"></span></button>
+      <button @click="stop" :disabled="!state.isStreaming && !sessionSleeping" title="Stop"><span class="ms ms-stop ms-fill"></span></button>
     </template>
   </div>
 </template>
@@ -66,6 +66,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { useStore } from '../store'
+import { interruptSession } from '../api'
 import type { ImageAttachment } from '../api'
 import { readFileAsDataURL } from '../utils/images'
 
@@ -98,6 +99,14 @@ const filteredCommands = computed(() => {
 })
 
 const showCommands = computed(() => filteredCommands.value.length > 0)
+
+// A session suspended via sleep_until has no run, but its stop button stays
+// armed (red): pressing it aborts the sleep and wakes the model on the spot
+// (POST /interrupt routes to the abort path). Only a plain idle session
+// grays the button out.
+const sessionSleeping = computed(
+  () => !!state.sessions.find((s) => s.id === state.currentSession)?.has_sleep,
+)
 
 function pickCommand(cmd: string) {
   message.value = cmd + ' '
@@ -183,9 +192,14 @@ async function handleSend() {
 async function stop() {
   if (!state.currentSession) return
   // A subagent's stop is an interrupt: hard-stop its current work, then it
-  // runs one summary turn and exits. The main agent's stop is a plain cancel.
+  // runs one summary turn and exits. A suspended main session has no run to
+  // cancel -- stop means abort the sleep (interrupt endpoint; the deferred
+  // result is delivered as aborted and the session idles). Otherwise the
+  // main agent's stop is a plain cancel.
   if (state.isSubagent) {
     await interruptSubagent(state.currentSession)
+  } else if (sessionSleeping.value) {
+    await interruptSession(state.currentSession)
   } else {
     await stopAgent()
   }

@@ -8,16 +8,24 @@ sits idle (the sidebar shows a blue dot).
 
 Design notes:
 
-- Waking re-enters the SAME conversation: the agent appends a synthetic
-  ``⏰ 定时唤醒（<now>）`` user message and starts a normal run -- the model
-  sees the sleep placeholder tool result plus the wake-up message and
-  continues where it left off.
-- The wake-up message carries the real current time, so a wake-up that
-  fires late (e.g. the server was down at the target time) still tells the
-  model the truth. Wake times that fell during downtime stay armed and
-  fire right after startup.
-- A session whose agent is still running when its wake time arrives (long
-  sibling tools from the sleeping turn) keeps its suspension armed; the
+- From the model's view ``sleep_until`` is an ordinary tool whose result is
+  simply slow: no result is produced when the call executes. When the
+  session wakes, the deferred result (saying on schedule / early / late,
+  with the real current time) is inserted into the sleeping batch's
+  ToolResults entry and a normal run starts -- no synthetic user message is
+  involved, and the model sees the whole sleeping batch's results together.
+- A user message during the suspension interrupts it: the deferred result
+  (marked as interrupted) is delivered right before the user's message, the
+  suspension is gone, and whether to sleep again is the model's own next
+  decision.
+- The stop button cancels the suspension without a run: the deferred result
+  (marked aborted) sits in history like any stopped tool call's, and the
+  session idles waiting for user input.
+- Wake times that fell during downtime stay armed and fire right after
+  startup; the deferred result carries the real current time, so a late
+  wake still tells the model the truth.
+- A session whose agent is still running when its wake time arrives (the
+  sleeping turn's batch is still finishing) keeps its suspension armed; the
   tick retries every second until the run ends.
 - The tick is a wall-clock comparison against ``time.time()``, so clock
   changes behave sensibly (target moved into the past -> fires now; moved
@@ -41,8 +49,13 @@ _log = logging.getLogger(__name__)
 #: Field name inside a session's session.json while it is suspended.
 SLEEP_FIELD = "sleep_until"
 
-#: Prefix of the synthetic user message that wakes a session.
-WAKE_PREFIX = "⏰ 定时唤醒"
+#: Why a suspension ended -- selects the deferred result's wording (see
+#: ``sleep_result_text``).
+SLEEP_WOKE = "wake"                 # timer tick or POST /wake
+SLEEP_INTERRUPTED = "user_message"  # a user message interrupted the suspension
+SLEEP_CANCELLED = "cancelled"       # a user message arrived before it took effect
+SLEEP_ABORTED = "aborted"           # stop-button interrupt of the suspension
+SLEEP_SUPERSEDED = "superseded"     # a later sleep_until in the same batch won
 
 #: A suspension must be at least this far in the future (shorter waits are
 #: rejected as pointless -- the model can just continue working).
@@ -114,7 +127,7 @@ def parse_sleep_until(until: str) -> tuple[float, str | None]:
 
 
 def format_delay(seconds: float) -> str:
-    """Human-friendly duration for the sleep placeholder ('8h', '45m')."""
+    """Human-friendly duration ('8h', '45m') for lateness notes."""
     if seconds >= 86400:
         return f"{seconds / 86400:.1f}d"
     if seconds >= 3600:
@@ -124,38 +137,56 @@ def format_delay(seconds: float) -> str:
     return f"{seconds:.0f}s"
 
 
-def wake_message(wake_at: float | None = None) -> str:
-    """The synthetic user message that wakes a suspended session.
+def sleep_result_text(wake_at: float | None, reason: str) -> str:
+    """The deferred sleep_until tool result, built when the session wakes.
 
-    Carries the current local time. A wake-up that is meaningfully late
-    (server downtime or long sibling tools delayed it past the grace
-    window) also names the original target and the lateness, so the model
-    can immediately judge whether the suspended task is still relevant.
+    ``wake_at`` is the armed target (epoch seconds). For ``SLEEP_WOKE`` the
+    clock decides the wording: on time, early (manual /wake), or late --
+    past ``LATE_GRACE`` either way is called out explicitly so the model can
+    judge whether the suspended task is still relevant. Every wording carries
+    the real current time.
     """
     now = datetime.now()
-    text = f"{WAKE_PREFIX}（{now.strftime('%Y-%m-%d %H:%M:%S')}）"
-    if wake_at is not None:
-        late = now.timestamp() - wake_at
-        if late > LATE_GRACE:
-            target = datetime.fromtimestamp(wake_at).strftime("%Y-%m-%d %H:%M")
-            text = (
-                f"{WAKE_PREFIX}（{now.strftime('%Y-%m-%d %H:%M:%S')}，"
-                f"原定 {target}，迟到了 {format_delay(late)}）"
-            )
-    return text
-
-
-def sleep_placeholder(wake_at: float) -> str:
-    """Result text recorded for the sleep_until tool call."""
-    until = datetime.fromtimestamp(wake_at).strftime("%Y-%m-%d %H:%M")
-    delay = format_delay(wake_at - time.time())
-    return (
-        f"Sleeping until {until} ({delay} from now). This run is suspended -- "
-        f"no tokens are spent while you sleep. The session wakes automatically "
-        f"at that time with a wake-up message containing the current time, and "
-        f"you resume this conversation where you left off. If the user sends a "
-        f"message in the meantime, you resume early."
+    now_s = now.strftime("%Y-%m-%d %H:%M:%S")
+    if reason == SLEEP_CANCELLED:
+        return (
+            "sleep_until cancelled before the suspension started: a user "
+            f"message arrived at {now_s}. Respond to the user now; sleep "
+            "again afterwards if the wait is still needed."
+        )
+    if reason == SLEEP_SUPERSEDED:
+        return (
+            "Superseded by a later sleep_until call in the same turn; "
+            "this call never took effect."
+        )
+    target = (
+        datetime.fromtimestamp(wake_at).strftime("%Y-%m-%d %H:%M")
+        if wake_at is not None
+        else "unknown"
     )
+    if reason == SLEEP_INTERRUPTED:
+        return (
+            f"Interrupted by a user message at {now_s} (target was {target}). "
+            "The user's message follows this result -- respond to it now and "
+            "decide afterwards whether to sleep again."
+        )
+    if reason == SLEEP_ABORTED:
+        return (
+            f"sleep_until interrupted by the user at {now_s} (target was "
+            f"{target}). The suspension is over -- the session is idle; wait "
+            "for the user's next message."
+        )
+    # SLEEP_WOKE: on time, early (manual wake), or late (downtime).
+    late = now.timestamp() - wake_at if wake_at is not None else 0.0
+    if late > LATE_GRACE:
+        return (
+            f"Woke at {now_s} -- {format_delay(late)} late (the server was "
+            f"down or busy); target was {target}. Judge whether the "
+            "suspended task is still relevant."
+        )
+    if late < -LATE_GRACE:
+        return f"Woken early by the user at {now_s}; target was {target}."
+    return f"Woke on schedule at {now_s} (target {target})."
 
 
 class TimerService:
@@ -257,8 +288,27 @@ class TimerService:
 
     async def wake(self, name: str) -> bool:
         """Wake a suspended session now (REST endpoint). False when it is
-        not suspended (or its agent is mid-run -- send a message instead)."""
+        not suspended (or its agent is mid-run -- the wake-up is armed for
+        when the run ends)."""
         return await self._do_wake(name)
+
+    async def abort(self, name: str) -> bool:
+        """Stop-button interrupt of a suspension: deliver the deferred
+        results as aborted and stop -- no wake-up run starts. Like any
+        stopped tool call, the interrupted result sits in history (the model
+        sees it on the next run) and the session idles, waiting for user
+        input. False when the session is not suspended."""
+        wake_at = self._pending.pop(name, None)
+        if wake_at is None:
+            return False
+        self._clear_field(name)
+        try:
+            agent = self._get_agent(name)
+        except Exception:
+            # The session was deleted behind our back (the endpoint's 404).
+            return True
+        await agent.interrupt_sleep(wake_at)
+        return True
 
     # ── tick loop ──────────────────────────────────────────────────────────
 
@@ -287,11 +337,11 @@ class TimerService:
                 _log.exception("timer tick error")
             await asyncio.sleep(1)
 
-    async def _do_wake(self, name: str) -> bool:
+    async def _do_wake(self, name: str, reason: str = SLEEP_WOKE) -> bool:
         """Clear the suspension and start the wake-up run.
 
         Returns False only when the session is not suspended. When the
-        agent is mid-run (long sibling tools from the sleeping turn) the
+        agent is mid-run (the sleeping turn's batch is still finishing) the
         suspension is re-armed -- file field included, so a crash in between
         keeps it recoverable -- and the tick retries once the run ends;
         the wake-up itself is never dropped.
@@ -308,14 +358,12 @@ class TimerService:
             self._pending[name] = wake_at
             return True
         self._clear_field(name)
-        # The suspension is over regardless of how the wake-up run ends;
-        # tell the frontend now so the blue dot clears even when the agent
-        # was restored from disk (no in-memory flag to key the run
-        # prologue's sleep_end on).
-        await agent._send_stream_event({"type": "sleep_end", "session": name})
-        # start()'s synchronous prefix (append user message + set_running)
-        # executes before its first await, so no /message request can
-        # interleave between the is_running check above and the running
-        # flag flipping -- the same race-free shape /message relies on.
-        await agent.start(wake_message(wake_at))
+        # resume_from_sleep delivers the deferred sleep results (on time,
+        # late, early, or aborted -- the reason decides), sends sleep_end so
+        # the blue dot clears even when the agent was restored from disk,
+        # and starts the wake-up run. Its synchronous prefix executes before
+        # its first await, so no /message request can interleave between the
+        # is_running check above and the running flag flipping -- the same
+        # race-free shape /message relies on.
+        await agent.resume_from_sleep(wake_at, reason)
         return True
