@@ -69,7 +69,9 @@ MAX_DELAY = timedelta(days=365)
 #: anything past this window means the wake-up was genuinely delayed.
 LATE_GRACE = 60.0
 
-_REL_RE = re.compile(r"^\+(\d+)([smhd])$")
+#: Relative duration, segments in strictly descending unit order (d>h>m>s),
+#: each unit at most once: ``+30m``, ``+4h50m``, ``+1d2h30m``.
+_REL_RE = re.compile(r"^\+(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 _ABS_FORMAT = "%Y-%m-%d %H:%M"
 
 
@@ -87,7 +89,9 @@ def parse_sleep_until(until: str) -> tuple[float, str | None]:
     """Parse the ``sleep_until`` argument into (wake_at, error).
 
     Exactly two formats are accepted (local time): a relative duration
-    ``+[n][s|m|h|d]`` and an absolute ``YYYY-MM-DD HH:MM``. Anything else,
+    ``+<n><unit>[<n><unit>...]`` (one or more ``d``/``h``/``m``/``s``
+    segments in descending unit order, each at most once, e.g. ``+30m``
+    or ``+4h50m``) and an absolute ``YYYY-MM-DD HH:MM``. Anything else,
     or a target outside [MIN_DELAY, MAX_DELAY], yields an error string.
     """
     text = (until or "").strip()
@@ -96,10 +100,9 @@ def parse_sleep_until(until: str) -> tuple[float, str | None]:
         return 0.0, _err("missing 'until' (a '+30m' duration or a 'YYYY-MM-DD HH:MM' local time)")
 
     m = _REL_RE.match(text)
-    if m:
-        n = int(m.group(1))
-        seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
-        wake = now + timedelta(seconds=n * seconds)
+    if m and any(m.groups()):
+        d, h, mi, s = (int(g or 0) for g in m.groups())
+        wake = now + timedelta(seconds=d * 86400 + h * 3600 + mi * 60 + s)
     else:
         try:
             wake = datetime.strptime(text, _ABS_FORMAT)
@@ -108,8 +111,8 @@ def parse_sleep_until(until: str) -> tuple[float, str | None]:
     if wake is None:
         return 0.0, _err(
             f"unrecognized time '{text}'. Use a relative duration like "
-            f"'+30m' / '+2h' / '+1d' / '+90s', or an absolute local time "
-            f"'YYYY-MM-DD HH:MM'"
+            f"'+30m' / '+2h' / '+4h50m' / '+1d2h30m' / '+90s' (largest "
+            f"unit first), or an absolute local time 'YYYY-MM-DD HH:MM'"
         )
 
     delay = (wake - now).total_seconds()
