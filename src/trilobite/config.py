@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "log_level": "WARNING",
     "compaction_trigger_ratio": "0.7",
     "enable_vl": False,
+    "low_quality_images": True,
     "skill_dirs": [],
     "allowed_dirs": [],
     "bash_sandbox": "auto",

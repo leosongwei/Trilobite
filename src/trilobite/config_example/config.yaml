@@ -7,6 +7,9 @@ max_tokens: 65536
 log_level: WARNING
 compaction_trigger_ratio: 0.7
 enable_vl: false
+# 低画质模式：保存到会话的图片统一重编码为 quality 92 的 JPEG（转码后体积
+# 反而增大或无法转码时保留原图），原文件另存 <hash>.orig<ext> 作为磁盘备份。
+low_quality_images: true
 # 预定义模型列表：每个模型是一份独立的 API 配置（模型名、地址、密钥、VLM、
 # 上下文/输出上限、压缩阈值）。会话可随时切换主模型，切换后下一次发送生效。
 # 字段缺省时：enable_vl=false，max_context=400k，max_tokens=64k，
