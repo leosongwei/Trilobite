@@ -69,7 +69,8 @@ MAX_DELAY = timedelta(days=365)
 #: anything past this window means the wake-up was genuinely delayed.
 LATE_GRACE = 60.0
 
-_REL_RE = re.compile(r"^\+(\d+)([smhd])$")
+_REL_RE = re.compile(r"^\+((?:\d+[smhd])+)$")
+_REL_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 _ABS_FORMAT = "%Y-%m-%d %H:%M"
 
 
@@ -87,8 +88,10 @@ def parse_sleep_until(until: str) -> tuple[float, str | None]:
     """Parse the ``sleep_until`` argument into (wake_at, error).
 
     Exactly two formats are accepted (local time): a relative duration
-    ``+[n][s|m|h|d]`` and an absolute ``YYYY-MM-DD HH:MM``. Anything else,
-    or a target outside [MIN_DELAY, MAX_DELAY], yields an error string.
+    ``+<n><unit>[<n><unit>...]`` (one or more ``s``/``m``/``h``/``d``
+    segments, e.g. ``+30m`` or ``+4h50m``) and an absolute
+    ``YYYY-MM-DD HH:MM``. Anything else, or a target outside
+    [MIN_DELAY, MAX_DELAY], yields an error string.
     """
     text = (until or "").strip()
     now = datetime.now()
@@ -97,9 +100,10 @@ def parse_sleep_until(until: str) -> tuple[float, str | None]:
 
     m = _REL_RE.match(text)
     if m:
-        n = int(m.group(1))
-        seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
-        wake = now + timedelta(seconds=n * seconds)
+        seconds = sum(
+            int(n) * _REL_UNITS[u] for n, u in re.findall(r"(\d+)([smhd])", m.group(1))
+        )
+        wake = now + timedelta(seconds=seconds)
     else:
         try:
             wake = datetime.strptime(text, _ABS_FORMAT)
@@ -108,8 +112,8 @@ def parse_sleep_until(until: str) -> tuple[float, str | None]:
     if wake is None:
         return 0.0, _err(
             f"unrecognized time '{text}'. Use a relative duration like "
-            f"'+30m' / '+2h' / '+1d' / '+90s', or an absolute local time "
-            f"'YYYY-MM-DD HH:MM'"
+            f"'+30m' / '+2h' / '+4h50m' / '+1d2h30m' / '+90s', or an "
+            f"absolute local time 'YYYY-MM-DD HH:MM'"
         )
 
     delay = (wake - now).total_seconds()
