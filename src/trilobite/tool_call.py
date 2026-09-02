@@ -124,7 +124,8 @@ SLEEP_UNTIL_DEF: dict = {
                     "description": (
                         "Target time, local timezone. Either a relative "
                         "duration '+30m' / '+2h' / '+4h50m' / '+1d2h30m' / "
-                        "'+90s' (one or more s/m/h/d segments) -- "
+                        "'+90s' (one or more segments, largest unit first, "
+                        "each unit at most once) -- "
                         "preferred, since you may not know the current "
                         "time -- or an absolute local time "
                         "'YYYY-MM-DD HH:MM'. Must be 5s to 365d from now; "
