@@ -22,10 +22,12 @@ _BWRAP_BASE_ARGS = (
 
 #: GPU device pass-through: compute stacks (CUDA/NVIDIA, ROCm/AMD) talk to the
 #: hardware through device nodes that the fresh devtmpfs from ``--dev /dev``
-#: does not contain. Each entry is bound with ``--dev-bind-try``, which
-#: silently skips missing nodes, so the list is safe on machines without
-#: GPUs. The binds must come AFTER ``--dev`` -- a fresh devtmpfs is mounted
-#: there and would shadow earlier device binds.
+#: does not contain. Existing entries are bound with ``--dev-bind-try`` --
+#: missing ones are filtered out by us first so the bwrap command line (as
+#: seen in ``ps``) only carries devices the machine actually has;
+#: ``--dev-bind-try`` remains as a safety net against the check going stale.
+#: The binds must come AFTER ``--dev`` -- a fresh devtmpfs is mounted there
+#: and would shadow earlier device binds.
 #: See https://github.com/anthropics/claude-code/issues/13108.
 _GPU_DEVICE_PATHS = (
     "/dev/dri",
@@ -101,7 +103,8 @@ def _build_bwrap_argv(
     """
     argv = ["bwrap", *_BWRAP_BASE_ARGS]
     for dev in _GPU_DEVICE_PATHS:
-        argv += ["--dev-bind-try", dev, dev]
+        if os.path.exists(dev):
+            argv += ["--dev-bind-try", dev, dev]
     argv += ["--bind", str(session_tmp), "/tmp"]
     seen: set[str] = set()
     for directory in writable_dirs:
