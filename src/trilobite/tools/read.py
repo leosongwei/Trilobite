@@ -74,6 +74,7 @@ class ReadTool(Tool):
         session_dir: Path,
         additional_dirs: list[Path] | None = None,
         session_tmp: Path | None = None,
+        config: dict | None = None,
         filename: str = "",
         limit_lines: int = 50,
         start_line: int = 0,
@@ -99,12 +100,14 @@ class ReadTool(Tool):
             except Exception as e:
                 return f"Error reading image: {e}"
             date = format_mtime(filepath.stat().st_mtime)
+            low_quality = bool((config or {}).get("low_quality_images", True))
             image: Image = save_image(
                 session_dir,
                 data,
                 mime,
                 original_name=filepath.name,
                 date=date,
+                low_quality=low_quality,
             )
             marker = (
                 f'<image filename="{image.filename}" '

@@ -15,6 +15,16 @@ models:
 
 开启后，前端发送区会出现"📎"图片按钮。后端不会验证模型是否支持视觉，需要用户自行把 `enable_vl` 配在视觉模型上。图片按钮跟随会话当前模型实际配置的模态：前端从会话的 `model` × 模型定义列表实时派生开关状态，任何改变当前会话模型的操作（本页应用或另一窗口的模型切换经轮询同步）都会立即更新按钮可见性——切到 `enable_vl: false` 的模型后图片按钮消失，切回支持视觉的模型后重新出现。新图片仅在开启时保存；关闭期间历史中已有的图片元数据和文件保留（详见下方后端行为）。
 
+## 低画质模式
+
+`config.yaml` 的 `low_quality_images`（默认 `true`）开启低画质模式：保存到会话的图片统一重编码为 quality 92 的 JPEG 后再进入历史和 LLM 请求，显著降低 base64 请求体积。规则：
+
+- 转码后体积反而增大（小图、压缩良好的 JPEG 等），或图片无法转码（SVG、动画 GIF、损坏数据），则保留原始字节上传。
+- 发生转码时，原始文件以 `<hash>.orig<ext>` 形式另存在会话 `images/` 目录下作为磁盘备份；备份不被历史引用、不通过 API serve，同一原图重复上传不会产生重复备份文件。
+- 存储仍按内容寻址：历史引用的是实际进入 LLM 请求的字节（转码后或原图）的哈希文件名。
+
+该选项作用于两个图片入口：用户上传（`/message`、`/revert` 的图片附件）和 `read` 工具读到的图片。
+
 ## 前端行为
 
 - 点击按钮可多选图片（`accept="image/*"`）。
@@ -42,7 +52,8 @@ models:
 
 | 文件 | 说明 |
 |------|------|
-| `src/trilobite/config.py` | `enable_vl` 默认配置 |
+| `src/trilobite/config.py` | `enable_vl`、`low_quality_images` 默认配置 |
+| `src/trilobite/image_storage.py` | `save_image` 存储与 `transcode_image` quality-92 JPEG 转码 |
 | `src/trilobite/messages.py` | `Image` 类、`UserMessage` 图文支持 |
 | `src/trilobite/history.py` | `get_api_messages` 带 `image_dir` 参数 |
 | `src/trilobite/agent.py` | `start()`/`revert()` 接收图片、`attach_subscriber` 透传 `enable_vl` |

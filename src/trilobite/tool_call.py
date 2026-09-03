@@ -167,6 +167,10 @@ def execute_tool(
     kwargs: dict[str, Any] = {}
     if tool_name == "bash":
         kwargs["config"] = config
+    # read forwards config so it can honor ``low_quality_images`` when
+    # storing images it reads from disk.
+    if tool_name == "read":
+        kwargs["config"] = config
     # While the bash sandbox is active, its /tmp is the session's scratch
     # directory; the file tools remap /tmp onto it so both see one namespace.
     # Without the sandbox /tmp keeps its host meaning and no remapping is

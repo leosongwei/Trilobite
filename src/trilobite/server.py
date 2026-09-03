@@ -468,6 +468,7 @@ async def send_message(name: str, req: MessageRequest):
             data,
             att.mime_type,
             original_name=att.original_name or "",
+            low_quality=bool(config.get("low_quality_images", True)),
         ))
     await agent.start(req.message, images=images or None)
     return {"status": "started"}
@@ -502,6 +503,7 @@ async def revert_message(name: str, req: RevertRequest):
                 data,
                 att.mime_type,
                 original_name=att.original_name or "",
+                low_quality=bool(config.get("low_quality_images", True)),
             ))
     try:
         status = await agent.revert(
