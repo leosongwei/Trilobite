@@ -134,5 +134,14 @@
     "std_name": "crescent moon",
     "std_codepoint": "U+1F319",
     "class": "dark-mode"
+  },
+  {
+    "use": "fork session from a message",
+    "name": "call_split",
+    "codepoint": "e0b6",
+    "std": "⑂",
+    "std_name": "fork",
+    "std_codepoint": "U+2042",
+    "class": "call-split"
   }
 ]

@@ -181,6 +181,20 @@ steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写�
 
 截断在扁平列表上切在目标 user 消息自己的索引处：它前面的工具结果天然保留，重跑后与编辑后的新消息一起折叠进下一个 turn 的 inputs——"拆 turn"这个操作在扁平模型里不存在。
 
+## Fork（分叉新会话）
+
+用户在编辑某条历史消息时可以不重发原会话，而是从这条消息分叉出一个新会话（`POST /api/sessions/{id}/fork`，参数与 `/revert` 同构：`message_id` + `message` + 可选图片载荷）。编辑框里确认按钮旁边有一个 fork 按钮：确认（勾）在原会话截断重发，fork 把同样的内容提交到一个全新会话并自动切换过去，原会话完全不动。
+
+新会话由端点直接组装：
+
+* **历史**：源会话 `history.raw` 中位于目标 user 消息之前的前缀，以 v3 storage dict 原样写入新会话的 `history.json`（消息 id 保留，副本独立寻址）。前缀切在 user 消息之前，天然满足顺序不变量。
+* **继承**：`model`、`additional_dirs`、`project_id`、`plan_mode`、`working_dir` 从源会话的 `session.json` 复制。
+* **标题**：取 fork 消息文本的前 50 字符（与自动命名同规则），并直接置 `titled=True` 定稿。
+* **图片**：历史只存文件名，字节在会话的 `images/` 目录——前缀引用的图片文件与 fork 消息保留的旧附件都从源会话复制到新会话，新上传附件按普通发送存入新会话。
+* **运行**：注册新 Agent 后立即 `start(message)`，fork 消息作为新会话的待推理消息启动 run（历史前缀里已有 user 消息，自动命名不会触发）。
+
+前端 `store.fork` 调用成功后 `selectSession(新 id)`：重建会话列表并连接新会话的 SSE，in-flight run 的回放缓冲保证已发出的流事件不丢。
+
 ## 前端协议
 
 前端拿到的是 `init` 快照里的扁平 role-based `HistoryMessage[]`（`ModelMessage` 展开成 `assistant`、`ToolResults` 展开成多条 `tool`）。字段名（`reasoning_content`、`compact_marker`、`compact_summary`、`diff`、`tool_calls`、`tool_call_id`）与 v2 一致，另外每条**带上 `id`**（user 事件和 `user_edit` 事件也带 `id`/`message_id`），编辑重发时前端把 `message_id` 传给 `/revert`。`parseHistory` 只新增了 `id` 的透传，其余无需改动。

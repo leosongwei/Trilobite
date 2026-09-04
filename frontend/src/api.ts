@@ -173,6 +173,32 @@ export async function revert(
   return res.json()
 }
 
+// Fork a new session off this one at a user message: the new session copies
+// the history before that message and starts a run with the (possibly edited)
+// text; the source session is untouched.
+export async function forkSession(
+  id: string,
+  messageId: string,
+  message: string,
+  opts: { keepImages?: string[]; newImages?: ImageAttachment[] } = {},
+): Promise<{ id: string; name: string }> {
+  const res = await authFetch(`/api/sessions/${encode(id)}/fork`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message_id: messageId,
+      message,
+      keep_images: opts.keepImages ?? [],
+      images: opts.newImages?.length ? opts.newImages : undefined,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to fork session')
+  }
+  return res.json()
+}
+
 export async function cancelSession(id: string): Promise<void> {
   await authFetch(`/api/sessions/${encode(id)}/cancel`, { method: 'POST' })
 }
