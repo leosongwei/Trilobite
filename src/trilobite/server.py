@@ -25,7 +25,7 @@ from src.trilobite.config import (
 from src.trilobite.file_access import detect_line_ending, materialize, normalize_dir, normalize_dirs, resolve_file_path
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
-from src.trilobite.messages import Image
+from src.trilobite.messages import Image, UserMessage
 from src.trilobite.projects import create_project as projects_create, delete_project as projects_delete, load_projects
 from src.trilobite.timer import TimerService
 from src.trilobite.tools.bash import sandbox_enabled
@@ -515,6 +515,113 @@ async def revert_message(name: str, req: RevertRequest):
     except ValueError:
         raise HTTPException(status_code=400, detail="user message not found")
     return {"status": status}
+
+
+class ForkRequest(BaseModel):
+    message_id: str
+    message: str
+    # Same semantics as RevertRequest: which of the forked message's own
+    # attachments survive the (optional) edit, plus new uploads.
+    keep_images: list[str] = []
+    images: list[ImageAttachment] | None = None
+
+
+@app.post("/api/sessions/{name}/fork")
+async def fork_session(name: str, req: ForkRequest):
+    """Branch a new session off this one at a user message.
+
+    The new session copies the source history up to (excluding) the given
+    message, inherits the source's model / additional_dirs / project /
+    plan mode, and starts a run with the (possibly edited) message text. The
+    source session itself is left untouched. The new session's title comes
+    from the forked message.
+    """
+    src = _get_or_create_agent(name)
+    if src.is_sealed():
+        raise HTTPException(status_code=409, detail="subagent session cannot be forked")
+    idx = src.history.index_of(req.message_id)
+    if idx is None or not isinstance(src.history.raw[idx], UserMessage):
+        raise HTTPException(status_code=400, detail="fork point must be an existing user message")
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="message must not be empty")
+
+    src_info = json.loads((src.session_dir / "session.json").read_text())
+    session_id = uuid.uuid4().hex
+    session_dir = get_sessions_dir() / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    # Inherit everything that defines the session's identity: model choice,
+    # granted directories, project grouping, plan mode. The title is derived
+    # from the forked message (same rule as the auto-namer) and finalized via
+    # ``titled`` so the first run never overwrites it.
+    info = {
+        "name": " ".join(req.message.split())[:50],
+        "working_dir": src_info.get("working_dir", str(Path.cwd())),
+        "plan_mode": src_info.get("plan_mode", False),
+        "additional_dirs": src_info.get("additional_dirs", []),
+        "model": src_info.get("model") or get_default_model_name(config),
+        "titled": True,
+        "created_at": time.time(),
+    }
+    if src_info.get("project_id"):
+        info["project_id"] = src_info["project_id"]
+    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+
+    # Copy the history prefix as-is (v3 storage dicts keep the message ids, so
+    # the fork keeps addressing its own copy). The prefix ends right before a
+    # user message, which is always a valid boundary.
+    prefix = src.history.raw[:idx]
+    payload = {"version": 3, "messages": [m.to_storage_dict() for m in prefix]}
+    (session_dir / "history.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+
+    # Image bytes live in the session's images/ directory; the copied history
+    # only carries filenames. Copy every file the prefix references, plus the
+    # kept attachments of the forked message itself.
+    kept = set(req.keep_images)
+    needed: set[str] = set()
+    for m in prefix:
+        for img in getattr(m, "images", None) or []:
+            needed.add(img.filename)
+    for img in src.history.raw[idx].images or []:
+        if img.filename in kept:
+            needed.add(img.filename)
+    if needed:
+        src_images = src.session_dir / "images"
+        dst_images = session_dir / "images"
+        dst_images.mkdir(parents=True, exist_ok=True)
+        for fn in needed:
+            f = src_images / fn
+            if f.is_file():
+                (dst_images / fn).write_bytes(f.read_bytes())
+
+    agent = Agent(
+        name=session_id,
+        working_dir=info["working_dir"],
+        session_dir=session_dir,
+        config=config,
+        registry=agents,
+        timer_service=timer_service,
+        model_name=info["model"],
+    )
+    agent.set_plan_mode(info["plan_mode"])
+    agent.set_additional_dirs(info["additional_dirs"])
+    agents[session_id] = agent
+
+    # New attachments for the (possibly edited) forked message are saved into
+    # the new session like a normal send.
+    images: list[Image] = []
+    if agent.enable_vl:
+        for att in req.images or []:
+            data = _decode_data_url(att.data_url)
+            images.append(save_image(
+                agent.session_dir,
+                data,
+                att.mime_type,
+                original_name=att.original_name or "",
+                low_quality=bool(config.get("low_quality_images", True)),
+            ))
+    await agent.start(req.message, images=images or None)
+    return {"status": "ok", "id": session_id, "name": info["name"]}
 
 
 @app.get("/api/sessions/{name}/stream")
