@@ -11,7 +11,6 @@
           <span class="ms" :class="theme === 'beige' ? 'ms-dark-mode' : 'ms-light-mode'"></span>
         </button>
       </div>
-      <input v-model="name" type="text" placeholder="Session / Project name" />
       <label>Working directory:</label>
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
       <div class="header-buttons">
@@ -31,9 +30,18 @@
             <span class="status-dot" :class="statusDot(item.dot).cls" :title="statusDot(item.dot).title"></span>
             <span class="tree-arrow ms ms-expand" :class="{ open: !isProjectCollapsed(item.project.id) }"></span>
             <span class="tree-icon ms ms-folder"></span>
-            <span class="project-name">{{ item.project.name }}</span>
+            <input
+              v-if="editingProjectId === item.project.id"
+              v-model="editProjectName"
+              class="project-rename-input"
+              @click.stop
+              @keydown.enter="saveProjectName(item.project.id)"
+              @keydown.esc="cancelProjectEdit"
+            />
+            <span v-else class="project-name">{{ item.project.name }}</span>
           </span>
           <span class="project-actions">
+            <button class="project-rename" type="button" title="Rename project" @click.stop="startEditProject(item.project)"><span class="ms ms-edit-square"></span></button>
             <button class="project-add" type="button" title="New session in project" @click.stop="handleCreateInProject(item.project)"><span class="ms ms-add"></span></button>
             <button class="delete" type="button" title="Delete project" @click.stop="handleDeleteProject(item.project)"><span class="ms ms-close"></span></button>
           </span>
@@ -230,14 +238,16 @@ const emit = defineEmits<{
 // highlighting always compares the working tree against it.
 const props = defineProps<{ base: string; requestsTick?: number; sidebarWidth: number }>()
 
-const { state, selectSession, createSession, deleteSession, addDir, renameSession, approveRequest, rejectRequest, createProject, deleteProject, setSessionProject, selectModel } = useStore()
+const { state, selectSession, createSession, deleteSession, addDir, renameSession, approveRequest, rejectRequest, createProject, deleteProject, renameProject, setSessionProject, selectModel } = useStore()
 const { theme, toggleTheme } = useTheme()
-const name = ref('')
 const workingDir = ref('')
 const newDir = ref('')
 const version = ref('')
 const editingName = ref(false)
 const editName = ref('')
+// Inline project rename in the project row (pencil button).
+const editingProjectId = ref<string | null>(null)
+const editProjectName = ref('')
 const sessionsHeight = ref(300)
 const treeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const requestsDetails = ref<HTMLDetailsElement | null>(null)
@@ -524,27 +534,31 @@ async function handleSelect(id: string) {
   emit('select')
 }
 
+// The header has a single working-directory field; the session/project name
+// defaults to it (both can be renamed later).
 async function handleCreate() {
-  if (!name.value.trim() || !workingDir.value.trim()) {
-    alert('Please fill in both fields')
+  const dir = workingDir.value.trim()
+  if (!dir) {
+    alert('Please fill in the working directory')
     return
   }
   try {
-    await createSession(name.value.trim(), workingDir.value.trim())
+    await createSession(dir, dir)
     resetDefaults()
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
   }
 }
 
-// Projects reuse the header's name + working directory fields.
+// Projects reuse the header's working directory field as name + directory.
 async function handleCreateProject() {
-  if (!name.value.trim() || !workingDir.value.trim()) {
-    alert('Please fill in both fields')
+  const dir = workingDir.value.trim()
+  if (!dir) {
+    alert('Please fill in the working directory')
     return
   }
   try {
-    await createProject(name.value.trim(), workingDir.value.trim())
+    await createProject(dir, dir)
     resetDefaults()
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
@@ -573,13 +587,30 @@ async function handleDeleteProject(p: Project) {
 
 async function resetDefaults() {
   try {
-    const cwd = await getCwd()
-    workingDir.value = cwd
-    name.value = cwd.split('/').pop() || cwd
+    workingDir.value = await getCwd()
   } catch {
-    name.value = ''
     workingDir.value = ''
   }
+}
+
+function startEditProject(p: Project) {
+  editingProjectId.value = p.id
+  editProjectName.value = p.name
+}
+
+async function saveProjectName(id: string) {
+  const newName = editProjectName.value.trim()
+  editingProjectId.value = null
+  if (!newName || newName === state.projects.find((p) => p.id === id)?.name) return
+  try {
+    await renameProject(id, newName)
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
+  }
+}
+
+function cancelProjectEdit() {
+  editingProjectId.value = null
 }
 
 async function handleDelete(id: string) {

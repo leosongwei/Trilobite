@@ -111,6 +111,18 @@ export async function deleteProject(id: string): Promise<void> {
   await authFetch(`/api/projects/${encode(id)}`, { method: 'DELETE' })
 }
 
+export async function renameProject(id: string, name: string): Promise<void> {
+  const res = await authFetch(`/api/projects/${encode(id)}/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to rename project')
+  }
+}
+
 export async function setSessionProject(id: string, projectId: string | null): Promise<void> {
   await authFetch(`/api/sessions/${encode(id)}/project`, {
     method: 'PUT',
