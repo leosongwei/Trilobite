@@ -817,6 +817,12 @@ export function useStore() {
     await loadSessions()
   }
 
+  async function renameProject(id: string, name: string) {
+    await api.renameProject(id, name)
+    const p = state.projects.find((x) => x.id === id)
+    if (p) p.name = name
+  }
+
   async function setSessionProject(projectId: string | null) {
     if (!state.currentSession) return
     await api.setSessionProject(state.currentSession, projectId)
@@ -985,6 +991,7 @@ export function useStore() {
     createSession,
     createProject,
     deleteProject,
+    renameProject,
     setSessionProject,
     deleteSession,
     sendMessage,

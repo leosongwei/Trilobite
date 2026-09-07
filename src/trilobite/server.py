@@ -26,7 +26,12 @@ from src.trilobite.file_access import detect_line_ending, materialize, normalize
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image, UserMessage
-from src.trilobite.projects import create_project as projects_create, delete_project as projects_delete, load_projects
+from src.trilobite.projects import (
+    create_project as projects_create,
+    delete_project as projects_delete,
+    load_projects,
+    rename_project as projects_rename,
+)
 from src.trilobite.timer import TimerService
 from src.trilobite.tools.bash import sandbox_enabled
 from src.trilobite.version import get_version as get_pkg_version
@@ -322,6 +327,14 @@ async def list_projects():
 @app.post("/api/projects")
 async def create_project(req: ProjectCreate):
     project = projects_create(get_sessions_dir(), req.name, req.working_dir)
+    return {"status": "ok", "id": project["id"], "name": project["name"]}
+
+
+@app.post("/api/projects/{project_id}/rename")
+async def rename_project(project_id: str, req: RenameRequest):
+    project = projects_rename(get_sessions_dir(), project_id, req.name)
+    if project is None:
+        raise HTTPException(404, "Project not found")
     return {"status": "ok", "id": project["id"], "name": project["name"]}
 
 

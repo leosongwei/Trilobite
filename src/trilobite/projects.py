@@ -49,6 +49,17 @@ def create_project(sessions_dir: Path, name: str, working_dir: str) -> dict:
     return project
 
 
+def rename_project(sessions_dir: Path, project_id: str, name: str) -> dict | None:
+    """Rename a project. Returns the project, or None if it did not exist."""
+    projects = load_projects(sessions_dir)
+    for p in projects:
+        if p.get("id") == project_id:
+            p["name"] = name
+            save_projects(sessions_dir, projects)
+            return p
+    return None
+
+
 def delete_project(sessions_dir: Path, project_id: str) -> bool:
     """Remove a project. Returns True if it existed, False otherwise."""
     projects = load_projects(sessions_dir)
