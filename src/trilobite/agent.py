@@ -56,7 +56,7 @@ from src.trilobite.timer import (
     sleep_result_text,
 )
 from src.trilobite.tools.bash import kill_process_group, truncate_output
-from src.trilobite.tool_call import execute_tool
+from src.trilobite.tool_call import execute_tool, validate_task_specs
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -70,6 +70,11 @@ def _generate_session_id() -> str:
     time_hex = "".join(f"{(value >> (40 - 8 * i)) & 0xFF:02x}" for i in range(6))
     rand = "".join(_CHARS[b % 62] for b in os.urandom(14))
     return f"ses_{time_hex}{rand}"
+
+
+def _task_param_error(msg: str) -> str:
+    """Format a task tool parameter error echoed back to the model."""
+    return f"Error: invalid task parameters -- {msg}"
 
 
 # ── thin SSE-chunk wrappers (mirror OpenAI SDK shapes) ──────────────────────
@@ -1934,29 +1939,44 @@ class Agent:
 
     async def _run_subagents(self, args: dict) -> dict[str, Any]:
         """Spawn one or more subagents in parallel, gather their results."""
-        specs = args.get("tasks") or []
-        if not isinstance(specs, list) or not specs:
-            return {"result": "Error: task tool requires a non-empty 'tasks' array."}
+        # Strict schema validation (pydantic TaskSpec, see tool_call.py):
+        # invalid entries are rejected with a precise error message echoed
+        # back to the model, valid entries still run.
+        if not isinstance(args, dict):
+            args = {}
+        specs, spec_errors = validate_task_specs(args.get("tasks"))
+        errors = [_task_param_error(m) for m in spec_errors]
+        if not specs:
+            # Nothing valid to spawn: fail the whole call so the model gets a
+            # single clear error instead of an empty subagent run.
+            return {"result": _task_param_error(
+                "no valid subagent in 'tasks' -- nothing was spawned:\n"
+                + "\n".join(spec_errors)
+            )}
 
         children: list[Agent] = []
-        errors: list[str] = []
-        for spec in specs:
-            if not isinstance(spec, dict):
-                errors.append("[invalid task spec]")
-                continue
-            stype = spec.get("subagent_type")
-            desc = spec.get("description", "subagent")
-            prompt = spec.get("prompt", "")
-            if stype not in ("explore", "general"):
-                errors.append(f"[{desc}] invalid subagent_type: {stype}")
-                continue
+        for i, spec in enumerate(specs):
+            desc, stype, prompt = spec.description, spec.subagent_type, spec.prompt
             if self._plan_mode and stype == "general":
-                errors.append(f"[{desc}] plan mode can only spawn explore (read-only) subagents")
+                errors.append(_task_param_error(
+                    f"tasks[{i}] ({desc}): plan mode can only spawn "
+                    "explore (read-only) subagents"
+                ))
                 continue
             if self._depth >= 1:
-                errors.append(f"[{desc}] subagent nesting limit reached")
+                errors.append(_task_param_error(
+                    f"tasks[{i}] ({desc}): subagent nesting limit reached"
+                ))
                 continue
             children.append(self._create_child(stype, desc, prompt))
+
+        if not children:
+            # Nothing valid to spawn: fail the whole call so the model gets a
+            # single clear error instead of an empty subagent run.
+            return {"result": _task_param_error(
+                "no valid subagent in 'tasks' -- nothing was spawned:\n"
+                + "\n".join(errors)
+            )}
 
         await self._send_stream_event({
             "type": "subagents",

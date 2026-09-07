@@ -1,5 +1,7 @@
 from pathlib import Path
-from typing import Any, Callable
+from typing import Annotated, Any, Callable, Literal
+
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 
 from src.trilobite.tools.read import ReadTool
 from src.trilobite.tools.edit import EditTool
@@ -90,6 +92,63 @@ TASK_TOOL_DEF: dict = {
         },
     },
 }
+
+
+# Strict runtime schema for the task tool's arguments, mirroring
+# TASK_TOOL_DEF. Validated with pydantic so every violation (missing/empty
+# fields, wrong enum, unknown keys, non-array/empty 'tasks') produces a
+# precise error message to echo back to the model.
+class TaskSpec(BaseModel):
+    """One entry of the task tool's 'tasks' array."""
+
+    model_config = ConfigDict(extra="forbid")  # unknown keys are errors
+
+    description: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    subagent_type: Literal["explore", "general"]
+    prompt: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+def format_validation_error(exc: ValidationError) -> str:
+    """Render a pydantic ValidationError as model-readable text."""
+    parts: list[str] = []
+    for err in exc.errors(include_url=False):
+        path = ""
+        for i, part in enumerate(err["loc"]):
+            if isinstance(part, int):
+                path += f"[{part}]"
+            elif i == 0:
+                path = str(part)
+            else:
+                path += f".{part}"
+        msg = err["msg"]
+        if err["type"] == "extra_forbidden":
+            msg += " (expected fields: description, subagent_type, prompt)"
+        parts.append(f"{path}: {msg}")
+    return "; ".join(parts)
+
+
+def validate_task_specs(specs: Any) -> tuple[list[TaskSpec], list[str]]:
+    """Validate the task tool's 'tasks' array entry by entry.
+
+    Returns (valid specs, error messages). Invalid entries produce a precise
+    error message for the model while valid entries still run.
+    """
+    if not isinstance(specs, list) or not specs:
+        return [], ["'tasks' must be a non-empty array of task objects"]
+    valid: list[TaskSpec] = []
+    errors: list[str] = []
+    for i, spec in enumerate(specs):
+        if not isinstance(spec, dict):
+            errors.append(
+                f"tasks[{i}] must be an object with string fields "
+                "'description', 'subagent_type', 'prompt'"
+            )
+            continue
+        try:
+            valid.append(TaskSpec(**spec))
+        except ValidationError as e:
+            errors.append(f"tasks[{i}]: " + format_validation_error(e))
+    return valid, errors
 
 
 # Virtual tool: suspend this session until a target time. Exposed by the
