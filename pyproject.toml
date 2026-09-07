@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.28.0",
     "openai>=2.38.0",
     "pillow>=11.0.0",
+    "pydantic>=2.0",
     "pyyaml>=6.0.3",
     "uvicorn[standard]>=0.48.0",
 ]

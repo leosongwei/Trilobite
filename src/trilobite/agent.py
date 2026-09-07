@@ -56,7 +56,7 @@ from src.trilobite.timer import (
     sleep_result_text,
 )
 from src.trilobite.tools.bash import kill_process_group, truncate_output
-from src.trilobite.tool_call import execute_tool
+from src.trilobite.tool_call import execute_tool, validate_task_specs
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -1939,44 +1939,24 @@ class Agent:
 
     async def _run_subagents(self, args: dict) -> dict[str, Any]:
         """Spawn one or more subagents in parallel, gather their results."""
+        # Strict schema validation (pydantic TaskSpec, see tool_call.py):
+        # invalid entries are rejected with a precise error message echoed
+        # back to the model, valid entries still run.
         if not isinstance(args, dict):
             args = {}
-        specs = args.get("tasks")
-        if not isinstance(specs, list) or not specs:
+        specs, spec_errors = validate_task_specs(args.get("tasks"))
+        errors = [_task_param_error(m) for m in spec_errors]
+        if not specs:
+            # Nothing valid to spawn: fail the whole call so the model gets a
+            # single clear error instead of an empty subagent run.
             return {"result": _task_param_error(
-                "the 'tasks' argument must be a non-empty array of task objects"
+                "no valid subagent in 'tasks' -- nothing was spawned:\n"
+                + "\n".join(spec_errors)
             )}
 
         children: list[Agent] = []
-        errors: list[str] = []
         for i, spec in enumerate(specs):
-            if not isinstance(spec, dict):
-                errors.append(_task_param_error(
-                    f"tasks[{i}] is not an object -- each entry must have "
-                    "string fields 'description', 'subagent_type', 'prompt'"
-                ))
-                continue
-            desc = spec.get("description")
-            stype = spec.get("subagent_type")
-            prompt = spec.get("prompt")
-            # Collect every problem for this entry so one bad call teaches
-            # the model the full schema at once.
-            bad: list[str] = []
-            unknown = sorted(set(spec) - {"description", "subagent_type", "prompt"})
-            if unknown:
-                bad.append(
-                    "unknown field(s): " + ", ".join(unknown)
-                    + " (expected 'description', 'subagent_type', 'prompt')"
-                )
-            if not isinstance(desc, str) or not desc.strip():
-                bad.append("missing or empty 'description' (3-5 word label)")
-            if stype not in ("explore", "general"):
-                bad.append(f"'subagent_type' must be 'explore' or 'general', got {stype!r}")
-            if not isinstance(prompt, str) or not prompt.strip():
-                bad.append("missing or empty 'prompt' (self-contained task instruction)")
-            if bad:
-                errors.append(_task_param_error(f"tasks[{i}]: " + "; ".join(bad)))
-                continue
+            desc, stype, prompt = spec.description, spec.subagent_type, spec.prompt
             if self._plan_mode and stype == "general":
                 errors.append(_task_param_error(
                     f"tasks[{i}] ({desc}): plan mode can only spawn "
