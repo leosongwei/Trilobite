@@ -400,6 +400,7 @@ body {
   opacity: 0;
 }
 .session-item:hover .project-rename { opacity: 1; }
+.session-item .project-rename.editing { opacity: 1; }
 .session-item .project-rename:hover { background: var(--bg-widget-hover); }
 .project-rename-input {
   flex: 1;
