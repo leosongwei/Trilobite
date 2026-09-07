@@ -72,6 +72,11 @@ def _generate_session_id() -> str:
     return f"ses_{time_hex}{rand}"
 
 
+def _task_param_error(msg: str) -> str:
+    """Format a task tool parameter error echoed back to the model."""
+    return f"Error: invalid task parameters -- {msg}"
+
+
 # ── thin SSE-chunk wrappers (mirror OpenAI SDK shapes) ──────────────────────
 
 @dataclass
@@ -1934,29 +1939,64 @@ class Agent:
 
     async def _run_subagents(self, args: dict) -> dict[str, Any]:
         """Spawn one or more subagents in parallel, gather their results."""
-        specs = args.get("tasks") or []
+        if not isinstance(args, dict):
+            args = {}
+        specs = args.get("tasks")
         if not isinstance(specs, list) or not specs:
-            return {"result": "Error: task tool requires a non-empty 'tasks' array."}
+            return {"result": _task_param_error(
+                "the 'tasks' argument must be a non-empty array of task objects"
+            )}
 
         children: list[Agent] = []
         errors: list[str] = []
-        for spec in specs:
+        for i, spec in enumerate(specs):
             if not isinstance(spec, dict):
-                errors.append("[invalid task spec]")
+                errors.append(_task_param_error(
+                    f"tasks[{i}] is not an object -- each entry must have "
+                    "string fields 'description', 'subagent_type', 'prompt'"
+                ))
                 continue
+            desc = spec.get("description")
             stype = spec.get("subagent_type")
-            desc = spec.get("description", "subagent")
-            prompt = spec.get("prompt", "")
+            prompt = spec.get("prompt")
+            # Collect every problem for this entry so one bad call teaches
+            # the model the full schema at once.
+            bad: list[str] = []
+            unknown = sorted(set(spec) - {"description", "subagent_type", "prompt"})
+            if unknown:
+                bad.append(
+                    "unknown field(s): " + ", ".join(unknown)
+                    + " (expected 'description', 'subagent_type', 'prompt')"
+                )
+            if not isinstance(desc, str) or not desc.strip():
+                bad.append("missing or empty 'description' (3-5 word label)")
             if stype not in ("explore", "general"):
-                errors.append(f"[{desc}] invalid subagent_type: {stype}")
+                bad.append(f"'subagent_type' must be 'explore' or 'general', got {stype!r}")
+            if not isinstance(prompt, str) or not prompt.strip():
+                bad.append("missing or empty 'prompt' (self-contained task instruction)")
+            if bad:
+                errors.append(_task_param_error(f"tasks[{i}]: " + "; ".join(bad)))
                 continue
             if self._plan_mode and stype == "general":
-                errors.append(f"[{desc}] plan mode can only spawn explore (read-only) subagents")
+                errors.append(_task_param_error(
+                    f"tasks[{i}] ({desc}): plan mode can only spawn "
+                    "explore (read-only) subagents"
+                ))
                 continue
             if self._depth >= 1:
-                errors.append(f"[{desc}] subagent nesting limit reached")
+                errors.append(_task_param_error(
+                    f"tasks[{i}] ({desc}): subagent nesting limit reached"
+                ))
                 continue
             children.append(self._create_child(stype, desc, prompt))
+
+        if not children:
+            # Nothing valid to spawn: fail the whole call so the model gets a
+            # single clear error instead of an empty subagent run.
+            return {"result": _task_param_error(
+                "no valid subagent in 'tasks' -- nothing was spawned:\n"
+                + "\n".join(errors)
+            )}
 
         await self._send_stream_event({
             "type": "subagents",

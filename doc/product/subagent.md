@@ -71,10 +71,24 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 `task` 工具执行时检查父 agent 当前 permission：若为 `PlanModePermission`，`subagent_type=general` 直接被拒（返回错误项），以保住 plan 模式的只读语义不被"借壳"破坏。
 
+### 参数校验
+
+`task` 工具对参数做**严格校验**，任何不合法都拒绝并回显 `Error: invalid task parameters -- ...` 给模型：
+
+- `tasks` 必须是**非空数组**；缺失、非数组或空数组直接整批拒绝。
+- 每个 entry 必须是对象，且**恰好**包含三个字段：
+  - `description`：非空字符串（3-5 词标签）；
+  - `subagent_type`：必须 ∈ {`explore`, `general`}；
+  - `prompt`：非空字符串（自包含任务说明）。
+- 未知字段（如拼错的 `subagentType`、多余的键）报错，不静默忽略。
+- 一个 entry 的**所有**问题一次性列出（如"缺少 description；subagent_type 非法；prompt 为空"），让模型一次学会完整 schema。
+- 校验失败的 entry 生成错误项；**没有任何合法 entry 时整批拒绝**（不派发、不产生 0 个 subagent 的空 run），错误文本包含每条 entry 的具体原因。
+- 有合法 entry 时正常派发，错误项与子 agent 结果一同出现在 `<task_result>` 开头。
+
 ### 执行流程
 
-1. 校验每个 `subagent_type` ∈ {explore, general} 且符合上表的派生权限；非法者直接返回错误项，不阻塞其它。
-2. 对每个子任务，新建子 Agent（见第四节），把 `prompt` 作为子 agent 的第一条 user 消息。
+1. 按上节严格校验参数；符合派生权限表（Plan 模式仅 `explore`）。
+2. 对每个合法子任务，新建子 Agent（见第四节），把 `prompt` 作为子 agent 的第一条 user 消息。
 3. `asyncio.gather` 并发跑所有子 agent 的 `run()`，**全部结束后**统一回收。
 4. 取每个子 agent history 最后一条 assistant 文本作为该子 agent 的结果（中断者取其中断总结）。
 5. 把所有结果组装成 `<task_result>`（见第七节）作为本次工具调用的 result 回填主 agent。
