@@ -17,7 +17,7 @@
   font-family: 'Material Symbols Outlined';
   font-style: normal;
   font-weight: 400;
-  src: url('/vendor/material-symbols/material-symbols-outlined.woff2?v=2') format('woff2');
+  src: url('/vendor/material-symbols/material-symbols-outlined.woff2?v=3') format('woff2');
 }
 
 .ms {
@@ -60,3 +60,4 @@
 .ms-description::before { content: "\e873"; }
 .ms-light-mode::before { content: "\e518"; }
 .ms-dark-mode::before { content: "\e51c"; }
+.ms-call-split::before { content: "\e0b6"; }

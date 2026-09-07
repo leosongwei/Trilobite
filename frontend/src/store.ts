@@ -957,6 +957,26 @@ export function useStore() {
     }
   }
 
+  async function fork(
+    messageId: string,
+    message: string,
+    opts: { keepImages?: string[]; newImages?: api.ImageAttachment[] } = {},
+  ) {
+    if (!state.currentSession) return
+    try {
+      const res = await api.forkSession(state.currentSession, messageId, message, opts)
+      // Switch to the new session: it already carries the forked run, and
+      // selectSession rebuilds the session list so the fork shows up.
+      await selectSession(res.id)
+    } catch (e) {
+      state.chatItems.push({
+        kind: 'error',
+        content: `Failed to fork: ${e instanceof Error ? e.message : String(e)}`,
+      })
+      state.streamTick++
+    }
+  }
+
   return {
     state,
     enableVl,
@@ -978,5 +998,6 @@ export function useStore() {
     rejectRequest,
     interruptSubagent,
     revert,
+    fork,
   }
 }

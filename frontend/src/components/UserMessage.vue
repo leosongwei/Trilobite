@@ -42,6 +42,7 @@
       </div>
       <div class="user-edit-actions">
         <button class="user-edit-btn" @click="confirmEdit" title="确认"><span class="ms ms-check"></span></button>
+        <button class="user-edit-btn" @click="forkEdit" title="从这条消息分叉新会话"><span class="ms ms-call-split"></span></button>
         <button class="user-edit-btn" @click="cancelEdit" title="取消"><span class="ms ms-close"></span></button>
       </div>
       <input
@@ -63,7 +64,7 @@ import { useStore } from '../store'
 import { readFileAsDataURL } from '../utils/images'
 
 const props = defineProps<{ item: UserItem }>()
-const { state, enableVl, revert } = useStore()
+const { state, enableVl, revert, fork } = useStore()
 const sessionId = state.currentSession
 
 const editing = ref(false)
@@ -180,6 +181,21 @@ async function confirmEdit() {
       newImages: newImages.map(({ mime_type, data_url, original_name }) => ({ mime_type, data_url, original_name })),
     })
   }
+}
+
+// Fork instead of revert: the original session keeps this message untouched;
+// a new session branches off with the edited text and starts a run there.
+async function forkEdit() {
+  const id = props.item.id
+  const text = draft.value
+  if (id === undefined || !text.trim()) return
+  editing.value = false
+  const newImages = [...draftNew.value]
+  clearDraftNew()
+  await fork(id, text, {
+    keepImages: draftImages.value.map((img) => img.filename),
+    newImages: newImages.map(({ mime_type, data_url, original_name }) => ({ mime_type, data_url, original_name })),
+  })
 }
 </script>
 
