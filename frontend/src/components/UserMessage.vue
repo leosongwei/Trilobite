@@ -42,8 +42,8 @@
       </div>
       <div class="user-edit-actions">
         <button class="user-edit-btn" @click="confirmEdit" title="确认"><span class="ms ms-check"></span></button>
-        <button class="user-edit-btn" @click="forkEdit" title="从这条消息分叉新会话"><span class="ms ms-call-split"></span></button>
         <button class="user-edit-btn" @click="cancelEdit" title="取消"><span class="ms ms-close"></span></button>
+        <button class="user-edit-btn" @click="forkEdit" title="从这条消息分叉新会话"><span class="ms ms-call-split"></span></button>
       </div>
       <input
         ref="imageInput"
