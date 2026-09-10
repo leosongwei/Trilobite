@@ -146,9 +146,6 @@ class MessageRequest(BaseModel):
     images: list[ImageAttachment] | None = None
 
 
-class ModeRequest(BaseModel):
-    mode: str
-
 class AddDirRequest(BaseModel):
     path: str
 
@@ -156,7 +153,7 @@ class FsWriteRequest(BaseModel):
     path: str
     content: str
 
-class PlanExitRequest(BaseModel):
+class PermissionRequest(BaseModel):
     approved: bool
 
 class SessionInfo(BaseModel):
@@ -223,7 +220,6 @@ async def list_sessions():
                     agent = agents.get(sd.name)
                     info["is_running"] = agent.is_running() if agent else False
                     info["history_length"] = len(agent.history) if agent else 0
-                    info["plan_mode"] = agent._plan_mode if agent else info.get("plan_mode", False)
                     info["model"] = agent._model_name if agent else info.get("model") or get_default_model_name(config)
                     info["sealed"] = agent.is_sealed() if agent else bool(info.get("subagent_type"))
                     # A session suspended via sleep_until shows the sidebar's
@@ -259,7 +255,7 @@ async def create_session(req: SessionCreate):
             raise HTTPException(404, "Project not found")
 
     session_dir.mkdir(parents=True, exist_ok=True)
-    info = {"name": req.name, "working_dir": req.working_dir, "plan_mode": False, "additional_dirs": [], "created_at": time.time()}
+    info = {"name": req.name, "working_dir": req.working_dir, "additional_dirs": [], "created_at": time.time()}
     info["model"] = get_default_model_name(config)
     if req.project_id:
         info["project_id"] = req.project_id
@@ -446,7 +442,6 @@ def _get_or_create_agent(name: str) -> Agent:
         timer_service=timer_service,
         model_name=info.get("model"),
     )
-    agent.set_plan_mode(info.get("plan_mode", False))
     agent.set_additional_dirs(info.get("additional_dirs", []))
     agent.restore_persisted_tokens(info)
     agents[name] = agent
@@ -544,8 +539,8 @@ async def fork_session(name: str, req: ForkRequest):
     """Branch a new session off this one at a user message.
 
     The new session copies the source history up to (excluding) the given
-    message, inherits the source's model / additional_dirs / project /
-    plan mode, and starts a run with the (possibly edited) message text. The
+    message, inherits the source's model / additional_dirs / project, and
+    starts a run with the (possibly edited) message text. The
     source session itself is left untouched. The new session's title comes
     from the forked message.
     """
@@ -564,13 +559,12 @@ async def fork_session(name: str, req: ForkRequest):
     session_dir.mkdir(parents=True, exist_ok=True)
 
     # Inherit everything that defines the session's identity: model choice,
-    # granted directories, project grouping, plan mode. The title is derived
+    # granted directories, project grouping. The title is derived
     # from the forked message (same rule as the auto-namer) and finalized via
     # ``titled`` so the first run never overwrites it.
     info = {
         "name": " ".join(req.message.split())[:50],
         "working_dir": src_info.get("working_dir", str(Path.cwd())),
-        "plan_mode": src_info.get("plan_mode", False),
         "additional_dirs": src_info.get("additional_dirs", []),
         "model": src_info.get("model") or get_default_model_name(config),
         "titled": True,
@@ -616,7 +610,6 @@ async def fork_session(name: str, req: ForkRequest):
         timer_service=timer_service,
         model_name=info["model"],
     )
-    agent.set_plan_mode(info["plan_mode"])
     agent.set_additional_dirs(info["additional_dirs"])
     agents[session_id] = agent
 
@@ -716,39 +709,12 @@ async def interrupt_session(name: str):
     return {"status": "ok"}
 
 
-@app.post("/api/sessions/{name}/plan_exit")
-async def plan_exit_decision(name: str, req: PlanExitRequest):
-    agent = agents.get(name)
-    if agent:
-        agent.resolve_plan_exit(req.approved)
-    return {"status": "ok"}
-
-
 @app.post("/api/sessions/{name}/permission")
-async def permission_decision(name: str, req: PlanExitRequest):
+async def permission_decision(name: str, req: PermissionRequest):
     agent = agents.get(name)
     if agent:
         agent.resolve_permission(req.approved)
     return {"status": "ok"}
-
-
-@app.post("/api/sessions/{name}/mode")
-async def set_mode(name: str, req: ModeRequest):
-    session_dir = get_sessions_dir() / name
-    if not session_dir.exists():
-        raise HTTPException(404, "Session not found")
-
-    info = json.loads((session_dir / "session.json").read_text())
-
-    plan_mode = req.mode == "plan"
-    info["plan_mode"] = plan_mode
-    (session_dir / "session.json").write_text(json.dumps(info, indent=2))
-
-    agent = agents.get(name)
-    if agent:
-        agent.set_plan_mode(plan_mode)
-
-    return {"status": "ok", "mode": req.mode}
 
 
 @app.post("/api/sessions/{name}/dirs")
@@ -812,7 +778,6 @@ async def get_session_info(name: str):
             "is_running": False,
             "token_count": info.get("token_count", 0),
             "max_context_tokens": int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS)),
-            "plan_mode": info.get("plan_mode", False),
             "additional_dirs": info.get("additional_dirs", []),
             "global_dirs": [str(d) for d in normalize_dirs(config.get("allowed_dirs", []) or [], Path(info["working_dir"]))],
             "model": info.get("model") or get_default_model_name(config),
@@ -823,7 +788,6 @@ async def get_session_info(name: str):
         "is_running": agent.is_running(),
         "token_count": agent._token_count,
         "max_context_tokens": agent.max_context_tokens,
-        "plan_mode": agent._plan_mode,
         "additional_dirs": [str(d) for d in agent._additional_dirs],
         "global_dirs": [str(d) for d in agent._global_dirs],
         "model": agent._model_name,
@@ -851,7 +815,7 @@ async def get_history(name: str):
 # The file manager (issue #49) lets the user browse, diff and edit files in
 # the session's workspace directly. It is a user-operated IDE surface, fully
 # decoupled from the agent: no history, no permission prompts (paths outside
-# the workspace are refused outright), no plan-mode restriction. Every path
+# the workspace are refused outright). Every path
 # goes through resolve_file_path so the workspace boundary and the sensitive
 # file filter are enforced exactly like the agent's file tools.
 

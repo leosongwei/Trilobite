@@ -4,7 +4,7 @@
 
 ## 一、概述
 
-`sleep_until` 是主 agent 的一个**虚拟工具**（仅 LLM 可见定义，执行逻辑在 `Agent` 中，与 `exit_plan_mode`/`task` 同路径）：接受一个目标时间，把**当前会话挂起**（suspend）到该时刻，到点后自动唤醒并继续对话。
+`sleep_until` 是主 agent 的一个**虚拟工具**（仅 LLM 可见定义，执行逻辑在 `Agent` 中，与 `task` 同路径）：接受一个目标时间，把**当前会话挂起**（suspend）到该时刻，到点后自动唤醒并继续对话。
 
 - **模型视角：一个执行得特别慢的普通工具**。调用 `sleep_until` 不产生工具结果；结果在会话唤醒时才构造并插入历史——文案写明唤醒情况（准点 / 提前 / 迟到 / 被打断）。唤醒后模型看到的输入就是这批工具结果，没有任何合成 user 消息。
 - **同会话续跑**：挂起不派生新 agent、不新建 session。唤醒在同一上下文里继续之前的工作；上下文原样保留（token 用量照常累计，超阈值时唤醒后的 run 走正常自动压缩）。
@@ -99,7 +99,6 @@
 | `/compact` | 挂起中发送即用户消息路径（打断挂起）；合并后的 turn 若是压缩轮，压缩在交付结果后照常进行 |
 | `/revert` | 回滚历史同时清内存标志与挂起（挂起轮是最后一轮，任何回滚点都将其整体截除） |
 | 删除 session | `TimerService.remove_session`（丢弃 pending），目录随级联删除 |
-| 模式切换（Tab / `/mode`） | 允许；`session.json` 读-改-写保留 `sleep_until` 字段，唤醒时按新模式运行（`<modeswitch>` 通知随唤醒 run 注入） |
 | 服务重启 | `load_all` 重载 pending（含过期目标）；停机期间到点的目标在启动后 1 秒内补触发（迟到唤醒）。重启后用户在补触发前发消息：run 序言经 `is_sleeping` 检查取消挂起，定时唤醒不再触发 |
 
 ### 重启恢复
@@ -130,7 +129,7 @@ CLI 的 IDLE 循环阻塞在同步 `input()`（事件循环停摆），tick 无�
 
 ## 六、权限与安全
 
-- **仅主 agent 可用**：`sleep_until` 由 `BuildModePermission` 与 `PlanModePermission` 共同暴露与放行（两模式暴露同一全量工具前缀，缓存稳定）；subagent 角色（explore/general）工具集不含它，`intercept` 兜底拦截——有界任务不允许睡眠（父 agent 会挂起等待）。
+- **仅主 agent 可用**：`sleep_until` 由主 agent 的 `PrimaryPermission` 暴露与放行；subagent 角色（explore/general）工具集不含它，`intercept` 兜底拦截——有界任务不允许睡眠（父 agent 会挂起等待）。
 - **无资源消耗**：挂起仅是一个时间戳 + 每秒一次的字典扫描；不占用 LLM 连接、线程或进程。
 - 上限：单次 ≤365 天、≥5 秒；每 session 至多一个挂起（后设覆盖）。
 
@@ -145,7 +144,7 @@ CLI 的 IDLE 循环阻塞在同步 `input()`（事件循环停摆），tick 无�
 
 1. **`src/trilobite/timer.py`**：`TimerService`——pending 表 + tick 循环 + `load_all`/`register`/`cancel`/`remove_session`/`is_sleeping`/`sleep_until`/`wake`/`abort`/`_do_wake`；`parse_sleep_until` 时间解析；`sleep_result_text` 延迟结果文案（原因 × 时钟判定）；`session.json` 的 `sleep_until` 字段读-改-写。
 2. **`src/trilobite/tool_call.py`**：`SLEEP_UNTIL_DEF`（虚拟工具定义，描述含执行顺序与打断语义）。
-3. **`src/trilobite/permission.py`**：主模式（build/plan）暴露并放行 `sleep_until`。
+3. **`src/trilobite/permission.py`**：主 agent permission 暴露并放行 `sleep_until`。
 4. **`src/trilobite/agent.py`**：`timer_service` 构造参数、`_sleeping_until` 状态、工具循环的批尾重排与 sleeping 分支（跳过结果落盘）、run 循环顶部的挂起 break 与批内取消、run 序言的用户打断路径、`_deliver_sleep_results`（历史扫描 + ToolResults 插入 + 事件）、`resume_from_sleep`（唤醒 run 入口）、硬取消路径的挂起清理。
 5. **`src/trilobite/prompts.py`**：system prompt 的 timer 段（延迟结果语义、批尾执行、打断后自决再睡）。
 6. **`src/trilobite/server.py`**：TimerService 装配（startup `load_all`+`start`）、`GET /api/sessions` 的 `has_sleep`/`sleep_until`、`POST /wake`、`/interrupt` 的挂起 abort 分支、`/revert` 取消挂起、删除 session 级联。

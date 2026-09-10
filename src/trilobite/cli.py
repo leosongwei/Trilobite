@@ -89,7 +89,7 @@ def _rl_wrap(text: str) -> str:
 # --- event classification ----------------------------------------------------
 
 _TERMINAL = {"done", "cancelled", "error", "interrupted"}
-_INTERACTIVE = {"permission_request", "plan_exit_request", "subagent_permission_request"}
+_INTERACTIVE = {"permission_request", "subagent_permission_request"}
 _EXIT_CODE_RE = re.compile(r"\[exit code: (-?\d+)\]")
 
 
@@ -244,17 +244,14 @@ class Renderer:
                 self.write(_dim(f"{_line_no(row.get('new') or row.get('old'))}   {text}\n"))
 
 
-# --- interactive prompts (permission / plan exit) ---------------------------
+# --- interactive prompts (permission) ----------------------------------------
 
 def _resolve(ev: dict, agent: Agent, approved: bool) -> None:
-    if ev.get("type") == "plan_exit_request":
-        agent.resolve_plan_exit(approved)
-    else:
-        agent.resolve_permission(approved)
+    agent.resolve_permission(approved)
 
 
 async def _handle_interactive(agent: Agent, ev: dict, renderer: Renderer) -> str:
-    """Prompt for a y/n answer to a permission / plan-exit request.
+    """Prompt for a y/n answer to a permission request.
 
     The agent is blocked on its resolution event during this call, so no other
     output streams compete for the terminal. Returns "exit" if stdin hit EOF
@@ -275,9 +272,7 @@ async def _handle_interactive(agent: Agent, ev: dict, renderer: Renderer) -> str
 
     renderer.ensure_newline()
     t = ev.get("type")
-    if t == "plan_exit_request":
-        sys.stdout.write(_yellow("⚠ 请求退出 plan 模式，切换到 build 模式？\n"))
-    elif t == "permission_request":
+    if t == "permission_request":
         sys.stdout.write(_yellow(f"⚠ {ev.get('message', '')}\n"))
         sys.stdout.write(_dim(f"   path: {ev.get('path', '')}   tool: {ev.get('tool', '')}\n"))
     else:  # subagent_permission_request
@@ -369,7 +364,6 @@ def _create_session(working_dir: str, config: dict) -> tuple[Path, dict]:
     info = {
         "name": name,
         "working_dir": working_dir,
-        "plan_mode": False,
         "additional_dirs": [],
         "created_at": now,
         "model": get_default_model_name(config),
@@ -429,7 +423,7 @@ async def _make_agent(
     """Instantiate an Agent over a session dir and subscribe to its broker.
 
     On resume the Agent loads the existing history.json; ``session_id`` is
-    reused and persisted plan_mode / additional_dirs are restored.
+    reused and persisted additional_dirs are restored.
     """
     registry: dict[str, Agent] = {}
     agent = Agent(
@@ -445,8 +439,6 @@ async def _make_agent(
     if resume:
         if info.get("additional_dirs"):
             agent.set_additional_dirs(info["additional_dirs"])
-        if info.get("plan_mode"):
-            agent.set_plan_mode(info["plan_mode"])
         agent.restore_persisted_tokens(info)
     queue, _snapshot = await agent.attach_subscriber()
     return agent, queue

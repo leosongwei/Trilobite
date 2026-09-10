@@ -28,11 +28,11 @@ export interface Project {
   created_at?: number
 }
 
-// A pending approval request: a directory grant (main session or subagent)
-// or a plan-exit switch request. Multiple requests can be pending at once
-// (main session + several subagents), so they live in a list keyed by
-// requesting session instead of a single banner slot.
-export type PendingRequestKind = 'dir' | 'plan_exit'
+// A pending approval request: a directory grant (main session or subagent).
+// Multiple requests can be pending at once (main session + several
+// subagents), so they live in a list keyed by requesting session instead of
+// a single banner slot.
+export type PendingRequestKind = 'dir'
 
 export interface PendingRequest {
   /** Unique dedupe key: `${session}:${kind}:${path ?? ''}`. */
@@ -49,7 +49,7 @@ export interface PendingRequest {
 }
 
 export type SSEEvent =
-  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; plan_mode: boolean; additional_dirs: string[]; global_dirs?: string[]; is_subagent?: boolean; kind?: string; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
+  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; additional_dirs: string[]; global_dirs?: string[]; is_subagent?: boolean; kind?: string; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
   | { type: 'user'; id: string; text: string; user_seq: number; images?: ImageMeta[] }
   | { type: 'user_edit'; message_id: string; text: string; images?: ImageMeta[] | null }
   | { type: 'turn' }
@@ -63,7 +63,6 @@ export type SSEEvent =
   | { type: 'tool_result'; tool: string; result: string; tool_call_id?: string; diff?: DiffRow[]; diff_prev?: string; diff_current?: string }
   | { type: 'usage'; token_count: number; max_context_tokens: number }
   | { type: 'status'; text: string }
-  | { type: 'plan_exit_request'; session: string }
   | { type: 'permission_request'; session: string; path: string; tool: string; message: string }
   | { type: 'subagents'; parent: string; children: SubagentChild[] }
   | { type: 'subagent_state'; session: string; state: string }
@@ -105,7 +104,6 @@ export interface Session {
   working_dir: string
   is_running: boolean
   history_length: number
-  plan_mode: boolean
   parent_session?: string
   subagent_type?: string
   kind?: string
@@ -132,7 +130,6 @@ export interface SessionInfo {
   is_running: boolean
   token_count: number
   max_context_tokens: number
-  plan_mode: boolean
   additional_dirs: string[]
 }
 

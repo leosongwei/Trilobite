@@ -25,22 +25,8 @@ ALL_TOOLS = [
 
 _TOOL_MAP: dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
-# Virtual tool: asks the user to switch the primary agent from plan mode to
-# build mode. Only exposed by PlanModePermission (see permission.py). Its
-# execution -- the approval flow -- is handled in Agent, not here, because it
-# needs the broker / asyncio machinery; this is just the definition the LLM
-# sees.
-EXIT_PLAN_MODE_DEF: dict = {
-    "type": "function",
-    "function": {
-        "name": "exit_plan_mode",
-        "description": "Request to exit plan mode and enter build mode. Use this when you have completed your analysis and are ready to make changes. The user must approve the switch.",
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    },
-}
-
 # Virtual tool: spawn one or more subagents to run in parallel. Only exposed by
-# BuildModePermission / PlanModePermission (see permission.py). Its execution
+# the primary agent's permission (see permission.py). Its execution
 # -- creating child Agents, gathering their runs -- is handled in Agent, not
 # here; this is just the definition the LLM sees.
 TASK_TOOL_DEF: dict = {
@@ -152,7 +138,7 @@ def validate_task_specs(specs: Any) -> tuple[list[TaskSpec], list[str]]:
 
 
 # Virtual tool: suspend this session until a target time. Exposed by the
-# primary modes (build/plan); its execution -- registering the suspension
+# primary agent's permission; its execution -- registering the suspension
 # with the TimerService -- is handled in Agent, not here. Waking re-enters
 # this same conversation with a synthetic wake-up message.
 SLEEP_UNTIL_DEF: dict = {

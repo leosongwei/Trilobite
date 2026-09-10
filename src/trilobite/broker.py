@@ -141,7 +141,6 @@ class StreamBroker:
         history_raw: list,
         token_count: int,
         max_context_tokens: int,
-        plan_mode: bool,
         additional_dirs: list[str],
     ) -> tuple[asyncio.Queue, dict]:
         """Subscribe a new client.
@@ -164,7 +163,6 @@ class StreamBroker:
                 "is_running": self._is_running,
                 "token_count": token_count,
                 "max_context_tokens": max_context_tokens,
-                "plan_mode": plan_mode,
                 "additional_dirs": additional_dirs,
             }
             return q, snapshot

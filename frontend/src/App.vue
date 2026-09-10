@@ -51,12 +51,12 @@
         </div>
         <ChatView />
         <template v-if="state.currentSession">
-          <div v-if="bannerRequest" class="plan-exit-banner">
+          <div v-if="bannerRequest" class="permission-banner">
             <span>{{ bannerText }}</span>
             <button class="approve" @click="approveRequest(bannerRequest)">{{ bannerApproveLabel }}</button>
             <button class="reject" @click="rejectRequest(bannerRequest)">{{ bannerRejectLabel }}</button>
           </div>
-          <div v-else-if="groupPendingCount > 1" class="plan-exit-banner">
+          <div v-else-if="groupPendingCount > 1" class="permission-banner">
             <span>{{ groupPendingCount }} permission requests are pending</span>
             <button class="approve" @click="openRequestsList">Review</button>
           </div>
@@ -83,7 +83,7 @@ import type { PendingRequest } from './types'
 import { findSessionRoot } from './utils/sessions'
 import { startFaviconSync } from './utils/favicon'
 
-const { state, loadSessions, setMode, approveRequest, rejectRequest, selectSession } = useStore()
+const { state, loadSessions, approveRequest, rejectRequest, selectSession } = useStore()
 
 // The current session's full record from the session poll; a session
 // suspended via sleep_until carries has_sleep/sleep_until which the
@@ -145,19 +145,14 @@ const bannerRequest = computed(() =>
 const bannerText = computed(() => {
   const r = bannerRequest.value
   if (!r) return ''
-  if (r.kind === 'plan_exit') return 'Agent requests to switch to Build mode'
   if (r.childType) {
     return `Subagent [${r.childType}: ${r.childDescription}] needs access to: ${r.path}`
   }
   return `Agent needs access to: ${r.path}`
 })
 
-const bannerApproveLabel = computed(() =>
-  bannerRequest.value?.kind === 'plan_exit' ? 'Approve' : 'Grant',
-)
-const bannerRejectLabel = computed(() =>
-  bannerRequest.value?.kind === 'plan_exit' ? 'Reject' : 'Deny',
-)
+const bannerApproveLabel = computed(() => 'Grant')
+const bannerRejectLabel = computed(() => 'Deny')
 
 // The aggregated banner's Review button opens the sidebar and expands the
 // Requests list (SessionSidebar watches the tick).
@@ -224,14 +219,6 @@ watch(() => state.currentSession, () => {
   for (const k of Object.keys(rootInfoMap)) delete rootInfoMap[k]
 })
 
-function handleKeydown(e: KeyboardEvent) {
-  if (authState.value !== 'ok') return
-  if (e.key === 'Tab' && !state.isSubagent) {
-    e.preventDefault()
-    setMode(state.planMode ? 'build' : 'plan')
-  }
-}
-
 async function init() {
   // Opening the printed link (?token=...) exchanges the token for the session
   // cookie right away, then strips it from the URL so it does not linger in
@@ -275,12 +262,10 @@ function showAuthDialog() {
 
 onMounted(() => {
   startFaviconSync()
-  document.addEventListener('keydown', handleKeydown)
   window.addEventListener('trilobite:unauthorized', showAuthDialog)
   init()
 })
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('trilobite:unauthorized', showAuthDialog)
 })
 </script>

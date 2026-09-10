@@ -162,11 +162,9 @@ class UserMessage(Message):
         # turn) but lets _finalize_compaction locate it and collect the real
         # steering messages that arrived after it.
         self.is_compact_prompt = is_compact_prompt
-        # Marks a plan/build mode-change notice. It is persisted in history as
-        # a user message (so the API prefix grows monotonically and stays
-        # cacheable) rather than transiently spliced into the request. It is
-        # not a real user turn: the frontend hides it and it is excluded from
-        # user_seq, like compact summaries.
+        # Legacy flag from the removed plan/build mode notices. No longer
+        # produced; kept so old persisted histories still render correctly
+        # (the notice stays hidden and excluded from user_seq).
         self.is_mode_notification = is_mode_notification
         self.images = images or []
 

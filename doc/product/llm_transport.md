@@ -147,7 +147,7 @@ chunk.usage.total_tokens
 | `STREAM [DONE]` | INFO | 正常结束，附带 finish_reasons 列表 |
 | `STREAM ended WITHOUT [DONE]` | WARNING | 流提前关闭、未收到 `[DONE]` |
 | `STREAM error` | ERROR | 网络/HTTP 异常 |
-| `TURN result` | INFO | 每轮累积的 content/thinking/tool_calls 长度、token 数、plan 模式 |
+| `TURN result` | INFO | 每轮累积的 content/thinking/tool_calls 长度、token 数 |
 | `TURN produced EMPTY assistant output` | WARNING | content/thinking/tool_calls 全为空（即复现的截断现象） |
 | `RUN cancelled` / `RUN error` | WARNING/ERROR | 取消或异常时记录残余输出 |
 

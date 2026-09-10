@@ -1,4 +1,6 @@
-# Plan / Build 模式
+# Plan / Build 模式【已作废】
+
+> 状态：**已作废**。plan/build 双模式已被移除，主 agent 现在始终拥有完整工具权限（见 `doc/product/subagent.md` 的权限模型）。本文仅作历史规格存档：`exit_plan_mode` 虚拟工具、`PlanModePermission`/`BuildModePermission`、`POST /api/sessions/{name}/mode` 与 `/plan_exit` 端点、前端模式切换按钮与 `<modeswitch>` 提示词均已从代码中删除。
 
 ## 概述
 
