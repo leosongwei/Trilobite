@@ -83,7 +83,7 @@ Relative paths in this skill (e.g. scripts/, reference/) are relative to this ba
 </skill_content>
 ```
 
-`skill` 是只读工具，plan 模式、explore/general subagent 均可用。执行时重新发现（而非使用启动时的缓存），因此会话中途新增的 skill 也能被加载；工具执行不涉及工作区外文件访问（skill 目录本身在启动时已被读取）。
+`skill` 是只读工具，explore/general subagent 均可用。执行时重新发现（而非使用启动时的缓存），因此会话中途新增的 skill 也能被加载；工具执行不涉及工作区外文件访问（skill 目录本身在启动时已被读取）。
 
 ## 生命周期
 

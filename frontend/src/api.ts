@@ -229,14 +229,6 @@ export async function wakeSession(id: string): Promise<void> {
   }
 }
 
-export async function setMode(id: string, mode: 'plan' | 'build'): Promise<void> {
-  await authFetch(`/api/sessions/${encode(id)}/mode`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
-  })
-}
-
 export async function addDir(id: string, path: string): Promise<string[]> {
   const res = await authFetch(`/api/sessions/${encode(id)}/dirs`, {
     method: 'POST',
@@ -255,14 +247,6 @@ export async function removeDir(id: string, path: string): Promise<string[]> {
   })
   const data = await res.json()
   return data.additional_dirs ?? []
-}
-
-export async function planExit(id: string, approved: boolean): Promise<void> {
-  await authFetch(`/api/sessions/${encode(id)}/plan_exit`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ approved }),
-  })
 }
 
 export async function resolvePermission(id: string, approved: boolean): Promise<void> {

@@ -14,7 +14,7 @@
 Message(_id)                                # 基类：每个消息带紧凑 id（uuid4 hex 前 12 位）
 SystemMessage(content)                      # system 消息（初始 prompt 或压缩后重建的 prompt）
 CompactMarker()                             # 压缩边界：纯标记，不带内容；其后跟一条重建的 SystemMessage
-UserMessage(content, compact_summary=False, is_compact_prompt=False, is_mode_notification=False, images=[]) # 用户输入
+UserMessage(content, compact_summary=False, is_compact_prompt=False, is_mode_notification=False, images=[]) # 用户输入；is_mode_notification 为遗留字段（旧历史中的模式通知），仅读取
   └─ Image(filename, mime_type, original_name)  # 图片附件：文件存于 sessions/<id>/images/，历史里只存元数据
 ModelMessage(think, content, tool_calls)    # 一次模型响应；think 为思维链（API 里叫 reasoning_content）
   └─ ToolCall(id, name, arguments)          # 一次工具调用；id 是 API 生成的 call_xxx（区别于消息 _id）
@@ -188,7 +188,7 @@ steering 不需要任何特殊处理：它在压缩 turn 被模型读到并写�
 新会话由端点直接组装：
 
 * **历史**：源会话 `history.raw` 中位于目标 user 消息之前的前缀，以 v3 storage dict 原样写入新会话的 `history.json`（消息 id 保留，副本独立寻址）。前缀切在 user 消息之前，天然满足顺序不变量。
-* **继承**：`model`、`additional_dirs`、`project_id`、`plan_mode`、`working_dir` 从源会话的 `session.json` 复制。
+* **继承**：`model`、`additional_dirs`、`project_id`、`working_dir` 从源会话的 `session.json` 复制。
 * **标题**：取 fork 消息文本的前 50 字符（与自动命名同规则），并直接置 `titled=True` 定稿。
 * **图片**：历史只存文件名，字节在会话的 `images/` 目录——前缀引用的图片文件与 fork 消息保留的旧附件都从源会话复制到新会话，新上传附件按普通发送存入新会话。
 * **运行**：注册新 Agent 后立即 `start(message)`，fork 消息作为新会话的待推理消息启动 run（历史前缀里已有 user 消息，自动命名不会触发）。

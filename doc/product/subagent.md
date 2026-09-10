@@ -28,20 +28,19 @@ Subagent 是"主 agent 通过一次 `task` 工具调用派生出来的子 agent"
 - ❌ **主 agent** 向子 agent 中途通信（主 agent 跑起来后不主动给子 agent 发消息；但用户可直接 steer 子 agent）。
 - ❌ 细粒度 deny/ask/allow 权限 ruleset（沿用 `permission.py` 的工具白名单即可）。
 
-## 二、概念定位：角色，不是模式
+## 二、概念定位：角色
 
-Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `permission.py` 已确立的分辨：
+Subagent 是一个**角色**（role）--这是 `permission.py` 已确立的分辨：
 
-- **模式**（plan/build）：主 agent 的运行时状态，会话中途热切换。
 - **角色**（explore/general）：subagent 的声明式 profile，**派生时固化、自始至终不切换**。
 
-子 agent 用 `ExploreSubagentPermission` / `GeneralSubagentPermission`（已定义），不涉及 plan/build 模式，**没有 `exit_plan_mode`**（子 agent 就这两种角色，无模式可切）。主 agent（`BuildModePermission` / `PlanModePermission`）持有 `task` 工具；子 agent 的权限白名单**不含 `task`**，从而硬性限制一层。
+子 agent 用 `ExploreSubagentPermission` / `GeneralSubagentPermission`（已定义）。主 agent（`PrimaryPermission`）持有 `task` 工具；子 agent 的权限白名单**不含 `task`**，从而硬性限制一层。
 
 ## 三、`task` 工具
 
 ### 工具定义
 
-`task` 暴露给主 agent（build/plan 模式），**不暴露给子 agent**。它的执行是异步的（需 `await` 多个子 agent 运行），且需要主 agent 上下文，因此**不走**通用的 `tool_call.execute_tool` 同步路径，而是在 `Agent` 的工具派发处特判处理（与 `exit_plan_mode` 同样的处理方式）。
+`task` 暴露给主 agent，**不暴露给子 agent**。它的执行是异步的（需 `await` 多个子 agent 运行），且需要主 agent 上下文，因此**不走**通用的 `tool_call.execute_tool` 同步路径，而是在 `Agent` 的工具派发处特判处理。
 
 ### 参数
 
@@ -60,16 +59,11 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 - `tasks` 是数组，**单次调用即可 fan-out 多个子 agent**。只派生一个时传长度为 1 的数组。
 - `prompt` 必须自包含（路径、目标、返回格式都写清），因为子 agent 拿不到主 agent 的历史。
-- `subagent_type` 枚举恰好 {`explore`, `general`}，无其它（无 exit_plan_mode 概念）。
+- `subagent_type` 枚举恰好 {`explore`, `general`}，无其它。
 
-### 派生权限（按主 agent 模式）
+### 派生权限
 
-| 主 agent 模式 | 允许的 `subagent_type` |
-|---|---|
-| Build | `explore`、`general` |
-| Plan | 仅 `explore`（只读） |
-
-`task` 工具执行时检查父 agent 当前 permission：若为 `PlanModePermission`，`subagent_type=general` 直接被拒（返回错误项），以保住 plan 模式的只读语义不被"借壳"破坏。
+主 agent 可以派生任意 `subagent_type`（`explore`、`general`）。
 
 ### 参数校验
 
@@ -87,7 +81,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ### 执行流程
 
-1. 按上节严格校验参数；符合派生权限表（Plan 模式仅 `explore`）。
+1. 按上节严格校验参数。
 2. 对每个合法子任务，新建子 Agent（见第四节），把 `prompt` 作为子 agent 的第一条 user 消息。
 3. `asyncio.gather` 并发跑所有子 agent 的 `run()`，**全部结束后**统一回收。
 4. 取每个子 agent history 最后一条 assistant 文本作为该子 agent 的结果（中断者取其中断总结）。
@@ -127,7 +121,7 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 
 ### 工具与单层限制
 
-子 agent 的工具集由其 permission 白名单决定（explore: read/bash；general: read/edit/write/bash）。**不含 `task`**（单层限制）、**不含 `TodoList`**（子 agent 不维护用户 todo）、**不含 `exit_plan_mode`**（子 agent 无模式）。因白名单不含 `task`，子 agent 结构上看不到派生工具 -> 单层硬限制。
+子 agent 的工具集由其 permission 白名单决定（explore: read/glob/grep/bash/skill；general: read/glob/grep/edit/write/bash/skill）。**不含 `task`**（单层限制）、**不含 `TodoList`**（子 agent 不维护用户 todo）、**不含 `sleep_until`**（子 agent 是有界任务，不允许挂起）。因白名单不含 `task`，子 agent 结构上看不到派生工具 -> 单层硬限制。
 
 ## 五、并行、steering 与中断
 
@@ -202,9 +196,9 @@ Subagent 是一个**角色**（role），不是**模式**（mode）--这是 `per
 - 父 agent 持有其所有运行中子 agent 的列表。子 agent 触发权限请求时，由父 agent **fan-out** 一个 `subagent_permission_request` 事件到：父 agent 自己的 broker + 所有运行中子 agent（含请求者自身）的 broker，这样用户无论订阅哪个会话流都能收到。
 - 事件载荷：`{type:"subagent_permission_request", child_session, child_type, child_description, path, tool, message}`。
 - 子 agent `await _permission_event`，暂停等待。
-- 主 agent 自己的权限请求（`permission_request`）与 plan-exit 请求（`plan_exit_request`）同样 fan-out 到全部运行中子 agent 的 broker；两类事件都带 `session` 字段标明请求方，保证浏览子 session 时也能看到并审批主 agent 的请求。
-- 前端把收到的请求统一存入 **pending requests 列表**：同一主会话组（主 session + 其子 agent）内的 pending 请求弹横幅；侧边栏 "Allowed directories" 下方有可展开的 **Pending Requests 列表**，列出并审批全部 pending 请求（目录授权 + 切换到 build 模式）。多个请求并发时互不覆盖、各自独立审批；横幅聚合显示 "N permission requests are pending" 并可跳转到 Pending Requests 列表。
-- Approve / Deny 调 `POST /api/sessions/{child}/permission`（plan-exit 走 `/plan_exit`）。Approve：把路径加入该子 agent 的 `additional_dirs`（持久化到子 session.json）并重试该工具；Deny：子 agent 收到拒绝消息，工具返回错误，子 agent 继续。
+- 主 agent 自己的权限请求（`permission_request`）同样 fan-out 到全部运行中子 agent 的 broker；事件带 `session` 字段标明请求方，保证浏览子 session 时也能看到并审批主 agent 的请求。
+- 前端把收到的请求统一存入 **pending requests 列表**：同一主会话组（主 session + 其子 agent）内的 pending 请求弹横幅；侧边栏 "Allowed directories" 下方有可展开的 **Pending Requests 列表**，列出并审批全部 pending 请求（目录授权）。多个请求并发时互不覆盖、各自独立审批；横幅聚合显示 "N permission requests are pending" 并可跳转到 Pending Requests 列表。
+- Approve / Deny 调 `POST /api/sessions/{child}/permission`。Approve：把路径加入该子 agent 的 `additional_dirs`（持久化到子 session.json）并重试该工具；Deny：子 agent 收到拒绝消息，工具返回错误，子 agent 继续。
 
 > v1 批准的目录只加到该子 agent，不自动传播给父或兄弟（权限语义隔离）；但侧边栏 Allowed directories 按主会话组合并展示，浏览组内任意 session 都能看到全部授权目录并标注来源。传播留待后续。
 
@@ -237,7 +231,7 @@ Session 目录名是一个稳定的 UUID 标识（`id`），人可读的名字�
 ```
 sessions/
   <session_id>/               # 主 session（UUID 目录）
-    session.json              # name, working_dir, plan_mode, additional_dirs, created_at, session_id, titled
+    session.json              # name, working_dir, additional_dirs, created_at, session_id, titled
     history.json
   <child_id>/                 # 子 session（UUID 目录，与父平级）
     session.json              # parent_session, subagent_type, depth, description, additional_dirs, created_at
@@ -275,7 +269,7 @@ sessions/
 
 ### 前端树状展示
 
-- **侧边栏树**：父 session 节点下展开挂子 session 节点（带 type/description/状态徽标）。点击切换到该会话视图。子 session 完成后仍留在树里，只读可查。子节点按 `created_at` **降序**排列（新 spawn 的排顶部，老的在下），缺少时间戳的遗留 session 排末尾。角色徽标用 `subagent_type` 前两字符（`EX`/`GE`）：explore 保持灰底、字体用浅黄（#d29922，与 plan mode 同色系，呼应其只读语义），general 维持默认浅蓝。
+- **侧边栏树**：父 session 节点下展开挂子 session 节点（带 type/description/状态徽标）。点击切换到该会话视图。子 session 完成后仍留在树里，只读可查。子节点按 `created_at` **降序**排列（新 spawn 的排顶部，老的在下），缺少时间戳的遗留 session 排末尾。角色徽标用 `subagent_type` 前两字符（`EX`/`GE`）：explore 保持灰底、字体用浅黄（#d29922，呼应其只读语义），general 维持默认浅蓝。
 - **子 session 视图**：复用 `ChatView`。
   - 运行中：**显示输入框**（用于 steering）+ **■ 停止按钮**（与主 session 同位，点击走 `interrupt`：硬停当前工作后总结退出）；订阅子 session SSE。
   - 已结束（sealed）：**禁用输入框**（提示"该 subagent 已结束"），仅展示历史，可返回父会话。停止按钮随之隐藏。
@@ -295,11 +289,11 @@ sessions/
 
 ## 十一、实现拆解（审核通过后执行）
 
-1. **`permission.py`**：`BuildModePermission` / `PlanModePermission` 的 `tool_names` 增加 `task`；新增 `TASK_TOOL_DEF` 工具定义常量（或 `TaskTool` 子类），由这两个 permission 在 `filter_definitions` 里拼上。Explore/General 不变（天然不含 task）。
+1. **`permission.py`**：主 agent permission（`PrimaryPermission`）的 `tool_names` 增加 `task`；新增 `TASK_TOOL_DEF` 工具定义常量（或 `TaskTool` 子类），由 permission 在 `filter_definitions` 里拼上。Explore/General 不变（天然不含 task）。
 2. **`agent.py`**：
    - `__init__` 加 `registry`、`depth`、`parent_broker`、`max_steps`、`_sealed` 参数/字段。
-   - 工具派发处加 `elif tool_name == "task": tool_result = await self._run_subagents(args)`，作为 `intercept` 之后、`exit_plan_mode` 之后的分支。
-   - 新增 `_run_subagents(args)`：校验（含派生权限：plan 仅 explore）、创建子 Agent（注入 prompt、permission、depth、registry、parent_broker、max_steps）、`gather`、组装 `<task_result>`。
+   - 工具派发处加 `elif tool_name == "task": tool_result = await self._run_subagents(args)`，作为 `intercept` 之后的分支。
+   - 新增 `_run_subagents(args)`：校验、创建子 Agent（注入 prompt、permission、depth、registry、parent_broker、max_steps）、`gather`、组装 `<task_result>`。
    - run 循环加 `max_steps` 计数与超限退出。
    - 新增 `interrupt()`：置 `_interrupted` 标志 + kill bash 进程组 + **cancel 当前 run task**（立刻中断 LLM 流/工具）；run 的 `except CancelledError` 检测 `_interrupted` 为真则 `uncancel` + 保留半截思维链 + 抢救在飞 bash 部分输出 + 补齐 dangling tool_calls + 做总结 turn，结束置 `_sealed`。`_interrupted` 为假（主 agent 取消）则硬停不总结（同样保留半截输出 + 抢救 bash）。
    - 子 agent 权限请求：复用 `_permission_event`；触发时经 `parent_broker` 由父 agent fan-out `subagent_permission_request` 到父 + 所有兄弟 broker。
@@ -314,7 +308,6 @@ sessions/
 - **一次调用 fan-out vs 多次调用 gather**：选"一次 `task` 调用、`tasks` 数组 fan-out"（单次调用产出多个并行子 agent）。备选是"主 agent 一轮里发多个单子 agent 的 `task` 调用、由 run 循环 gather"（opencode 风格）。选前者是因为：单一 gather 点、单一中断句柄、结果按批结构化返回，且不必改造 run 循环去特判"同轮多 task 调用"。
 - **task 工具异步化范围**：只让 `task` 异步，不把 `execute_tool` 整体异步化，控制改动面。
 - **子 agent 权限请求**：交互式 + 全局广播（父 agent fan-out 到父及所有兄弟 broker），而非越界即拒；提示写明子 agent 身份与路径。
-- **plan 模式派生**：仅 explore（只读），禁 general，保住只读语义。
 - **steering 与 sealed**：用户可 steer 运行中的子 agent（有界任务的中途引导）；run 一旦结束即 sealed，不可复用，但历史长期只读可查。
 - **max_steps=100**：纳入 v1 作防失控兜底。
 - **提示词正向框架**：系统提示词和 `task` 工具描述采用正向框架--把 subagent 定位为"屏蔽上下文、省 token、探索首选"，并给出正面用例（如"错误在哪处理""代码库结构"），排除项收窄为 needle 查询（已知文件路径/单个定义/2-3 个已知文件）。早期版本用"不要为单个 read/bash 能做的事开 subagent""spawning costs a full independent run"这类宽泛否定且在提示词与工具描述里各重复一遍，对 DeepSeek 这类对否定指令敏感的模型造成双倍抑制，使模型几乎从不主动 spawn subagent。对照 opencode 的 `task.txt` 与各模型 `prompt/*.txt`（"prefer to use the Task tool to reduce context usage""proactively use"），正向框架是其模型乐于派生 subagent 的主因。

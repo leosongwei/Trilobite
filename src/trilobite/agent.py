@@ -40,10 +40,9 @@ from src.trilobite.prompts import (
 )
 from src.trilobite.permission import (
     AgentPermission,
-    BuildModePermission,
     ExploreSubagentPermission,
     GeneralSubagentPermission,
-    PlanModePermission,
+    PrimaryPermission,
 )
 from src.trilobite.skills import discover_skills, format_skill_listing
 from src.trilobite.timer import (
@@ -167,25 +166,6 @@ _STREAM_ERROR_LABELS = {
 def _stream_error_label(err: Exception) -> str:
     """Short human-readable label for a stream transport error."""
     return _STREAM_ERROR_LABELS.get(type(err), type(err).__name__)
-
-PLAN_MODE_NOTIFICATION = (
-    '<modeswitch mode="plan">\n'
-    "You are now in plan mode (read-only analysis).\n"
-    "The following tools are blocked and will be rejected if called: edit, write.\n"
-    "All other tools remain available: read, glob, grep, bash, TodoList, exit_plan_mode, task, sleep_until.\n"
-    "Note: in plan mode the task tool may only spawn explore (read-only) subagents.\n"
-    "Focus on exploring, analyzing, and planning. To make file changes, call exit_plan_mode to request switching to build mode.\n"
-    "</modeswitch>"
-)
-
-BUILD_MODE_NOTIFICATION = (
-    '<modeswitch mode="build">\n'
-    "You are now in build mode (full access).\n"
-    "All tools are available: read, glob, grep, edit, write, bash, TodoList, task, sleep_until.\n"
-    "(exit_plan_mode is a no-op in build mode and will be rejected if called.)\n"
-    "You may make file changes, run shell commands, and use your full arsenal of tools.\n"
-    "</modeswitch>"
-)
 
 
 # ── httpx-based OpenAI-compatible streaming chat completions ────────────────
@@ -390,7 +370,7 @@ class Agent:
         self.compaction_trigger_ratio = model_def.compaction_trigger_ratio
         self._extra_body = model_def.extra_body or {}
         # Subagents override the system prompt with the role prefix + guidance
-        # and use a fixed role permission (never plan/build mode).
+        # and use a fixed role permission.
         self._subagent_type: str | None = subagent_type
         self._description: str = description or ""
         if subagent_type == "explore":
@@ -438,8 +418,7 @@ class Agent:
         elif subagent_type == "general":
             self._permission: AgentPermission = GeneralSubagentPermission()
         else:
-            self._permission: AgentPermission = BuildModePermission()
-        self._last_notified_mode: bool | None = None
+            self._permission: AgentPermission = PrimaryPermission()
         self._additional_dirs: list[Path] = []
         # Global fixed allowed dirs from the config (``allowed_dirs``): granted
         # to every session, never persisted per session, never revocable from
@@ -447,8 +426,6 @@ class Agent:
         self._global_dirs = normalize_dirs(
             self.config.get("allowed_dirs", []) or [], self.working_dir
         )
-        self._plan_exit_event: asyncio.Event = asyncio.Event()
-        self._plan_exit_approved: bool = False
         self._permission_event: asyncio.Event = asyncio.Event()
         self._permission_approved: bool = False
         self._permission_path: str = ""
@@ -860,27 +837,6 @@ class Agent:
         if not self.history or not isinstance(self.history[0], SystemMessage):
             self.history.insert(0, SystemMessage(self.system_prompt + self.working_context))
 
-    @property
-    def _plan_mode(self) -> bool:
-        """True when the primary agent is running in plan mode.
-
-        Derived from the active permission policy rather than stored as a
-        separate flag, so the permission is the single source of truth.
-        """
-        return isinstance(self._permission, PlanModePermission)
-
-    def set_plan_mode(self, mode: bool) -> None:
-        """Switch the primary agent between plan and build mode.
-
-        This swaps the permission policy in place -- a mode change on a
-        running agent, not a new agent definition. The notification logic
-        in ``run`` notices the swap and tells the model. Subagents are fixed
-        roles and ignore this.
-        """
-        if self._subagent_type is not None:
-            return
-        self._permission = PlanModePermission() if mode else BuildModePermission()
-
     def is_sealed(self) -> bool:
         """True for a subagent whose run has ended (view-only, no new input)."""
         return self._sealed
@@ -1001,10 +957,6 @@ class Agent:
         self.set_additional_dirs([str(d) for d in self._additional_dirs] + [path])
         self._persist_additional_dirs()
 
-    def resolve_plan_exit(self, approved: bool):
-        self._plan_exit_approved = approved
-        self._plan_exit_event.set()
-
     def resolve_permission(self, approved: bool):
         self._permission_approved = approved
         self._permission_event.set()
@@ -1078,7 +1030,8 @@ class Agent:
         Compact summaries are stored as :class:`UserMessage` (so the API sees
         them as user content) but are not real user turns, so they must not
         receive a ``user_seq`` - otherwise revert/edit numbering would drift.
-        Mode-change notices are the same: persisted as user content for cache
+        Legacy mode-change notices (histories written before plan mode was
+        removed) are the same: persisted as user content for cache
         stability, but not real user turns.
         """
         return sum(
@@ -1217,12 +1170,6 @@ class Agent:
         self.history.append(CompactMarker())
         self.history.append(SystemMessage(rebuilt_system))
         self.history.append(UserMessage(f"<compact>\n{summary}</compact>", compact_summary=True))
-        # The pre-marker <modeswitch> notice is now behind the compact marker
-        # and dropped from the API context, so re-assert the current mode.
-        # Syncing _last_notified_mode prevents a duplicate notice on next run.
-        notif = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
-        self.history.append(UserMessage(notif, is_mode_notification=True))
-        self._last_notified_mode = self._plan_mode
         self._need_compact = False
         self._force_run = True
         self._token_count = 0
@@ -1258,23 +1205,6 @@ class Agent:
         # Guard against a dangling assistant(tool_calls) lacking results left
         # behind by a crashed/interrupted run -- the API would reject it.
         self._patch_dangling_tool_calls()
-
-        # The current mode is conveyed to the model via a <modeswitch> user
-        # message (the tool set is identical across modes for cache stability,
-        # so mode awareness cannot come from which tools are listed). On the
-        # first run of a session (new or restored) _last_notified_mode is None
-        # and the model has not been told its mode yet, so we inject the
-        # notice; afterwards we only inject on an actual change. Persisting it
-        # keeps the API prefix growing monotonically so the turn stays
-        # cacheable. The notice is hidden from the frontend and excluded from
-        # user_seq via is_mode_notification. Scheduled agents are a fixed role
-        # (no mode), so they never get a notice.
-        if (
-            self._last_notified_mode is None or self._plan_mode != self._last_notified_mode
-        ):
-            notif = PLAN_MODE_NOTIFICATION if self._plan_mode else BUILD_MODE_NOTIFICATION
-            self._last_notified_mode = self._plan_mode
-            self.history.append(UserMessage(notif, is_mode_notification=True))
 
         # The model message being streamed/mutated in the current turn
         # (None outside a turn). Held as locals so the CancelledError handler
@@ -1339,14 +1269,13 @@ class Agent:
 
                 await self._send_stream_event({"type": "turn"})
 
-                # The tools list is identical on every turn and across plan/build
-                # mode switches (both modes advertise the full set), so the
-                # request prefix stays cache-stable. Mode differences are
-                # conveyed via the <modeswitch> notice and enforced by
-                # permission.intercept at execution time, not by withholding
-                # tool definitions. The compaction turn keeps the same tools too;
-                # any tool call it makes is intercepted (see the _need_compact
-                # branch below) so the tools never actually execute.
+                # The tools list is identical on every turn, so the request
+                # prefix stays cache-stable. Tool differences (subagent roles,
+                # compaction turn) are enforced by permission.intercept at
+                # execution time, not by withholding tool definitions; any
+                # tool call during the compaction turn is intercepted (see
+                # the _need_compact branch below) so the tools never actually
+                # execute.
                 tools = self._permission.filter_definitions(
                     enable_vl=self.enable_vl
                 )
@@ -1375,8 +1304,8 @@ class Agent:
                 })
 
                 self._log.info(
-                    "TURN result content_len=%d thinking_len=%d tool_calls=%d token_count=%d plan_mode=%s",
-                    len(model.content), len(model.think), len(model.tool_calls), self._token_count, self._plan_mode,
+                    "TURN result content_len=%d thinking_len=%d tool_calls=%d token_count=%d",
+                    len(model.content), len(model.think), len(model.tool_calls), self._token_count,
                 )
                 if not model.content and not model.think and not model.tool_calls:
                     self._log.warning("TURN produced EMPTY model output (no content/thinking/tool_calls)")
@@ -1417,21 +1346,6 @@ class Agent:
                             # is retried below until the model emits a text-only
                             # handoff summary.
                             tool_result = {"result": "Compaction in progress: tool calls are not executed during the compaction turn. Respond with the handoff summary as text only, do not call any tools."}
-                        elif tool_name == "exit_plan_mode":
-                            if not self._plan_mode:
-                                tool_result = {"result": "exit_plan_mode is a no-op in build mode; you are already in build mode."}
-                            else:
-                                # Fan out to the group so the request is visible
-                                # even while the user is browsing a subagent.
-                                await self._broadcast_to_group({"type": "plan_exit_request", "session": self.name})
-                                await self._plan_exit_event.wait()
-                                self._plan_exit_event.clear()
-                                if self._plan_exit_approved:
-                                    self._permission = BuildModePermission()
-                                    self._last_notified_mode = False
-                                    tool_result = {"result": "Plan mode exited. You are now in build mode and may make file changes."}
-                                else:
-                                    tool_result = {"result": "User declined. Continue planning in plan mode."}
                         elif tool_name == "task":
                             tool_result = await self._run_subagents(args)
                         elif tool_name == "sleep_until":
@@ -1728,7 +1642,6 @@ class Agent:
             self.history.raw,
             self._token_count,
             self.max_context_tokens,
-            self._plan_mode,
             [str(d) for d in self._additional_dirs],
         )
         # Expand the committed typed messages into the flat role-based dict list
@@ -1957,12 +1870,6 @@ class Agent:
         children: list[Agent] = []
         for i, spec in enumerate(specs):
             desc, stype, prompt = spec.description, spec.subagent_type, spec.prompt
-            if self._plan_mode and stype == "general":
-                errors.append(_task_param_error(
-                    f"tasks[{i}] ({desc}): plan mode can only spawn "
-                    "explore (read-only) subagents"
-                ))
-                continue
             if self._depth >= 1:
                 errors.append(_task_param_error(
                     f"tasks[{i}] ({desc}): subagent nesting limit reached"
@@ -2138,8 +2045,8 @@ class Agent:
     async def _broadcast_to_group(self, event: dict) -> None:
         """Send an event to this agent's own stream and, for the main session,
         to all its running children. Used for the main session's own approval
-        requests (permission / plan-exit) so the prompt is visible no matter
-        which session the user is currently viewing."""
+        requests (permission) so the prompt is visible no matter which session
+        the user is currently viewing."""
         await self._send_stream_event(event)
         if self._subagent_type is None:
             for c in list(self._children):

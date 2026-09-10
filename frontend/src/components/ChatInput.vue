@@ -1,14 +1,5 @@
 <template>
   <div class="input-area">
-    <button
-      v-if="!state.isSubagent"
-      class="mode-toggle"
-      :class="{ plan: state.planMode }"
-      @click="toggleMode"
-      :title="state.planMode ? 'Switch to Build mode' : 'Switch to Plan mode'"
-    >
-      {{ state.planMode ? 'Plan\u00A0' : 'Build' }}
-    </button>
     <div v-if="state.isSubagent && state.sealed" class="sealed-notice">
       This subagent has ended (view-only).
     </div>
@@ -70,7 +61,7 @@ import { interruptSession } from '../api'
 import type { ImageAttachment } from '../api'
 import { readFileAsDataURL } from '../utils/images'
 
-const { state, enableVl, sendMessage, stopAgent, interruptSubagent, setMode } = useStore()
+const { state, enableVl, sendMessage, stopAgent, interruptSubagent } = useStore()
 const message = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const imageInput = ref<HTMLInputElement>()
@@ -203,10 +194,6 @@ async function stop() {
   } else {
     await stopAgent()
   }
-}
-
-async function toggleMode() {
-  await setMode(state.planMode ? 'build' : 'plan')
 }
 </script>
 

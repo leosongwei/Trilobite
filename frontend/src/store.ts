@@ -18,12 +18,11 @@ interface State {
   // change. The sidebar "Session files" tree watches it to reload so files
   // the agent created/modified show up promptly.
   fsRefreshTick: number
-  planMode: boolean
   additionalDirs: string[]
   // Global fixed allowed dirs from the config (init event): granted to every
   // session, shown in the sidebar in gray with no remove button.
   globalDirs: string[]
-  // Pending approval requests (directory grants + plan-exit), one entry per
+  // Pending approval requests (directory grants), one entry per
   // requesting session. Concurrent requests from the main session and several
   // subagents never overwrite each other; the banner and the sidebar Requests
   // list both render from this array. Entries are pruned when the requesting
@@ -47,7 +46,6 @@ const state = reactive<State>({
   statusText: null,
   streamTick: 0,
   fsRefreshTick: 0,
-  planMode: false,
   additionalDirs: [],
   globalDirs: [],
   pendingRequests: [],
@@ -197,7 +195,6 @@ function handleSSEEvent(event: SSEEvent) {
       state.isStreaming = event.is_running
       state.tokenCount = event.token_count
       state.maxTokens = event.max_context_tokens
-      state.planMode = event.plan_mode
       state.additionalDirs = event.additional_dirs ?? []
       state.globalDirs = event.global_dirs ?? []
       state.isSubagent = event.is_subagent ?? false
@@ -355,10 +352,6 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'status':
       state.statusText = event.text
-      break
-
-    case 'plan_exit_request':
-      addPendingRequest({ kind: 'plan_exit', session: event.session })
       break
 
     case 'permission_request':
@@ -799,7 +792,6 @@ export function useStore() {
     state.chatItems = []
     state.tokenCount = 0
     state.statusText = null
-    state.planMode = false
     state.additionalDirs = []
     state.globalDirs = []
     state.isStreaming = false
@@ -842,7 +834,6 @@ export function useStore() {
       state.tokenCount = 0
       state.maxTokens = 0
       state.statusText = null
-      state.planMode = false
       state.additionalDirs = []
       state.globalDirs = []
       state.isStreaming = false
@@ -870,12 +861,6 @@ export function useStore() {
   async function stopAgent() {
     if (!state.currentSession) return
     await api.cancelSession(state.currentSession)
-  }
-
-  async function setMode(mode: 'plan' | 'build') {
-    if (!state.currentSession) return
-    await api.setMode(state.currentSession, mode)
-    state.planMode = mode === 'plan'
   }
 
   async function selectModel(modelName: string) {
@@ -908,32 +893,23 @@ export function useStore() {
     // Remove the entry first so the banner/list update immediately; the API
     // call unblocks the waiting agent.
     removePendingRequest(req)
-    if (req.kind === 'plan_exit') {
-      if (req.session === state.currentSession) state.planMode = false
-      await api.planExit(req.session, true)
+    if (!req.path) return
+    if (req.session === state.currentSession) {
+      state.additionalDirs = await api.addDir(req.session, req.path)
     } else {
-      if (!req.path) return
-      if (req.session === state.currentSession) {
-        state.additionalDirs = await api.addDir(req.session, req.path)
-      } else {
-        // Approved for a session we are not viewing (e.g. a subagent while
-        // browsing the main session): refresh its dirs in the polled list so
-        // the sidebar Allowed directories updates right away.
-        const dirs = await api.addDir(req.session, req.path)
-        const s = state.sessions.find((x) => x.id === req.session)
-        if (s) s.additional_dirs = dirs
-      }
-      await api.resolvePermission(req.session, true)
+      // Approved for a session we are not viewing (e.g. a subagent while
+      // browsing the main session): refresh its dirs in the polled list so
+      // the sidebar Allowed directories updates right away.
+      const dirs = await api.addDir(req.session, req.path)
+      const s = state.sessions.find((x) => x.id === req.session)
+      if (s) s.additional_dirs = dirs
     }
+    await api.resolvePermission(req.session, true)
   }
 
   async function rejectRequest(req: PendingRequest) {
     removePendingRequest(req)
-    if (req.kind === 'plan_exit') {
-      await api.planExit(req.session, false)
-    } else {
-      await api.resolvePermission(req.session, false)
-    }
+    await api.resolvePermission(req.session, false)
   }
 
   async function interruptSubagent(name: string) {
@@ -996,7 +972,6 @@ export function useStore() {
     deleteSession,
     sendMessage,
     stopAgent,
-    setMode,
     selectModel,
     addDir,
     removeDir,

@@ -7,7 +7,7 @@
 三个核心能力（issue #49）：
 
 1. **查看 diff**：文件与指定 git 分支（默认 `master`）的差异，复用聊天里的 `DiffView` 组件渲染（分屏/统一双视图）。
-2. **编辑文件**：textarea 全文件编辑，保存直接落盘，不受 agent 运行状态和 plan mode 限制。
+2. **编辑文件**：textarea 全文件编辑，保存直接落盘，不受 agent 运行状态限制。
 3. **代码高亮**：只读查看模式用 highlight.js 渲染语法高亮（依赖小、易集成；若集成成本过高可砍掉，不影响前两项）。
 
 ## 入口与布局
@@ -145,7 +145,7 @@ grep -E "^def .*\(self\):$" app.py
 
 #### `PUT /fs/file`（body: `{path, content}`）
 
-* 直接落盘，**不走 agent**：文件管理器是用户自己的 IDE 操作，不产生对话历史、不经过 permission 拦截、不受 plan mode 限制（plan mode 只约束 agent 的工具调用，用户手动改文件本来就是允许的）、不受 agent 运行状态阻塞。
+* 直接落盘，**不走 agent**：文件管理器是用户自己的 IDE 操作，不产生对话历史、不经过 permission 拦截、不受 agent 运行状态阻塞。
 * 行尾处理：读取时检测原文件行尾（CRLF/LF），保存时把提交内容还原为原行尾写回（复用 `tools/edit.py` 的 `_detect_line_ending`/`_materialize` 逻辑，提取为公共函数）。
 * 父目录不存在 → 400；敏感文件 → 拒绝；working_dir/additional_dirs 之外 → 拒绝。
 * 返回 `{"ok": true}`。

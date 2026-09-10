@@ -15,7 +15,7 @@ Trilobite 的每个 session 有一个工作目录（working directory）。文�
 每个 session 的工作目录在创建时指定，存储在 `session.json` 中：
 
 ```json
-{ "name": "mysession", "working_dir": "/home/user/project", "plan_mode": false }
+{ "name": "mysession", "working_dir": "/home/user/project" }
 ```
 
 文件工具的所有路径操作都基于此目录进行规范化（canonicalize）和边界检查。
@@ -37,8 +37,7 @@ Content-Type: application/json
 {
   "name": "mysession",
   "working_dir": "/home/user/project",
-  "additional_dirs": ["/home/user/shared-libs"],
-  "plan_mode": false
+  "additional_dirs": ["/home/user/shared-libs"]
 }
 ```
 
@@ -105,10 +104,10 @@ allowed_dirs: []
 
 ### 权限请求 UI（横幅 + Pending Requests 列表）
 
-所有待审批请求（目录授权、切换到 build 模式）统一进入前端 **pending requests 列表**，同一主会话组（主 session + 其子 agent）内的请求互不覆盖、各自独立审批：
+所有待审批请求（目录授权）统一进入前端 **pending requests 列表**，同一主会话组（主 session + 其子 agent）内的请求互不覆盖、各自独立审批：
 
 - **横幅**：当前浏览的 session 所属主会话组内有 pending 请求时弹出。只有一个请求时显示详情与 Approve/Reject（目录授权显示 Grant/Deny）；多个请求并发时聚合为 "N permission requests are pending" + Review 按钮（打开侧边栏 Pending Requests 列表）。主 agent 与子 agent 的请求都 fan-out 到整个主会话组的 broker（事件带 `session` 字段标明请求方），浏览组内任意 session 都能看到。
-- **Pending Requests 列表**：侧边栏 "Allowed directories" 下方可展开，列出全部 pending 请求（含请求方、路径/模式切换、Approve/Reject 按钮）。批准后条目消失；目录授权批准的路径进入该 session 的 Allowed directories，横幅同步消失。
+- **Pending Requests 列表**：侧边栏 "Allowed directories" 下方可展开，列出全部 pending 请求（含请求方、路径、Approve/Reject 按钮）。批准后条目消失；目录授权批准的路径进入该 session 的 Allowed directories，横幅同步消失。
 
 请求被批准/拒绝后条目即从列表移除；请求方 session 停止运行（未答复即结束）时条目自动清理。
 
@@ -184,19 +183,19 @@ def is_within_directory(candidate: str, base: str) -> bool:
 
 ### edit 工具
 
-与 read 工具相同的路径检查。对已有文件做精确字符串替换：`old_string` 必须在文件中唯一（或设 `replace_all` 替换全部）。工具内部对纯 CRLF 文件做行尾归一化--在 LF「模型视图」上匹配（与 read 工具展示的 LF 视图一致），写回时还原原始 CRLF，从而避免 LLM 提供的 LF `old_string` 在 CRLF 文件上匹配失败。在 Plan 模式下，所有 `edit` 调用被拒绝（Plan 模式守卫优先于路径检查）。
+与 read 工具相同的路径检查。对已有文件做精确字符串替换：`old_string` 必须在文件中唯一（或设 `replace_all` 替换全部）。工具内部对纯 CRLF 文件做行尾归一化--在 LF「模型视图」上匹配（与 read 工具展示的 LF 视图一致），写回时还原原始 CRLF，从而避免 LLM 提供的 LF `old_string` 在 CRLF 文件上匹配失败。
 
 ### write 工具
 
-与 read 工具相同的路径检查。整文件创建/覆盖/追加（`mode` 为 `overwrite` 或 `append`），原样写入、不做匹配。在 Plan 模式下，所有 `write` 调用被拒绝（Plan 模式守卫优先于路径检查）。
+与 read 工具相同的路径检查。整文件创建/覆盖/追加（`mode` 为 `overwrite` 或 `append`），原样写入、不做匹配。
 
 ### glob 工具
 
-按文件名 glob 模式查找文件（如 `**/*.py`），返回匹配路径（相对工作目录），按修改时间倒序排列。路径检查与 read 一致：`path` 参数（搜索根目录）经 `resolve_file_path` 解析，工作目录外需授权。在 git 仓库中通过 `git ls-files` 尊重 `.gitignore`（见 `file_discovery.py`），非 git 目录则遍历并跳过常见噪音目录（`.git`、`node_modules`、`__pycache__` 等）。只读工具，Plan 模式可用。
+按文件名 glob 模式查找文件（如 `**/*.py`），返回匹配路径（相对工作目录），按修改时间倒序排列。路径检查与 read 一致：`path` 参数（搜索根目录）经 `resolve_file_path` 解析，工作目录外需授权。在 git 仓库中通过 `git ls-files` 尊重 `.gitignore`（见 `file_discovery.py`），非 git 目录则遍历并跳过常见噪音目录（`.git`、`node_modules`、`__pycache__` 等）。只读工具。
 
 ### grep 工具
 
-按正则搜索文件内容，返回 `path:line: content` 格式的匹配行。支持 `output_mode`（`content` / `files_with_matches` / `count`）、`glob` 文件名过滤、`context` 上下文行、`case_insensitive`、`max_results`。路径检查与 read 一致；文件发现与 glob 工具共用 `file_discovery.discover_files`，同样尊重 `.gitignore`。自动跳过二进制文件（含 NUL 字节）。只读工具，Plan 模式可用。
+按正则搜索文件内容，返回 `path:line: content` 格式的匹配行。支持 `output_mode`（`content` / `files_with_matches` / `count`）、`glob` 文件名过滤、`context` 上下文行、`case_insensitive`、`max_results`。路径检查与 read 一致；文件发现与 glob 工具共用 `file_discovery.discover_files`，同样尊重 `.gitignore`。自动跳过二进制文件（含 NUL 字节）。只读工具。
 
 ### bash 工具
 

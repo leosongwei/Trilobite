@@ -44,7 +44,7 @@ per-session 事件总线，维护：
 
 | 事件 | 字段 | 说明 |
 |---|---|---|
-| `init` | `history, is_running, token_count, max_context_tokens, plan_mode, additional_dirs` | 连接时首发，前端据此重建对话与状态 |
+| `init` | `history, is_running, token_count, max_context_tokens, additional_dirs` | 连接时首发，前端据此重建对话与状态 |
 | `user` | `id, text, user_seq` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`id` 为该消息的消息 id（revert 用），`user_seq` 为在真实 user 消息中的序号 |
 | `user_edit` | `message_id, text` | revert 编辑尚未被模型读取的 steer 消息时发（消息已在 history 但模型未读到），前端按 `message_id` 就地更新对应 user 气泡 |
 | `turn` | -- | 一个 LLM 回合开始，置 `is_running=true` |
@@ -57,7 +57,6 @@ per-session 事件总线，维护：
 | `tool_result` | `tool, result, diff?` | 工具结果（`result` 经 `max_output_lines`/`max_output_chars` 截断后写入 history；`diff` 为 edit 的结构化行级 diff：`[{type, old, new, text}]`，带真实文件行号） |
 | `usage` | `token_count, max_context_tokens` | token 用量 |
 | `status` | `text` | 状态横幅（如 compaction） |
-| `plan_exit_request` | -- | 请求退出 plan 模式 |
 | `permission_request` | `path, tool, message` | 请求文件访问权限 |
 | `done` | -- | run 正常结束，置 `is_running=false` |
 | `cancelled` | -- | run 被取消，置 `is_running=false` |

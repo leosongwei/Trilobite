@@ -25,7 +25,7 @@ Trilobite 目前只有 web 模式：启动 uvicorn 服务，前端 Vue 应用通
 - ✅ inline diff 渲染（复用 web 端 inline 版本的 diff 行结构）。
 - ✅ readline 行编辑：退格 / 方向键 / 行首行尾等编辑交给 readline（`import readline`），不再依赖内核 cooked 模式（修复方向键/退格出乱码的问题）。
 - ✅ `/stop`：仅在 IDLE 时提示「未运行」（运行中不读 stdin，要中断用 Ctrl+C）。
-- ✅ 权限请求 / plan 退出请求：交互式 y/n 提示。
+- ✅ 权限请求：交互式 y/n 提示。
 - ✅ `/exit`、`/quit`、Ctrl+D 退出。
 - ✅ Ctrl+C：RUNNING 时中断当前 run 回 IDLE，IDLE 时退出 CLI。
 
@@ -37,7 +37,6 @@ Trilobite 目前只有 web 模式：启动 uvicorn 服务，前端 Vue 应用通
 - ❌ **subagent 交互**：不切换 / 查看子 session、不单独中断某个 subagent。subagent 自然跑完，或由 Ctrl+C（`cancel`）连带取消（与 web 端主 session stop 行为一致）。subagent 的内部 thinking / 工具调用**不**在 CLI 主界面展示，只展示「启动 / 退出」两行（见第六节）。
 - ❌ **历史回显**：`-c` 续接时加载历史供 agent 保持上下文，但终端**不回显**历史消息（只显示一条 `resumed` 提示，从当前继续）。完整历史仍可在 web 端查看。
 - ❌ **ncurses / 全屏 TUI**：不接管终端、不做分屏面板。
-- ❌ **plan/build 模式切换**（Tab）：v1 不支持运行中切换模式（沿用 session 创建时的 build 模式）。
 
 ## 二、入口与启动
 
@@ -68,7 +67,7 @@ trilobite -c             # CLI 续接当前目录最新的 session
 
 **`-t` 新建**：
 1. `init_config()` 加载配置（与 web 模式共用 `~/.config/trilobite/config.yaml`）。
-2. 在 `get_sessions_dir()` 下新建一个 session 目录（`uuid4().hex`），写 `session.json`（`working_dir` 解析为绝对路径、`plan_mode: false`、`additional_dirs: []`、`created_at`、`model` = 默认模型名）。
+2. 在 `get_sessions_dir()` 下新建一个 session 目录（`uuid4().hex`），写 `session.json`（`working_dir` 解析为绝对路径、`additional_dirs: []`、`created_at`、`model` = 默认模型名）。
 3. 实例化 `Agent`（与 `POST /api/sessions` 相同的参数：`name`、`working_dir`、`session_dir`、`config`、`registry`、`model_name`），回写 `session_id`。
 4. `await agent.attach_subscriber()` 拿到事件队列 + `init` 快照（新 session 历史为空）。
 5. 进入 REPL 主循环（见第三节）。
@@ -77,7 +76,7 @@ trilobite -c             # CLI 续接当前目录最新的 session
 1. `init_config()`，取 `cwd`。
 2. 扫描 `get_sessions_dir()` 下所有 `session.json`，过滤掉 subagent session（`subagent_type` 非空）和相对路径 `working_dir`，匹配 `Path(working_dir).resolve() == cwd`，按 `history.json` 的 mtime（最后一次存盘时间，回退 `created_at`）取最新。
 3. 无匹配则退化新建（打印 `无历史 session，新建`），流程同 `-t`。
-4. 有匹配则实例化 `Agent`（复用其 `session_id` 与保存的 `model`，`Agent` 从 `history.json` 加载历史），恢复 `plan_mode` / `additional_dirs`。
+4. 有匹配则实例化 `Agent`（复用其 `session_id` 与保存的 `model`，`Agent` 从 `history.json` 加载历史），恢复 `additional_dirs`。
 5. `attach_subscriber()` 拿队列 + 快照（**不回显历史**，只打印一条 `resumed · <name> · <working_dir>` 提示）。
 6. 进入 REPL 主循环。
 
@@ -129,7 +128,7 @@ CLI 是一个两状态循环：
 
 进入 RUNNING 后，**只消费 broker 事件**，不读 stdin（无 steering、无 `/stop`）。循环 `await queue.get()` 取事件渲染：
 
-- **broker 事件**：渲染（见第四节）。`permission_request` / `plan_exit_request` / `subagent_permission_request` 时，此刻 agent 阻塞在 `Event.wait()`、无并发输出，直接 `input()` 读 y/n 再 resolve（见第五节）。`done` / `cancelled` / `error` / `interrupted` 时结束本 run，回 IDLE。
+- **broker 事件**：渲染（见第四节）。`permission_request` / `subagent_permission_request` 时，此刻 agent 阻塞在 `Event.wait()`、无并发输出，直接 `input()` 读 y/n 再 resolve（见第五节）。`done` / `cancelled` / `error` / `interrupted` 时结束本 run，回 IDLE。
 - **Ctrl+C（SIGINT）**：由 `loop.add_signal_handler(signal.SIGINT, agent.cancel)` 处理，消费者继续从 queue 取到 `cancelled` 终结事件后回 IDLE（不退出）。
 
 RUNNING 期间**不显示提示符**（类 bash：命令运行时不显示新提示），也**不读 stdin**（要中断就 Ctrl+C）。
@@ -181,7 +180,6 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 | `compact` | 横幅 `── context compacted ──`，dim |
 | `subagents` | 每个 child 一行 `agent: <desc> 启动`，dim |
 | `subagent_state` | 一行 `agent: <desc> 退出 (state)`，dim |
-| `plan_exit_request` | 交互提示（见第五节） |
 | `permission_request` | 交互提示（见第五节） |
 | `subagent_permission_request` | 交互提示（见第五节） |
 | `done` | 不渲染，仅结束 RUNNING 回到 IDLE |
@@ -211,7 +209,6 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 | `grep` | `[grep: <pattern>]`（有 `glob`/`path` 时附 ` (<glob>)` / ` in <path>`） |
 | `TodoList` | `[TodoList]` |
 | `task` | `[task: <n> subagent(s)]` |
-| `exit_plan_mode` | `[exit_plan_mode]` |
 
 ### 工具结果渲染（`tool_result`）
 
@@ -235,19 +232,18 @@ CLI 订阅 broker 队列，对每个事件按下表渲染。颜色仅在 stdout 
 
 每行格式：`<行号> <前缀> <text>`。无需任何配对 / 重组逻辑（这正是 inline 比 split 简单之处）。
 
-## 五、交互式提示（权限 / plan 退出）
+## 五、交互式提示（权限）
 
 三种事件需要用户当场回答：
 
 | 事件 | 提示 | 解析 |
 |---|---|---|
 | `permission_request` | `path`、`tool`、`message` | `agent.resolve_permission(approved)` |
-| `plan_exit_request` | （请求退出 plan 模式） | `agent.resolve_plan_exit(approved)` |
 | `subagent_permission_request` | `child_description`、`path`、`tool` | `agent.resolve_permission(approved)`（权限落在父 agent 上） |
 
 ### 提示的串行性
 
-这些事件发生时 agent 正阻塞等待决议（`_permission_event.wait()` / `_plan_exit_event.wait()`），期间不会有其他输出流，提示能干净地显示。此时 RUNNING 消费者暂停在事件循环上，直接用 `input()` 同步读 y/n -- 无并发输出竞争，天然串行。
+这些事件发生时 agent 正阻塞等待决议（`_permission_event.wait()`），期间不会有其他输出流，提示能干净地显示。此时 RUNNING 消费者暂停在事件循环上，直接用 `input()` 同步读 y/n -- 无并发输出竞争，天然串行。
 
 权限提示的 `input()` 期间 RUNNING 的 `loop.add_signal_handler(SIGINT, agent.cancel)` 仍挂着，但该 handler 在 `input()` 阻塞事件循环时无法执行（Ctrl+C 会被吞）。故提示前临时 `remove_signal_handler(SIGINT)` 切回 Python 默认 handler（Ctrl+C 抛 `KeyboardInterrupt` -> `agent.cancel()`），提示结束后再 `add_signal_handler` 装回（见第三节）。
 
@@ -297,5 +293,4 @@ agent: <description> 退出 (state) ← subagent_state 事件
 1. **steering**：v1 放弃。改用 readline `input()` 后无法在运行中多路复用 stdin（bash 语义：前台命令运行时不读输入），换取退格/方向键正常工作。运行中要中断用 Ctrl+C。
 2. **token 用量**：每个 `usage` 事件打一行 dim `Tokens: <N> / <max> (<pct>%)`，与 web 端 TokenBar 同格式。
 3. **会话续接**：`-c` 续接当前目录最新的 session（按 `history.json` 的 mtime 排序），agent 加载历史保持上下文；终端不回显历史（只显示 `resumed` 提示）。无历史 session 时退化为新建。
-4. **plan/build 模式**：v1 固定 build 模式，不支持运行中切换。
 5. **Ctrl+C**：RUNNING 时 = `cancel()` 回 IDLE（由 `loop.add_signal_handler` 回调）；IDLE 时 = 退出（`input()` 抛 `KeyboardInterrupt`）。两者都走 `cancel()`，取消主 + 所有 subagent。

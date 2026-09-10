@@ -163,7 +163,7 @@
           </div>
           <div v-for="r in state.pendingRequests" :key="r.key" class="request-item">
             <div class="request-item-label">
-              <span class="request-kind">{{ r.kind === 'plan_exit' ? 'mode' : 'dir' }}</span>
+              <span class="request-kind">dir</span>
               <span class="request-agent" :title="r.session">{{ requestAgentLabel(r) }}</span>
             </div>
             <div class="request-item-detail">{{ requestDetail(r) }}</div>
@@ -287,7 +287,6 @@ function requestAgentLabel(r: PendingRequest): string {
 }
 
 function requestDetail(r: PendingRequest): string {
-  if (r.kind === 'plan_exit') return 'Switch to Build mode'
   return r.path ?? ''
 }
 
