@@ -410,7 +410,12 @@ class Agent:
         # tools are still advertised (for cache stability) but any call is
         # intercepted. The turn after that rebuilds the context.
         self._pending_tool_results: bool = False
-        self._user_read_cursor: int = 0
+        # Everything already on disk counts as read. The cursor is in-memory
+        # only, so a cold load (server restart) must not re-serve old queued
+        # inputs: an old ``/compact`` command would otherwise be re-detected
+        # as unread on the first message after a restart and spuriously start
+        # a compaction turn regardless of the token threshold.
+        self._user_read_cursor: int = self._count_user_messages()
         self._force_run: bool = False
         self._need_compact: bool = False
         if subagent_type == "explore":
@@ -971,7 +976,12 @@ class Agent:
         covered -- it is exactly the input that produced the persisted count.
         """
         self._token_count = int(info.get("token_count") or 0)
-        fallback = len(self.history.raw) if self._token_count else 0
+        # Without a persisted count the base context is unknown: treat the
+        # whole disk history as covered rather than pending, otherwise the
+        # full-history estimate could exceed the threshold on the first
+        # message after a restart. The count self-heals on the next API
+        # response's real usage.
+        fallback = len(self.history.raw)
         self._token_covered = int(info.get("token_covered", fallback))
 
     def _persist_additional_dirs(self):
