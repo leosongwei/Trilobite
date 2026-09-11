@@ -35,6 +35,11 @@ icon: edit `icons.json`, run
 `frontend/scripts/fetch-material-icons.sh` (requires `curl` + `uv` +
 `python3`), then rebuild.
 
+The status favicons are flat-style trilobite artwork whose single source is
+`frontend/public/trilobite.svg`; the three PNGs are stamped with a status
+badge (idle/running/pending) and rasterized from it by
+`frontend/scripts/gen-favicons.py` (requires `uv`).
+
 ## Install from a built wheel
 
 A built wheel (from `./build.sh`) already bundles the frontend assets, so no
