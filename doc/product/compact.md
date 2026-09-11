@@ -75,6 +75,7 @@ steering 在压缩 turn 被模型读到（和压缩指令合并成一条 user）
 
 - `CompactMarker`、重建 system prompt、compact summary、steering re-append 等后续行为与自动压缩完全一致。
 - 若没有可压缩的对话内容（如刚压缩完又立即触发），`/compact` 作为普通文本发给模型，不进入压缩流程。
+- "已读"以 `session.json`/`history.json` 的盘上内容为准：会话冷加载时，盘上已有的全部消息（包括历史 `/compact`）都视为已读过，只有冷加载之后新到的 `/compact` 才会触发压缩 turn。
 
 ## compact summary 与前端显示
 
