@@ -4,7 +4,7 @@
       <h2>Create group members</h2>
       <p class="hint">
         Pick how many agents join this group chat (1-16). Each member gets its
-        own name, its own session under this group, and a send_to_group tool
+        own name, its own session under this group, and a send_message tool
         to talk to you and to its teammates.
       </p>
       <div class="count-row">

@@ -25,7 +25,6 @@ from src.trilobite.config import (
 from src.trilobite.file_access import normalize_dir, normalize_dirs
 from src.trilobite.group import (
     GROUP_ALL,
-    GROUP_USER,
     format_group_message,
     pick_member_names,
     resolve_recipients,
@@ -1418,8 +1417,8 @@ class Agent:
                             tool_result = await self._run_subagents(args)
                         elif tool_name == "sleep_until":
                             tool_result = await self._run_sleep_tool(args)
-                        elif tool_name == "send_to_group":
-                            tool_result = await self._run_send_to_group(args)
+                        elif tool_name == "send_message":
+                            tool_result = await self._run_send_message(args)
                         else:
                             # Tools are synchronous (notably bash's subprocess.run
                             # blocks). Run them in a worker thread so a long bash
@@ -1890,7 +1889,7 @@ class Agent:
 
         Members are persistent child sessions under the group session: same
         working directory and model as the channel, a group permission
-        (editing tools + ``send_to_group``), and a system prompt that names
+        (editing tools + ``send_message``), and a system prompt that names
         the whole team.
         """
         child_name = uuid.uuid4().hex
@@ -1991,13 +1990,13 @@ class Agent:
             await m.receive_group_message("user", message)
 
     async def receive_member_message(self, from_member: Agent, to: str, text: str) -> str:
-        """Deliver a member's send_to_group message (channel side).
+        """Deliver a member's send_message call (channel side).
 
         Resolves the recipient first (an unknown name fails the tool call
         with a hint); a valid message is recorded in the channel with the
-        sender's name and fanned out -- "user" only records it (the user
-        reads the channel), "all"/a name also reaches the target members.
-        Returns the tool result text for the sender.
+        sender's name (the channel view is the user's copy -- "all" reaches
+        the user this way) and fanned out to the resolved members. Returns
+        the tool result text for the sender.
         """
         sender = from_member._member_name or "agent"
         targets, err = resolve_recipients(to, sender, self._group_members)
@@ -2009,15 +2008,14 @@ class Agent:
             "type": "user", "id": user._id, "text": text,
             "sender": sender, "user_seq": self._count_user_messages() - 1,
         })
-        registry = self._registry or {}
         for name in targets:
             member = self._materialize_member(self._group_members.get(name, ""))
             if member is None:
                 continue
             await member.receive_group_message(sender, text)
-        if not targets:
-            return f"Message delivered to {GROUP_USER} in the group channel."
-        return f"Message delivered to: {', '.join(targets)}."
+        if to == GROUP_ALL:
+            return "Message delivered to the whole group (user and teammates)."
+        return f"Message delivered to {', '.join(targets)}."
 
     async def receive_group_message(self, sender: str, text: str) -> None:
         """Receive one channel message (member side).
@@ -2034,8 +2032,8 @@ class Agent:
         else:
             await self.start(content)
 
-    async def _run_send_to_group(self, args: dict) -> dict[str, Any]:
-        """Post a message to the group channel (virtual send_to_group tool).
+    async def _run_send_message(self, args: dict) -> dict[str, Any]:
+        """Send a message to the group channel (virtual send_message tool).
 
         Like task/sleep_until, execution lives on Agent: the parent channel
         records the message and fans it out to the resolved recipients'
@@ -2044,13 +2042,13 @@ class Agent:
         """
         parent = self._parent
         if parent is None or not parent.is_group:
-            return {"result": "Error: send_to_group is only available inside a group session."}
+            return {"result": "Error: send_message is only available inside a group session."}
         to = str(args.get("to") or "")
         text = str(args.get("text") or "").strip()
         if not to:
-            return {"result": "Error: send_to_group requires 'to': 'user', 'all', or a teammate's name."}
+            return {"result": "Error: send_message requires 'to': 'all' or a teammate's name."}
         if not text:
-            return {"result": "Error: send_to_group requires non-empty 'text'."}
+            return {"result": "Error: send_message requires non-empty 'text'."}
         return {"result": await parent.receive_member_message(self, to, text)}
 
     # ── timers (sleep_until) ───────────────────────────────────────────────

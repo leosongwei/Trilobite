@@ -37,7 +37,7 @@ from abc import ABC
 from src.trilobite.tool_call import (
     ALL_TOOLS,
     SLEEP_UNTIL_DEF,
-    SEND_TO_GROUP_DEF,
+    SEND_MESSAGE_DEF,
     TASK_TOOL_DEF,
 )
 
@@ -82,10 +82,10 @@ class AgentPermission(ABC):
     #: while the parent waits on its result.
     exposes_sleep: bool = False
 
-    #: whether the ``send_to_group`` (group channel message) virtual tool is
-    #: offered. Only group members offer it: posting to the channel requires
+    #: whether the ``send_message`` (group channel message) virtual tool is
+    #: offered. Only group members offer it: sending to the channel requires
     #: a parent group session to deliver through.
-    exposes_send_to_group: bool = False
+    exposes_send_message: bool = False
 
     def filter_definitions(self, enable_vl: bool = False) -> list[dict]:
         """Tool definitions to send to the LLM for this policy."""
@@ -95,8 +95,8 @@ class AgentPermission(ABC):
             defs.append(TASK_TOOL_DEF)
         if self.exposes_sleep:
             defs.append(SLEEP_UNTIL_DEF)
-        if self.exposes_send_to_group:
-            defs.append(SEND_TO_GROUP_DEF)
+        if self.exposes_send_message:
+            defs.append(SEND_MESSAGE_DEF)
         return defs
 
     def intercept(self, tool_name: str) -> str | None:
@@ -113,7 +113,7 @@ class AgentPermission(ABC):
             return None
         if tool_name == SLEEP_TOOL_NAME and self.exposes_sleep:
             return None
-        if tool_name == "send_to_group" and self.exposes_send_to_group:
+        if tool_name == "send_message" and self.exposes_send_message:
             return None
         return self.block_message.format(tool=tool_name)
 
@@ -157,15 +157,15 @@ class GeneralSubagentPermission(AgentPermission):
 
 
 class GroupMemberPermission(AgentPermission):
-    """A member of a group session: full editing tools plus send_to_group.
+    """A member of a group session: full editing tools plus send_message.
 
     Like the subagent roles it is fixed for the member's lifetime, never
     offers ``task`` (no nesting) or ``sleep_until``, and does not maintain
-    the user's todo list. ``send_to_group`` is its voice in the channel --
+    the user's todo list. ``send_message`` is its voice in the channel --
     plain text replies stay private to the member's own session view.
     """
 
     tool_names = ("read", "glob", "grep", "edit", "write", "bash", "skill")
-    exposes_send_to_group = True
+    exposes_send_message = True
 
     block_message = "Error: {tool} tool is not available to group members."

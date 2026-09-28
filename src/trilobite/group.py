@@ -2,7 +2,7 @@
 
 A group session is a channel shared by the user and N member agents. The
 user posts instructions to the channel; every member sees them; members talk
-to the user and to each other through the ``send_to_group`` tool. This module
+to the user and to each other through the ``send_message`` tool. This module
 holds the small pieces of that machinery that are pure data/logic: the
 member-name pool, name picking, the recipient model, and the formatting of a
 channel message as it lands in a member's history.
@@ -21,8 +21,8 @@ GROUP_NAME_POOL: tuple[str, ...] = (
     "Quinn", "Rosa", "Sam", "Tina", "Uma", "Victor", "Wendy", "Xavier",
 )
 
-#: Recipient names with special meaning in ``send_to_group``.
-GROUP_USER = "user"
+#: The ``send_message`` recipient that reaches everyone in the group
+#: (the user and every teammate).
 GROUP_ALL = "all"
 
 #: Allowed number of group members (the creation dialog offers this range).
@@ -85,15 +85,15 @@ def resolve_recipients(
     sender_name: str,
     members: dict[str, str],
 ) -> tuple[list[str], str]:
-    """Resolve a ``send_to_group`` recipient to member names.
+    """Resolve a ``send_message`` recipient to member names.
 
-    ``members`` maps member name -> session id. Returns (target names,
-    error). An unknown name lists the valid recipients so the model can
-    correct itself in one step.
+    ``members`` maps member name -> session id. ``all`` reaches everyone in
+    the group (the user reads the channel record; the other members get the
+    message delivered); a teammate's name reaches that one member. Returns
+    (target names, error). An unknown name lists the valid recipients so the
+    model can correct itself in one step.
     """
     to = (to or "").strip()
-    if to == GROUP_USER:
-        return [], ""
     if to == GROUP_ALL:
         return [name for name in members if name != sender_name], ""
     if to in members and to != sender_name:
@@ -101,5 +101,5 @@ def resolve_recipients(
     peers = ", ".join(name for name in members if name != sender_name)
     return [], (
         f"Error: unknown recipient '{to}'. Valid recipients are: "
-        f"'{GROUP_USER}', '{GROUP_ALL}', or a teammate's name ({peers})."
+        f"'{GROUP_ALL}' or a teammate's name ({peers})."
     )

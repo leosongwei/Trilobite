@@ -184,16 +184,16 @@ SLEEP_UNTIL_DEF: dict = {
 }
 
 
-# Virtual tool: post a message to the group channel. Exposed only to group
+# Virtual tool: send a message to the group channel. Exposed only to group
 # members (see permission.py); its execution -- recording the message in the
 # channel and fanning it out to the recipients' histories -- is handled in
 # Agent, not here.
-SEND_TO_GROUP_DEF: dict = {
+SEND_MESSAGE_DEF: dict = {
     "type": "function",
     "function": {
-        "name": "send_to_group",
+        "name": "send_message",
         "description": (
-            "Post a message to the group channel, where the user and your "
+            "Send a message to the group channel, where the user and your "
             "teammates will see it. Your plain text replies are NOT visible "
             "in the channel -- this tool is the only way to communicate with "
             "them. Use it to say what you are taking on, report findings or "
@@ -206,9 +206,9 @@ SEND_TO_GROUP_DEF: dict = {
                 "to": {
                     "type": "string",
                     "description": (
-                        "Recipient: 'user' (the human), 'all' (every "
-                        "teammate), or a teammate's name to address one "
-                        "member."
+                        "Recipient: 'all' (everyone in the group -- the user "
+                        "and every teammate) or a teammate's name to address "
+                        "one member."
                     ),
                 },
                 "text": {
