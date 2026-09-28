@@ -280,10 +280,11 @@ body {
   font-size: 13px;
 }
 .sidebar-header button:hover { background: var(--accent-hover); }
-/* Secondary header buttons stay neutral: the accent button is the only strong
- * color in the header, so the primary action reads at a glance. */
-.sidebar-header button.secondary { background: var(--bg-input); color: var(--text); }
-.sidebar-header button.secondary:hover { background: var(--bg-input-hover); }
+/* Secondary header buttons share the green "add" tint used by other create
+ * actions (e.g. the project-row + button); the accent button stays the only
+ * strong color in the header. */
+.sidebar-header button.secondary { background: var(--green-btn-bg); }
+.sidebar-header button.secondary:hover { background: var(--green-btn-hover); }
 .sidebar-header .header-buttons { display: flex; gap: 6px; margin-top: 8px; }
 .sidebar-header .header-buttons button { margin-top: 0; flex: 1; }
 .sidebar-resizer {
