@@ -70,14 +70,16 @@ def pick_member_names(count: int, taken: set[str] | None = None) -> list[str]:
     return names
 
 
-def format_group_message(sender: str, text: str) -> str:
+def format_group_message(sender: str, text: str, *, private: bool = False) -> str:
     """Shape a channel message as it lands in a member's history.
 
     Members receive user/teammate messages as ordinary user messages tagged
-    with the sender, so the model can tell who said what. The user is
-    ``"user"``, teammates their member name.
+    with the sender AND the addressing, so the model can tell who said what
+    and whether it was a channel broadcast or a private note to this member
+    alone. The user is ``"user"``, teammates their member name.
     """
-    return f"[from {sender}]\n{text}"
+    tag = f"private msg, from {sender}" if private else f"from group, by {sender}"
+    return f"[{tag}]\n{text}"
 
 
 def resolve_recipients(

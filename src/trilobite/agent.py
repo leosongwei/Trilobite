@@ -1133,9 +1133,16 @@ class Agent:
 
         Matching is deliberately loose (any message starting with the word):
         the full text stays visible to the model in the merged turn anyway,
-        so extra words ride along as context.
+        so extra words ride along as context. Only a group member's copies
+        carry a leading addressing tag (``[private msg, from user]`` etc.),
+        which is skipped before the match -- normal sessions are untouched.
         """
-        return msg.content.strip().startswith("/compact")
+        text = msg.content.strip()
+        for prefix in ("[from group, by ", "[private msg, from "):
+            if text.startswith(prefix) and "\n" in text:
+                text = text.split("\n", 1)[1].strip()
+                break
+        return text.startswith("/compact")
 
     def _has_unread_compact_command(self) -> bool:
         """Whether an unread real user message is a ``/compact`` command.
@@ -1670,14 +1677,22 @@ class Agent:
             self._broker.set_running(False)
             self._task = None
 
-    async def steer(self, message: str):
+    async def steer(self, message: str, *, sender: str = "user", private: bool = True):
         """Append a steering user message mid-run.
 
         The message goes straight into history (no queue): the run loop is
         alive, so its next continuation check picks it up and runs another turn
         so the model can respond. It lands after the in-flight assistant turn,
         never splitting tool_calls from their results.
+
+        For group members the copy is tagged with its addressing --
+        ``[private msg, from X]`` for a note aimed at this member alone
+        (the default: direct user steering), ``[from group, by X]`` for a
+        channel broadcast -- so the model can tell who said what and how
+        visible its reply should be. Other sessions get the text untouched.
         """
+        if self._subagent_type == "group":
+            message = format_group_message(sender, message, private=private)
         user_seq = self._count_user_messages()
         user = UserMessage(message)
         self.history.append(user)
@@ -1695,13 +1710,17 @@ class Agent:
             return any(m.is_running() for m in self._group_member_agents())
         return self._broker.is_running
 
-    async def start(self, message: str, images: list[Image] | None = None) -> None:
+    async def start(self, message: str, images: list[Image] | None = None, *, sender: str = "user", private: bool = True) -> None:
         """Begin a run independently of any HTTP request lifecycle.
 
         Closing a browser only drops SSE subscribers; the agent keeps running
         because the task created here is not tied to any request. The user
         message is emitted as a stream event so every subscriber (and any
         reconnecting client) renders it consistently.
+
+        Group members tag the message with its addressing exactly like
+        ``steer`` (default: a private note from the user); other sessions
+        store the text untouched.
         """
         # A group channel never runs an LLM: a message sent to it is recorded
         # in the channel and delivered to every member (any caller -- the
@@ -1709,6 +1728,8 @@ class Agent:
         if self._mode == "group":
             await self.post_to_group(message)
             return
+        if self._subagent_type == "group":
+            message = format_group_message(sender, message, private=private)
         user_seq = self._count_user_messages()
         # Auto-title the session from the first user message (first 50 chars).
         # Subagents carry a description instead and are never auto-titled.
@@ -2019,7 +2040,7 @@ class Agent:
             "sender": "user", "user_seq": user_seq,
         })
         for m in self._group_member_agents():
-            await m.receive_group_message("user", message)
+            await m.receive_group_message("user", message, private=False)
 
     async def receive_member_message(self, from_member: Agent, to: str, text: str) -> str:
         """Deliver a member's send_message call (channel side).
@@ -2044,25 +2065,31 @@ class Agent:
             member = self._materialize_member(self._group_members.get(name, ""))
             if member is None:
                 continue
-            await member.receive_group_message(sender, text)
+            # "all" is a channel broadcast; a named recipient got a private
+            # note -- the delivered copy is tagged accordingly.
+            await member.receive_group_message(sender, text, private=to != GROUP_ALL)
         if to == GROUP_ALL:
             return "Message delivered to the whole group (user and teammates)."
         return f"Message delivered to {', '.join(targets)}."
 
-    async def receive_group_message(self, sender: str, text: str) -> None:
+    async def receive_group_message(self, sender: str, text: str, *, private: bool = False) -> None:
         """Receive one channel message (member side).
 
+        The addressing is carried through to steer/start, which tag the
+        copy: a channel broadcast reads ``[from group, by X]``, a message
+        aimed at this member alone reads ``[private msg, from X]`` -- so the
+        model can tell who said what and whether the reply should go to
+        everyone or just the sender.
         A running member takes it as steering (the run loop picks it up at
         the next turn boundary); an idle member starts a fresh run whose
-        first user message is the tagged channel text. The check and the
+        first user message is the tagged text. The check and the
         running-flag flip inside start() share no await, so two concurrent
         deliveries cannot double-start a run.
         """
-        content = format_group_message(sender, text)
         if self.is_running():
-            await self.steer(content)
+            await self.steer(text, sender=sender, private=private)
         else:
-            await self.start(content)
+            await self.start(text, sender=sender, private=private)
 
     async def _run_send_message(self, args: dict) -> dict[str, Any]:
         """Send a message to the group channel (virtual send_message tool).

@@ -1,5 +1,5 @@
 <template>
-  <div class="user-message" :class="{ 'group-member-msg': isMember }">
+  <div class="user-message" :class="{ 'group-member-msg': isMember, 'group-user-msg': isOwnGroupMsg }">
     <template v-if="!editing">
       <button v-if="!isGroupChannel" class="user-pencil" @click="startEdit" title="编辑并重发"><span class="ms ms-edit-square"></span></button>
       <div class="user-content">
@@ -73,9 +73,12 @@ const sessionId = state.currentSession
 
 // Group channel rendering: messages carry a sender ("user" or a member's
 // name). A member's message renders chat-style -- left aligned with an
-// avatar and name tag; channel messages never re-run, so editing is hidden.
+// avatar and name tag; the user's own messages use the same bubble but a
+// brighter fill and right alignment (chat-app convention). Channel messages
+// never re-run, so editing is hidden.
 const isGroupChannel = computed(() => state.mode === 'group')
 const isMember = computed(() => isGroupChannel.value && !!props.item.sender && props.item.sender !== 'user')
+const isOwnGroupMsg = computed(() => isGroupChannel.value && props.item.sender === 'user')
 const avatarInitial = computed(() => (props.item.sender || '?').slice(0, 1))
 // Deterministic hue from the name so each member keeps one color across the
 // group view and the member chips.
@@ -341,6 +344,24 @@ async function forkEdit() {
 .user-message.group-member-msg .message.user {
   display: inline-block;
   background: var(--bg-inset);
+  border: 1px solid var(--border-faint);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+}
+/* The user's own channel messages: same bubble shape, brighter fill, right
+   aligned (chat-app convention: others left, own right). */
+.user-message.group-user-msg {
+  justify-content: flex-end;
+}
+.user-message.group-user-msg .user-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.user-message.group-user-msg .message.user {
+  display: inline-block;
+  background: var(--bg-input);
   border: 1px solid var(--border-faint);
   border-radius: 8px;
   padding: 6px 10px;

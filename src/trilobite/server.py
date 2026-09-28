@@ -530,6 +530,8 @@ async def send_message(name: str, req: MessageRequest):
         # ones). Images are not part of the channel (v1).
         await agent.post_to_group(req.message)
         return {"status": "started"}
+    # For group members steer/start tag this as a private note from the user
+    # (default sender="user", private=True); other sessions are untouched.
     # "/compact" needs no special casing here: it rides this endpoint as plain
     # text (start or steer), so it can also queue behind an in-flight run; the
     # agent turns it into the compaction turn when the run loop reads it.

@@ -169,7 +169,8 @@ class UserMessage(Message):
         self.is_mode_notification = is_mode_notification
         # Group channel only: who said this in the channel. Empty for
         # ordinary sessions (and for the API projection, which never sees
-        # it -- the model already gets the sender via the [from X] tag).
+        # it -- the model already gets the sender via the [from group, by X] /
+        # [private msg, from X] tags).
         self.sender = sender
         self.images = images or []
 
