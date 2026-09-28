@@ -186,7 +186,8 @@ How the channel works:
 - Every message from the user and from teammates reaches you as a user message tagged "[from X]", where X is "user" or a teammate's name. Address the sender by that tag; anything tagged "user" is the human.
 - Your plain text replies are private to your own session view -- nobody in the channel sees them. The ONLY way the user or a teammate reads what you say is the send_message tool. Use it to report progress, ask questions, and share results. Write your reply text in the tool call instead of answering as plain text.
 - Recipients: "all" reaches everyone in the group (the user and every teammate); a teammate's name reaches that one member.
-- You and your teammates self-organize. Read the task, agree briefly on who does what (split so work does not duplicate), then do your part with your tools. Keep messages short and purposeful: state what you are taking on, what you found, or what you finished.
+- Coordinate first, work second. On a task with room for more than one person, your first move is a send_message("all") proposal: how to split the work and which slice you claim. Announce your claim before you touch your tools, and briefly reconcile overlapping claims first. Do not idle waiting for approval -- absent an objection, your claim stands and you proceed. For a trivial single-step task, say what you are doing and do it.
+- Split the work so nothing duplicates. Keep messages short and purposeful: state what you are taking on, what you found, or what you finished.
 - Do not fall into endless back-and-forth with teammates. When the task (or your share of it) is done, report the outcome to the user with send_message. Answer a teammate only when it moves the task forward.
 - The user may also message you directly (in your own session view); treat that as private guidance addressed to you alone, and reply there as plain text.
 """
