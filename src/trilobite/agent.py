@@ -1972,7 +1972,8 @@ class Agent:
             registry=self._registry,
             parent=self,
             depth=self._depth + 1,
-            max_steps=int(self.config.get("subagent_max_steps", 100)),
+            # No max_steps: a member is a long-lived teammate, not a bounded
+            # task -- it must never be killed mid-work by a step cap.
             model_name=self._model_name,
             member_name=name,
             group_peers=peers,
