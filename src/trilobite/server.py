@@ -122,8 +122,9 @@ async def auth_login(request: Request, req: AuthRequest):
 
 class SessionCreate(BaseModel):
     name: str
-    working_dir: str
+    working_dir: str | None = None
     project_id: str | None = None
+    mode: str = "normal"  # "normal" | "chat"
 
 class ProjectCreate(BaseModel):
     name: str
@@ -255,7 +256,22 @@ async def create_session(req: SessionCreate):
             raise HTTPException(404, "Project not found")
 
     session_dir.mkdir(parents=True, exist_ok=True)
-    info = {"name": req.name, "working_dir": req.working_dir, "additional_dirs": [], "created_at": time.time()}
+
+    # Chat mode: a normal session whose working directory lives inside the
+    # session folder itself, so no workspace needs to be chosen up front.
+    if req.mode == "chat":
+        working_dir = session_dir / "chat_files"
+        working_dir.mkdir(parents=True, exist_ok=True)
+        name = req.name or "Chat"
+    elif req.working_dir:
+        working_dir = req.working_dir
+        name = req.name
+    else:
+        raise HTTPException(400, "working_dir is required for normal sessions")
+
+    info = {"name": name, "working_dir": str(working_dir), "additional_dirs": [], "created_at": time.time()}
+    if req.mode == "chat":
+        info["mode"] = "chat"
     info["model"] = get_default_model_name(config)
     if req.project_id:
         info["project_id"] = req.project_id
@@ -263,7 +279,7 @@ async def create_session(req: SessionCreate):
 
     agent = Agent(
         name=session_id,
-        working_dir=req.working_dir,
+        working_dir=str(working_dir),
         session_dir=session_dir,
         config=config,
         registry=agents,
@@ -272,7 +288,7 @@ async def create_session(req: SessionCreate):
     info["session_id"] = agent.session_id
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
     agents[session_id] = agent
-    return {"status": "ok", "id": session_id, "name": req.name}
+    return {"status": "ok", "id": session_id, "name": name}
 
 
 @app.post("/api/sessions/{name}/rename")

@@ -280,6 +280,9 @@ body {
   font-size: 13px;
 }
 .sidebar-header button:hover { background: var(--accent-hover); }
+/* Secondary header buttons share the green "add" tint used by other create
+ * actions (e.g. the project-row + button); the accent button stays the only
+ * strong color in the header. */
 .sidebar-header button.secondary { background: var(--green-btn-bg); }
 .sidebar-header button.secondary:hover { background: var(--green-btn-hover); }
 .sidebar-header .header-buttons { display: flex; gap: 6px; margin-top: 8px; }

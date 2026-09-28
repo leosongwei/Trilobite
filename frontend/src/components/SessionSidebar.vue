@@ -14,8 +14,9 @@
       <label>Working directory:</label>
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
       <div class="header-buttons">
-        <button @click="handleCreate">+ New Session</button>
-        <button class="secondary" @click="handleCreateProject">+ New Project</button>
+        <button @click="handleCreate">+ Session</button>
+        <button class="secondary" @click="handleCreateChat">+ Chat</button>
+        <button class="secondary" @click="handleCreateProject">+ Project</button>
       </div>
     </div>
     <div class="sessions" :style="{ height: sessionsHeight + 'px' }">
@@ -549,6 +550,18 @@ async function handleCreate() {
   }
   try {
     await createSession(dir, dir)
+    resetDefaults()
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
+  }
+}
+
+// Chat mode needs no working directory: the backend creates chat_files inside
+// the session folder and uses it as the working directory. The name is left to
+// the auto-namer until renamed.
+async function handleCreateChat() {
+  try {
+    await createSession('', null, undefined, 'chat')
     resetDefaults()
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
