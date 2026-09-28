@@ -42,7 +42,7 @@ Group Session 是一个多 agent 聊天频道：用户在频道里发布指令�
 - 成员的权限是 `GroupMemberPermission`：读/搜/编辑/写/bash/skill + `send_message`。没有 `task`（无嵌套派生）、没有 `sleep_until`、没有 `TodoList`。
 - 权限请求沿用 subagent 的全局广播：成员请求授权时，频道与全部成员的流都会收到 `subagent_permission_request`（标注成员身份），横幅与 Pending Requests 列表审批，批准写入该成员自己的 `additional_dirs`。
 - 频道自身的 `cancel` 向全部运行中成员传播（硬停）；成员之间互不传播。
-- 模型继承频道创建时的模型选择；成员不单独切换模型。
+- 模型以**群主 session 当前选定**为准，成员不单独选择模型：成员的每一次 LLM 调用在**回合开始前**同步频道当前模型（并持久化到成员 `session.json`）。用户在群会话上随时切换模型，成员的下一次调用即生效；**正在执行中的请求不受影响**，以旧参数跑完本次调用。无需在创建成员之前选好模型。
 
 ## 数据与持久化
 

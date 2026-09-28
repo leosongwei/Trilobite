@@ -451,6 +451,15 @@ def _get_or_create_agent(name: str) -> Agent:
     if subagent_type == "group":
         # A group member restored from disk: a persistent teammate, rebuilt
         # unsealed so later channel or direct messages can start its runs.
+        # Loading its group channel first wires the parent link -- the member
+        # resolves its channel for send_message delivery and model sync.
+        parent_agent: Agent | None = None
+        parent_id = info.get("parent_session")
+        if parent_id and parent_id != name:
+            try:
+                parent_agent = _get_or_create_agent(parent_id)
+            except HTTPException:
+                parent_agent = None
         agent = Agent(
             name=name,
             working_dir=info["working_dir"],
@@ -458,6 +467,8 @@ def _get_or_create_agent(name: str) -> Agent:
             config=config,
             session_id=info.get("session_id"),
             registry=agents,
+            parent=parent_agent,
+            parent_session=parent_id,
             subagent_type="group",
             description=info.get("description"),
             member_name=info.get("member_name"),
@@ -479,6 +490,7 @@ def _get_or_create_agent(name: str) -> Agent:
             config=config,
             session_id=info.get("session_id"),
             registry=agents,
+            parent_session=info.get("parent_session"),
             subagent_type=subagent_type,
             description=info.get("description"),
             depth=info.get("depth", 1),

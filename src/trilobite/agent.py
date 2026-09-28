@@ -332,6 +332,7 @@ class Agent:
         description: str | None = None,
         registry: dict[str, Agent] | None = None,
         parent: Agent | None = None,
+        parent_session: str | None = None,
         depth: int = 0,
         max_steps: int | None = None,
         sealed: bool = False,
@@ -457,7 +458,7 @@ class Agent:
         # ── subagent lifecycle ───────────────────────────────────────────
         self._registry: dict[str, Agent] | None = registry
         self._parent_ref: Agent | None = parent
-        self._parent_session: str | None = parent.name if parent is not None else None
+        self._parent_session: str | None = parent.name if parent is not None else parent_session
         self._depth: int = depth
         self._max_steps: int | None = max_steps
         self._sealed: bool = sealed
@@ -1324,6 +1325,13 @@ class Agent:
                 # combine_new_messages folds in last among the unread inputs.
                 if not self._need_compact:
                     await self._trigger_compact_command()
+                # Group members talk through the group session's currently
+                # selected model: sync it at the turn boundary (no request in
+                # flight here) so the request below -- and every later one --
+                # uses the channel's choice. An already-executing request is
+                # never touched; it finishes on the old parameters.
+                if self._subagent_type == "group":
+                    self._adopt_group_model()
                 messages = self.history.get_api_messages(
                     image_dir=self.session_dir / "images",
                     enable_vl=self.enable_vl,
@@ -1883,6 +1891,30 @@ class Agent:
         if self._mode != "group" or not self._group_members:
             return []
         return [a for a in (self._materialize_member(sid) for sid in self._group_members.values()) if a is not None]
+
+    def _adopt_group_model(self) -> None:
+        """A member's LLM calls go through the group's selected model.
+
+        The group main session's model is the only selector the user has, so
+        it is authoritative for every member: each turn the member adopts it
+        (and persists the choice) before starting its completion request.
+        Called at the turn boundary -- with no request in flight -- so an
+        already-executing request is never touched; it finishes on the old
+        parameters and the switch lands on the next call.
+        """
+        if self._subagent_type != "group":
+            return
+        parent = self._parent
+        if parent is None or not parent.is_group:
+            return
+        model = parent._model_name
+        if not model or model == self._model_name:
+            return
+        try:
+            self.apply_model(model)
+        except KeyError:
+            return
+        self._update_session_json({"model": model})
 
     def _create_group_member(self, name: str, peers: list[str]) -> Agent:
         """Build one group member agent (does not start it).

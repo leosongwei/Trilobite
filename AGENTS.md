@@ -56,7 +56,7 @@ Vue 3 + TypeScript，构建后输出到 `src/trilobite/static/`，由 FastAPI �
 
 ## Group（群聊频道）
 
-Group Session 是多 agent 聊天频道：用户发布指令，多个 Agent 共同完成任务。频道（`mode: "group"`）本身不运行 LLM，只记录频道历史并 fan-out；成员（`subagent_type: "group"`）是长期共存的队友——每个有唯一名字（`group.py` 名字池，1-16 个，创建后在频道弹框确认固化），系统提示词注入自己与同伴的名字和频道协议（纯文本回复不可见，必须用 `send_message` 工具发言；收到的消息带 `[from X]` 说话者标签）。用户发到频道的消息投递给**每个**成员：运行中 steering、空闲则启动新 run；成员的 `send_message` 经父频道记录（`sender` 字段的 UserMessage，前端群聊视图渲染头像+名字）并投递目标成员。成员显示在群 session 下的树中（群组图标徽章），可切入直接发消息、可 cancel（stop=cancel，不密封不总结）；权限 `GroupMemberPermission`（可编辑工具 + `send_message`，无 task/sleep_until/todo）。入口：顶栏 `[+ Group]` 与项目行 group 图标按钮。详见 `doc/product/group.md`。
+Group Session 是多 agent 聊天频道：用户发布指令，多个 Agent 共同完成任务。频道（`mode: "group"`）本身不运行 LLM，只记录频道历史并 fan-out；成员（`subagent_type: "group"`）是长期共存的队友——每个有唯一名字（`group.py` 名字池，1-16 个，创建后在频道弹框确认固化），系统提示词注入自己与同伴的名字和频道协议（纯文本回复不可见，必须用 `send_message` 工具发言；收到的消息带 `[from X]` 说话者标签）。用户发到频道的消息投递给**每个**成员：运行中 steering、空闲则启动新 run；成员的 `send_message` 经父频道记录（`sender` 字段的 UserMessage，前端群聊视图渲染头像+名字）并投递目标成员。成员显示在群 session 下的树中（群组图标徽章），可切入直接发消息、可 cancel（stop=cancel，不密封不总结）；权限 `GroupMemberPermission`（可编辑工具 + `send_message`，无 task/sleep_until/todo）；模型以群主 session 当前选定为准（成员每回合开始前同步，在途请求不受影响）。入口：顶栏 `[+ Group]` 与项目行 group 图标按钮。详见 `doc/product/group.md`。
 
 ## Timer（sleep_until 定时挂起）
 
