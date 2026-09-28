@@ -74,7 +74,7 @@ trilobite -c             # CLI 续接当前目录最新的 session
 
 **`-c` 续接**：
 1. `init_config()`，取 `cwd`。
-2. 扫描 `get_sessions_dir()` 下所有 `session.json`，过滤掉 subagent session（`subagent_type` 非空）和相对路径 `working_dir`，匹配 `Path(working_dir).resolve() == cwd`，按 `history.json` 的 mtime（最后一次存盘时间，回退 `created_at`）取最新。
+2. 扫描 `get_sessions_dir()` 下所有 `session.json`，过滤掉 subagent session（`subagent_type` 非空）、group 群聊频道（`mode: "group"`，web 专属 UX，见 [group.md](./group.md)）和相对路径 `working_dir`，匹配 `Path(working_dir).resolve() == cwd`，按 `history.json` 的 mtime（最后一次存盘时间，回退 `created_at`）取最新。
 3. 无匹配则退化新建（打印 `无历史 session，新建`），流程同 `-t`。
 4. 有匹配则实例化 `Agent`（复用其 `session_id` 与保存的 `model`，`Agent` 从 `history.json` 加载历史），恢复 `additional_dirs`。
 5. `attach_subscriber()` 拿队列 + 快照（**不回显历史**，只打印一条 `resumed · <name> · <working_dir>` 提示）。

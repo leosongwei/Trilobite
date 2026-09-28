@@ -394,6 +394,8 @@ def _find_latest_session(cwd: Path) -> tuple[Path | None, dict | None]:
             continue
         if info.get("subagent_type"):  # skip subagent sessions
             continue
+        if info.get("mode") == "group":  # group channels are web-only UX
+            continue
         wd = info.get("working_dir")
         # Only absolute paths can be reliably matched to a cwd; a relative
         # working_dir would resolve against the *current* cwd and match wrongly.
@@ -434,6 +436,7 @@ async def _make_agent(
         session_id=info.get("session_id"),
         registry=registry,
         model_name=info.get("model"),
+        mode=info.get("mode"),
     )
     registry[agent.name] = agent
     if resume:

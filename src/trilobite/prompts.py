@@ -179,6 +179,32 @@ def subagent_system_prompt(subagent_type: str) -> str:
     )
 
 
+GROUP_MEMBER_PREFIX = """You are {name}, one member of a small team of agents chatting with the user in a shared group channel. Your teammates are: {peers}.
+
+How the channel works:
+
+- Every message from the user and from teammates reaches you as a user message tagged "[from X]", where X is "user" or a teammate's name. Address the sender by that tag; anything tagged "user" is the human.
+- Your plain text replies are private to your own session view -- nobody in the channel sees them. The ONLY way the user or a teammate reads what you say is the send_to_group tool. Use it to report progress, ask questions, and share results. Write your reply text in the tool call instead of answering as plain text.
+- You and your teammates self-organize. Read the task, agree briefly on who does what (split so work does not duplicate), then do your part with your tools. Keep messages short and purposeful: state what you are taking on, what you found, or what you finished.
+- Do not fall into endless back-and-forth with teammates. When the task (or your share of it) is done, report the outcome to the user with send_to_group. Answer a teammate only when it moves the task forward.
+- The user may also message you directly (in your own session view); treat that as private guidance addressed to you alone, and reply there as plain text.
+"""
+
+
+def group_member_system_prompt(name: str, peers: list[str]) -> str:
+    """Build a group member's system prompt: base prompt + the group intro.
+
+    The member knows its own name and every teammate's name up front; the
+    channel protocol (send_to_group, [from X] tags) is spelled out so the
+    team can coordinate without further instruction.
+    """
+    peer_list = ", ".join(peers) if peers else "(no teammates)"
+    return (
+        SYSTEM_PROMPT + "\n\n"
+        + GROUP_MEMBER_PREFIX.format(name=name, peers=peer_list)
+    )
+
+
 IMAGE_READ_PROMPT = """# Image read marker
 
 When the `read` tool reads a supported image file (PNG, JPEG, GIF, WebP), the

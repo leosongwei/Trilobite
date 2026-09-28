@@ -8,6 +8,8 @@ Subagent 是"主 agent 通过一次 `task` 工具调用派生出来的子 agent"
 
 核心价值：**隔离上下文、省主 agent token、并行**。把"探索/搜索"这类吃上下文的活外包给子 agent，主 agent 只回收结论。
 
+> 与 Group 成员的区别：group session 的成员是**长期共存的队友**（见 [group.md](./group.md)）——run 结束回到空闲而非密封，带 `send_to_group` 频道工具，由用户创建并命名；本文的 subagent 是主 agent 派生的**一次性有界任务**。两者共用 child session 的树状展示与存储结构，但生命周期与权限集不同。
+
 ### v1 范围（本次实现）
 
 - ✅ `task` 工具，一次调用可派生**多个**子 agent 并行运行，`gather` 全部结束后返回（前台同步模式）。

@@ -23,6 +23,13 @@ from src.trilobite.config import (
     get_model,
 )
 from src.trilobite.file_access import normalize_dir, normalize_dirs
+from src.trilobite.group import (
+    GROUP_ALL,
+    GROUP_USER,
+    format_group_message,
+    pick_member_names,
+    resolve_recipients,
+)
 from src.trilobite.history import MessageList, TurnsView
 from src.trilobite.messages import (
     CompactMarker,
@@ -36,12 +43,14 @@ from src.trilobite.messages import (
 from src.trilobite.prompts import (
     IMAGE_READ_PROMPT,
     SYSTEM_PROMPT,
+    group_member_system_prompt,
     subagent_system_prompt,
 )
 from src.trilobite.permission import (
     AgentPermission,
     ExploreSubagentPermission,
     GeneralSubagentPermission,
+    GroupMemberPermission,
     PrimaryPermission,
 )
 from src.trilobite.skills import discover_skills, format_skill_listing
@@ -329,6 +338,10 @@ class Agent:
         sealed: bool = False,
         timer_service: Any = None,
         model_name: str | None = None,
+        mode: str | None = None,
+        member_name: str | None = None,
+        group_peers: list[str] | None = None,
+        group_members: dict[str, str] | None = None,
     ):
         self.name = name
         self.working_dir = Path(working_dir).resolve()
@@ -370,13 +383,19 @@ class Agent:
         self.compaction_trigger_ratio = model_def.compaction_trigger_ratio
         self._extra_body = model_def.extra_body or {}
         # Subagents override the system prompt with the role prefix + guidance
-        # and use a fixed role permission.
+        # and use a fixed role permission. Group members get the group-channel
+        # prefix instead: their own name plus every teammate's name, so the
+        # team can coordinate without further instruction.
         self._subagent_type: str | None = subagent_type
         self._description: str = description or ""
         if subagent_type == "explore":
             role_prompt = subagent_system_prompt("explore")
         elif subagent_type == "general":
             role_prompt = subagent_system_prompt("general")
+        elif subagent_type == "group":
+            role_prompt = group_member_system_prompt(
+                member_name or "agent", list(group_peers or [])
+            )
         else:
             role_prompt = SYSTEM_PROMPT
         # Prepend a dynamic environment block (working dir, git, platform)
@@ -422,6 +441,8 @@ class Agent:
             self._permission: AgentPermission = ExploreSubagentPermission()
         elif subagent_type == "general":
             self._permission: AgentPermission = GeneralSubagentPermission()
+        elif subagent_type == "group":
+            self._permission: AgentPermission = GroupMemberPermission()
         else:
             self._permission: AgentPermission = PrimaryPermission()
         self._additional_dirs: list[Path] = []
@@ -436,13 +457,24 @@ class Agent:
         self._permission_path: str = ""
         # ── subagent lifecycle ───────────────────────────────────────────
         self._registry: dict[str, Agent] | None = registry
-        self._parent: Agent | None = parent
+        self._parent_ref: Agent | None = parent
+        self._parent_session: str | None = parent.name if parent is not None else None
         self._depth: int = depth
         self._max_steps: int | None = max_steps
         self._sealed: bool = sealed
         self._interrupted: bool = False
         self._step_count: int = 0
         self._children: list[Agent] = []
+        # ── group session (multi-agent chat channel) ─────────────────────
+        # ``mode == "group"`` marks the channel session itself: it never runs
+        # an LLM, it records the conversation and fans messages out to the
+        # members. ``_group_members`` maps member name -> session id (the
+        # roster, persisted in session.json). A member instead carries
+        # ``_member_name``; its parent is resolved lazily from the registry
+        # because a member restored from disk may load before its group.
+        self._mode: str | None = mode
+        self._group_members: dict[str, str] = dict(group_members or {})
+        self._member_name: str | None = member_name
         # The Popen of the bash command currently running in a worker thread
         # (None when idle). Set/cleared via _register_proc so interrupt() can
         # kill it instead of blocking until the command finishes on its own.
@@ -473,6 +505,20 @@ class Agent:
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def _parent(self) -> Agent | None:
+        """The parent agent, resolved lazily from the registry.
+
+        Spawned children hold a direct reference; a session restored from
+        disk (e.g. a group member loaded before its group) resolves through
+        ``_parent_session`` once the parent appears in the registry.
+        """
+        if self._parent_ref is not None:
+            return self._parent_ref
+        if self._parent_session is not None and self._registry is not None:
+            return self._registry.get(self._parent_session)
+        return None
 
     async def chat_completion(self, messages: list[dict], stream: bool = False, tools: list[dict] | None = None):
         """Make a chat completion request. Returns parsed JSON for non-stream,
@@ -853,6 +899,11 @@ class Agent:
             return "subagent"
         return "main"
 
+    @property
+    def is_group(self) -> bool:
+        """True for the group channel session itself (never runs an LLM)."""
+        return self._mode == "group"
+
     def interrupt(self) -> None:
         """Hard-stop a running subagent's current work, then summarize.
 
@@ -863,7 +914,14 @@ class Agent:
         and, rather than a bare cancel, runs one tool-less summary turn and
         exits. Also kills a running bash process group and unblocks a pending
         permission wait so nothing is left stuck.
+
+        A group member is a persistent teammate, not a bounded task: its
+        interrupt is a plain cancel (hard stop, stays reusable, no summary,
+        never sealed).
         """
+        if self._subagent_type == "group":
+            self.cancel()
+            return
         self._interrupted = True
         self._permission_approved = False
         self._permission_event.set()
@@ -1360,6 +1418,8 @@ class Agent:
                             tool_result = await self._run_subagents(args)
                         elif tool_name == "sleep_until":
                             tool_result = await self._run_sleep_tool(args)
+                        elif tool_name == "send_to_group":
+                            tool_result = await self._run_send_to_group(args)
                         else:
                             # Tools are synchronous (notably bash's subprocess.run
                             # blocks). Run them in a worker thread so a long bash
@@ -1590,9 +1650,11 @@ class Agent:
                 "error_code": error_code,
             })
         finally:
-            # A subagent's run has ended for any reason -> it is now sealed
-            # (view-only, no new input).
-            if self._subagent_type is not None:
+            # A bounded subagent's run has ended for any reason -> it is now
+            # sealed (view-only, no new input). Group members are persistent
+            # teammates instead: they go idle and accept later channel or
+            # direct messages.
+            if self._subagent_type in ("explore", "general"):
                 self._sealed = True
             # The run is over regardless of how it ended; clear the running
             # flag (a safety net -- done/cancelled/error already set it) and
@@ -1620,6 +1682,10 @@ class Agent:
         return user
 
     def is_running(self) -> bool:
+        # The group channel itself never runs; it shows as running while any
+        # member does (sidebar dot, stop button, streaming flag).
+        if self._mode == "group":
+            return any(m.is_running() for m in self._group_member_agents())
         return self._broker.is_running
 
     async def start(self, message: str, images: list[Image] | None = None) -> None:
@@ -1630,6 +1696,12 @@ class Agent:
         message is emitted as a stream event so every subscriber (and any
         reconnecting client) renders it consistently.
         """
+        # A group channel never runs an LLM: a message sent to it is recorded
+        # in the channel and delivered to every member (any caller -- the
+        # HTTP endpoint routes here directly, the CLI would land here too).
+        if self._mode == "group":
+            await self.post_to_group(message)
+            return
         user_seq = self._count_user_messages()
         # Auto-title the session from the first user message (first 50 chars).
         # Subagents carry a description instead and are never auto-titled.
@@ -1669,6 +1741,14 @@ class Agent:
         # Global config grants are session-independent; the sidebar shows
         # them in gray with no remove button.
         snapshot["global_dirs"] = [str(d) for d in self._global_dirs]
+        if self._mode == "group":
+            # The group channel view needs the roster (the setup dialog and
+            # the member chips) and a running flag that reflects the members.
+            snapshot["mode"] = "group"
+            snapshot["group_members"] = [
+                {"name": n, "session": sid} for n, sid in self._group_members.items()
+            ]
+        snapshot["is_running"] = self.is_running()
         return q, snapshot
 
     def detach_subscriber(self, q: asyncio.Queue) -> None:
@@ -1686,8 +1766,9 @@ class Agent:
         self._kill_current_proc()
         if self._task and not self._task.done():
             self._task.cancel()
-        # Propagate cancellation to running subagents (hard stop, no summary).
-        for c in list(self._children):
+        # Propagate cancellation to running subagents (hard stop, no summary)
+        # and, for a group channel, to its members.
+        for c in list(self._children) or self._group_member_agents():
             c.cancel()
 
     async def stop(self) -> None:
@@ -1702,7 +1783,7 @@ class Agent:
                 pass
             except Exception:
                 pass
-        for c in list(self._children):
+        for c in list(self._children) or self._group_member_agents():
             await c.stop()
         self._task = None
         self._broker.set_running(False)
@@ -1755,6 +1836,222 @@ class Agent:
         self._broker.set_running(True)
         await self._send_stream_event({"type": "user", "text": self._initial_prompt, "user_seq": 0})
         await self.run()
+
+    # ── group channel (multi-agent chat) ─────────────────────────────────
+
+    def _materialize_member(self, sid: str) -> Agent | None:
+        """Load a group member from disk into the registry (idempotent).
+
+        After a server restart members are not in memory; a channel message
+        addressed to them materializes the instance on demand, so delivery
+        works without anyone first visiting that member's view.
+        """
+        if self._registry is None:
+            return None
+        existing = self._registry.get(sid)
+        if existing is not None:
+            return existing
+        member_dir = self.session_dir.parent / sid
+        if not member_dir.is_dir():
+            return None
+        try:
+            info = json.loads((member_dir / "session.json").read_text())
+        except Exception:
+            return None
+        if info.get("parent_session") != self.name:
+            return None
+        child = Agent(
+            name=sid,
+            working_dir=info["working_dir"],
+            session_dir=member_dir,
+            config=self.config,
+            session_id=info.get("session_id"),
+            registry=self._registry,
+            parent=self,
+            subagent_type="group",
+            description=info.get("description"),
+            member_name=info.get("member_name"),
+            group_peers=info.get("group_peers"),
+            depth=info.get("depth", 1),
+            model_name=info.get("model"),
+        )
+        child.set_additional_dirs(info.get("additional_dirs", []))
+        self._registry[sid] = child
+        return child
+
+    def _group_member_agents(self) -> list[Agent]:
+        """The live member agents of a group channel (empty for others)."""
+        if self._mode != "group" or not self._group_members:
+            return []
+        return [a for a in (self._materialize_member(sid) for sid in self._group_members.values()) if a is not None]
+
+    def _create_group_member(self, name: str, peers: list[str]) -> Agent:
+        """Build one group member agent (does not start it).
+
+        Members are persistent child sessions under the group session: same
+        working directory and model as the channel, a group permission
+        (editing tools + ``send_to_group``), and a system prompt that names
+        the whole team.
+        """
+        child_name = uuid.uuid4().hex
+        child_dir = self.session_dir.parent / child_name
+        child_dir.mkdir(parents=True, exist_ok=True)
+        info = {
+            "name": child_name,
+            "working_dir": str(self.working_dir),
+            "parent_session": self.name,
+            "subagent_type": "group",
+            "member_name": name,
+            "description": name,
+            "group_peers": peers,
+            "depth": self._depth + 1,
+            "additional_dirs": [str(d) for d in self._additional_dirs],
+            "model": self._model_name,
+            "created_at": time.time(),
+        }
+        (child_dir / "session.json").write_text(json.dumps(info, indent=2))
+        child = Agent(
+            name=child_name,
+            working_dir=str(self.working_dir),
+            session_dir=child_dir,
+            config=self.config,
+            subagent_type="group",
+            description=name,
+            registry=self._registry,
+            parent=self,
+            depth=self._depth + 1,
+            max_steps=int(self.config.get("subagent_max_steps", 100)),
+            model_name=self._model_name,
+            member_name=name,
+            group_peers=peers,
+        )
+        child.set_additional_dirs([str(d) for d in self._additional_dirs])
+        if self._registry is not None:
+            self._registry[child_name] = child
+        return child
+
+    async def group_spawn(self, count: int) -> list[dict]:
+        """Create the group's member agents (the count dialog's confirmation).
+
+        One-time: a group is sized once; a second call is rejected. Names are
+        picked distinctly, preferring names no other group session uses.
+        Members start idle -- they run when the first channel or direct
+        message reaches them.
+        """
+        if self._group_members:
+            raise ValueError("group already has members")
+        taken: set[str] = set()
+        if self.session_dir.parent.is_dir():
+            for sd in self.session_dir.parent.iterdir():
+                if not sd.is_dir() or sd == self.session_dir:
+                    continue
+                try:
+                    other = json.loads((sd / "session.json").read_text())
+                except Exception:
+                    continue
+                if other.get("mode") == "group":
+                    taken |= set(other.get("group_members") or {})
+        names = pick_member_names(count, taken)
+        # Each member's prompt names itself ("You are {name}") and its
+        # teammates; the peers list excludes self.
+        members = [
+            self._create_group_member(name, peers=[n for n in names if n != name])
+            for name in names
+        ]
+        self._group_members = {m._member_name: m.name for m in members}
+        # Members join _children so cancel propagation and the permission
+        # fan-out reach them through the usual channel.
+        self._children = list(members)
+        self._update_session_json({
+            "group_members": dict(self._group_members),
+            "group_size": len(names),
+        })
+        roster = [{"name": n, "session": sid} for n, sid in self._group_members.items()]
+        await self._send_stream_event({"type": "group_members", "members": roster})
+        return roster
+
+    async def post_to_group(self, message: str) -> None:
+        """Record a user message in the channel and deliver it to every member.
+
+        The channel never runs an LLM itself: the message lands in the
+        channel's history (the group view renders it) and goes to each member
+        as a tagged user message -- steering for a running member, a fresh
+        run for an idle one.
+        """
+        user_seq = self._count_user_messages()
+        if user_seq == 0:
+            self._maybe_auto_title(message)
+        user = UserMessage(message, sender="user")
+        self.history.append(user)
+        await self._send_stream_event({
+            "type": "user", "id": user._id, "text": message,
+            "sender": "user", "user_seq": user_seq,
+        })
+        for m in self._group_member_agents():
+            await m.receive_group_message("user", message)
+
+    async def receive_member_message(self, from_member: Agent, to: str, text: str) -> str:
+        """Deliver a member's send_to_group message (channel side).
+
+        Resolves the recipient first (an unknown name fails the tool call
+        with a hint); a valid message is recorded in the channel with the
+        sender's name and fanned out -- "user" only records it (the user
+        reads the channel), "all"/a name also reaches the target members.
+        Returns the tool result text for the sender.
+        """
+        sender = from_member._member_name or "agent"
+        targets, err = resolve_recipients(to, sender, self._group_members)
+        if err:
+            return err
+        user = UserMessage(text, sender=sender)
+        self.history.append(user)
+        await self._send_stream_event({
+            "type": "user", "id": user._id, "text": text,
+            "sender": sender, "user_seq": self._count_user_messages() - 1,
+        })
+        registry = self._registry or {}
+        for name in targets:
+            member = self._materialize_member(self._group_members.get(name, ""))
+            if member is None:
+                continue
+            await member.receive_group_message(sender, text)
+        if not targets:
+            return f"Message delivered to {GROUP_USER} in the group channel."
+        return f"Message delivered to: {', '.join(targets)}."
+
+    async def receive_group_message(self, sender: str, text: str) -> None:
+        """Receive one channel message (member side).
+
+        A running member takes it as steering (the run loop picks it up at
+        the next turn boundary); an idle member starts a fresh run whose
+        first user message is the tagged channel text. The check and the
+        running-flag flip inside start() share no await, so two concurrent
+        deliveries cannot double-start a run.
+        """
+        content = format_group_message(sender, text)
+        if self.is_running():
+            await self.steer(content)
+        else:
+            await self.start(content)
+
+    async def _run_send_to_group(self, args: dict) -> dict[str, Any]:
+        """Post a message to the group channel (virtual send_to_group tool).
+
+        Like task/sleep_until, execution lives on Agent: the parent channel
+        records the message and fans it out to the resolved recipients'
+        histories. The tool result confirms delivery (or explains the
+        failure).
+        """
+        parent = self._parent
+        if parent is None or not parent.is_group:
+            return {"result": "Error: send_to_group is only available inside a group session."}
+        to = str(args.get("to") or "")
+        text = str(args.get("text") or "").strip()
+        if not to:
+            return {"result": "Error: send_to_group requires 'to': 'user', 'all', or a teammate's name."}
+        if not text:
+            return {"result": "Error: send_to_group requires non-empty 'text'."}
+        return {"result": await parent.receive_member_message(self, to, text)}
 
     # ── timers (sleep_until) ───────────────────────────────────────────────
 

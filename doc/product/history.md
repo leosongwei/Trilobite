@@ -14,7 +14,7 @@
 Message(_id)                                # 基类：每个消息带紧凑 id（uuid4 hex 前 12 位）
 SystemMessage(content)                      # system 消息（初始 prompt 或压缩后重建的 prompt）
 CompactMarker()                             # 压缩边界：纯标记，不带内容；其后跟一条重建的 SystemMessage
-UserMessage(content, compact_summary=False, is_compact_prompt=False, is_mode_notification=False, images=[]) # 用户输入；is_mode_notification 为遗留字段（旧历史中的模式通知），仅读取
+UserMessage(content, compact_summary=False, is_compact_prompt=False, is_mode_notification=False, images=[], sender="") # 用户输入；is_mode_notification 为遗留字段（旧历史中的模式通知），仅读取；sender 仅群聊频道使用（"user" 或成员名，投影 API 时忽略，见 group.md）
   └─ Image(filename, mime_type, original_name)  # 图片附件：文件存于 sessions/<id>/images/，历史里只存元数据
 ModelMessage(think, content, tool_calls)    # 一次模型响应；think 为思维链（API 里叫 reasoning_content）
   └─ ToolCall(id, name, arguments)          # 一次工具调用；id 是 API 生成的 call_xxx（区别于消息 _id）
@@ -44,6 +44,8 @@ ToolResults(results)                        # 一批工具调用的结果，紧�
   "messages": [
     { "type": "system", "id": "a1b2c3d4e5f6", "content": "..." },
     { "type": "user", "id": "b2c3d4e5f6a7", "content": "帮我读一下 main.py" },
+    // 群聊频道条目带 sender（"user" 或成员名）：
+    // { "type": "user", "id": "...", "content": "我先把权限模块看一遍", "sender": "Alice" },
     { "type": "model", "id": "c3d4e5f6a7b8", "think": "让我先读...", "content": "",
       "tool_calls": [{ "id": "call_1", "type": "function",
                        "function": { "name": "read", "arguments": "{\"filename\":\"main.py\"}" } }] },

@@ -109,6 +109,15 @@
     "class": "folder"
   },
   {
+    "use": "group session icon / new group in project",
+    "name": "group",
+    "codepoint": "ea21",
+    "std": "👥",
+    "std_name": "busts in silhouette",
+    "std_codepoint": "U+1F465",
+    "class": "group"
+  },
+  {
     "use": "file",
     "name": "description",
     "codepoint": "e873",

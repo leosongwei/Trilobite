@@ -45,7 +45,7 @@ per-session 事件总线，维护：
 | 事件 | 字段 | 说明 |
 |---|---|---|
 | `init` | `history, is_running, token_count, max_context_tokens, additional_dirs` | 连接时首发，前端据此重建对话与状态 |
-| `user` | `id, text, user_seq` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`id` 为该消息的消息 id（revert 用），`user_seq` 为在真实 user 消息中的序号 |
+| `user` | `id, text, user_seq, sender?` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`id` 为该消息的消息 id（revert 用），`user_seq` 为在真实 user 消息中的序号。群聊频道中带 `sender`（"user" 或成员名），前端渲染说话者 |
 | `user_edit` | `message_id, text` | revert 编辑尚未被模型读取的 steer 消息时发（消息已在 history 但模型未读到），前端按 `message_id` 就地更新对应 user 气泡 |
 | `turn` | -- | 一个 LLM 回合开始，置 `is_running=true` |
 | `turn_restart` | -- | 流式回合失败重试：丢弃本回合已流出的部分输出（坏思维链/截断正文/工具片段），开启新的回合泡泡，`is_running` 不变 |
@@ -58,6 +58,7 @@ per-session 事件总线，维护：
 | `usage` | `token_count, max_context_tokens` | token 用量 |
 | `status` | `text` | 状态横幅（如 compaction） |
 | `permission_request` | `path, tool, message` | 请求文件访问权限 |
+| `group_members` | `members` | 群聊频道确认成员数后广播花名册（`[{name, session}]`）；频道 `init` 快照也带 `mode: "group"` 与 `group_members`（见 [group.md](./group.md)） |
 | `done` | -- | run 正常结束，置 `is_running=false` |
 | `cancelled` | -- | run 被取消，置 `is_running=false` |
 | `error` | `text, status_code?, error_type?, error_code?` | run 出错，置 `is_running=false` |

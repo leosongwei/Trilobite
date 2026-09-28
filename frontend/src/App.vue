@@ -45,6 +45,21 @@
           <span class="subagent-title">{{ state.subagentDescription || state.currentSession }}</span>
           <span v-if="state.sealed" class="sealed-label">finished (read-only)</span>
         </div>
+        <div v-else-if="isGroupChannel && groupMembersLive.length" class="group-bar">
+          <span class="group-bar-label"><span class="ms ms-group"></span> members</span>
+          <button
+            v-for="m in groupMembersLive"
+            :key="m.id"
+            class="group-chip"
+            :title="m.working_dir"
+            @click="selectSession(m.id)"
+          >
+            <span class="running-dot" :class="{ on: m.is_running }"></span>
+            {{ m.description || m.name }}
+          </button>
+          <span class="group-note">posting to the group delivers to every member</span>
+        </div>
+        <GroupSetupDialog v-if="isGroupChannel && !state.groupMembers.length" />
         <div v-if="currentSessionInfo?.has_sleep" class="sleep-banner">
           <span class="sleep-text">⏳ 挂起至 {{ formatSleepUntil(currentSessionInfo.sleep_until) }}</span>
           <button class="wake-btn" :disabled="state.isStreaming" title="结束挂起，立即继续对话" @click="wakeNow">立即唤醒</button>
@@ -61,7 +76,7 @@
             <button class="approve" @click="openRequestsList">Review</button>
           </div>
           <ChatInput />
-          <TokenBar />
+          <TokenBar v-if="!isGroupChannel" />
         </template>
       </template>
     </main>
@@ -77,6 +92,7 @@ import ChatView from './components/ChatView.vue'
 import ChatInput from './components/ChatInput.vue'
 import TokenBar from './components/TokenBar.vue'
 import FileManager from './components/FileManager.vue'
+import GroupSetupDialog from './components/GroupSetupDialog.vue'
 import type { RootInfo } from './components/FileManager.vue'
 import type { OpenFilePayload } from './components/FileTree.vue'
 import type { PendingRequest } from './types'
@@ -91,6 +107,18 @@ const { state, loadSessions, approveRequest, rejectRequest, selectSession } = us
 const currentSessionInfo = computed(() =>
   state.sessions.find((s) => s.id === state.currentSession) ?? null,
 )
+
+// Group channel view: the member roster comes from the channel stream's
+// init/group_members events; live running state comes from the sessions poll
+// (members are the group session's children).
+const isGroupChannel = computed(() => state.mode === 'group')
+const groupMembersLive = computed(() => {
+  if (!isGroupChannel.value) return []
+  const bySession = new Map(state.sessions.map((s) => [s.id, s]))
+  return state.groupMembers
+    .map((m) => bySession.get(m.session))
+    .filter((s): s is NonNullable<typeof s> => !!s)
+})
 
 function formatSleepUntil(ts?: number | null): string {
   if (!ts) return '-'

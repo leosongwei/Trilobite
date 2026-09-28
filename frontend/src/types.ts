@@ -28,6 +28,13 @@ export interface Project {
   created_at?: number
 }
 
+// One agent in a group session's roster: the member's display name and its
+// own session id (the tree under the group session, direct-message target).
+export interface GroupMember {
+  session: string
+  name: string
+}
+
 // A pending approval request: a directory grant (main session or subagent).
 // Multiple requests can be pending at once (main session + several
 // subagents), so they live in a list keyed by requesting session instead of
@@ -49,8 +56,8 @@ export interface PendingRequest {
 }
 
 export type SSEEvent =
-  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; additional_dirs: string[]; global_dirs?: string[]; is_subagent?: boolean; kind?: string; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean }
-  | { type: 'user'; id: string; text: string; user_seq: number; images?: ImageMeta[] }
+  | { type: 'init'; history: HistoryMessage[]; is_running: boolean; token_count: number; max_context_tokens: number; additional_dirs: string[]; global_dirs?: string[]; is_subagent?: boolean; kind?: string; sealed?: boolean; subagent_type?: string | null; description?: string; enable_vl?: boolean; mode?: string; group_members?: GroupMember[] }
+  | { type: 'user'; id: string; text: string; user_seq: number; images?: ImageMeta[]; sender?: string }
   | { type: 'user_edit'; message_id: string; text: string; images?: ImageMeta[] | null }
   | { type: 'turn' }
   | { type: 'turn_restart' }
@@ -67,6 +74,7 @@ export type SSEEvent =
   | { type: 'subagents'; parent: string; children: SubagentChild[] }
   | { type: 'subagent_state'; session: string; state: string }
   | { type: 'subagent_permission_request'; child_session: string; child_type: string; child_description: string; path: string; tool: string; message: string }
+  | { type: 'group_members'; members: GroupMember[] }
   | { type: 'sleep_start'; session: string; until: number }
   | { type: 'sleep_end'; session: string }
   | { type: 'done' }
@@ -96,6 +104,8 @@ export interface HistoryMessage {
   compact_summary?: boolean
   is_compact_prompt?: boolean
   is_mode_notification?: boolean
+  /** Group channel: who said this ("user" or a member's name). */
+  sender?: string
 }
 
 export interface Session {
@@ -116,6 +126,8 @@ export interface Session {
   project_id?: string
   created_at?: number
   updated_at?: number
+  /** Session mode: 'normal' (default), 'chat', 'group' (multi-agent channel). */
+  mode?: 'normal' | 'chat' | 'group'
   // Whether the session is suspended via sleep_until (the sidebar shows a
   // blue dot and sorts such sessions to the top). sleep_until is the armed
   // target (epoch seconds) for the banner/tooltip; both are refreshed by the
@@ -173,6 +185,8 @@ export interface UserItem {
   userSeq?: number
   /** Message id (v3 history); present when the backend sent it. */
   id?: string
+  /** Group channel: who said this ("user" or a member's name). */
+  sender?: string
 }
 
 export interface TurnItem {

@@ -6,7 +6,7 @@ Chat 是一种特殊的普通 session：创建时忽略工作目录输入（即�
 
 ## 入口
 
-Sidebar 顶部提供三个创建按钮：`[+ Session][+ Chat][+ Project]`。`+ Session` 与 `+ Project` 复用顶部的工作目录输入框；`+ Chat` 不需要任何输入，点击即创建并选中。
+Sidebar 顶部提供四个创建按钮：`[+ Session][+ Chat][+ Group][+ Project]`。`+ Session` 与 `+ Project` 复用顶部的工作目录输入框；`+ Chat` 不需要任何输入，点击即创建并选中。`+ Group` 创建群聊频道（见 [group.md](./group.md)），工作目录可填可不填。
 
 ## 数据与持久化
 

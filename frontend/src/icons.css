@@ -57,6 +57,7 @@
 .ms-edit-square::before { content: "\f88d"; }
 .ms-expand::before { content: "\e5cf"; }
 .ms-folder::before { content: "\e2c7"; }
+.ms-group::before { content: "\ea21"; }
 .ms-description::before { content: "\e873"; }
 .ms-light-mode::before { content: "\e518"; }
 .ms-dark-mode::before { content: "\e51c"; }

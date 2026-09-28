@@ -1,8 +1,12 @@
 <template>
-  <div class="user-message">
+  <div class="user-message" :class="{ 'group-member-msg': isMember }">
     <template v-if="!editing">
-      <button class="user-pencil" @click="startEdit" title="编辑并重发"><span class="ms ms-edit-square"></span></button>
+      <button v-if="!isGroupChannel" class="user-pencil" @click="startEdit" title="编辑并重发"><span class="ms ms-edit-square"></span></button>
       <div class="user-content">
+        <div v-if="isMember" class="member-sender">
+          <span class="member-avatar" :style="{ background: avatarColor }">{{ avatarInitial }}</span>
+          <span class="member-name">{{ item.sender }}</span>
+        </div>
         <span class="message user">{{ item.content }}</span>
         <div v-if="item.images?.length" class="user-images">
           <img
@@ -58,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { computed, ref, nextTick } from 'vue'
 import type { ImageMeta, UserItem } from '../types'
 import { useStore } from '../store'
 import { readFileAsDataURL } from '../utils/images'
@@ -66,6 +70,20 @@ import { readFileAsDataURL } from '../utils/images'
 const props = defineProps<{ item: UserItem }>()
 const { state, enableVl, revert, fork } = useStore()
 const sessionId = state.currentSession
+
+// Group channel rendering: messages carry a sender ("user" or a member's
+// name). A member's message renders chat-style -- left aligned with an
+// avatar and name tag; channel messages never re-run, so editing is hidden.
+const isGroupChannel = computed(() => state.mode === 'group')
+const isMember = computed(() => isGroupChannel.value && !!props.item.sender && props.item.sender !== 'user')
+const avatarInitial = computed(() => (props.item.sender || '?').slice(0, 1))
+// Deterministic hue from the name so each member keeps one color across the
+// group view and the member chips.
+const avatarColor = computed(() => {
+  let h = 0
+  for (const ch of props.item.sender || '') h = (h * 31 + ch.charCodeAt(0)) % 360
+  return `hsl(${h}, 45%, 45%)`
+})
 
 const editing = ref(false)
 const draft = ref('')
@@ -292,5 +310,40 @@ async function forkEdit() {
   max-height: 90vh;
   object-fit: contain;
   border-radius: 6px;
+}
+
+/* Group channel: a member's message renders chat-style with the sender's
+   avatar and name above a neutral bubble (the user's own messages keep the
+   accent text). */
+.member-sender {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.member-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--text-contrast); /* white text on the colored disc */
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.member-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.user-message.group-member-msg .message.user {
+  display: inline-block;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-faint);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
 }
 </style>
