@@ -55,8 +55,6 @@
   --amber-chip-hover: #6a5a2f;
   --green-btn-bg: #2d5a3f;
   --green-btn-hover: #357a52;
-  --purple-btn-bg: #4c3a72;
-  --purple-btn-hover: #5f4a8f;
   --red-btn-bg: #933636;
   --red-btn-hover: #a84848;
 
@@ -148,8 +146,6 @@
   --amber-chip-hover: #d2b45e;
   --green-btn-bg: #4a7a52;
   --green-btn-hover: #3c6844;
-  --purple-btn-bg: #7d68a3;
-  --purple-btn-hover: #6c5a8e;
   --red-btn-bg: #a83a34;
   --red-btn-hover: #972c28;
 
@@ -284,10 +280,10 @@ body {
   font-size: 13px;
 }
 .sidebar-header button:hover { background: var(--accent-hover); }
-.sidebar-header button.secondary { background: var(--green-btn-bg); }
-.sidebar-header button.secondary:hover { background: var(--green-btn-hover); }
-.sidebar-header button.chat { background: var(--purple-btn-bg); }
-.sidebar-header button.chat:hover { background: var(--purple-btn-hover); }
+/* Secondary header buttons stay neutral: the accent button is the only strong
+ * color in the header, so the primary action reads at a glance. */
+.sidebar-header button.secondary { background: var(--bg-input); color: var(--text); }
+.sidebar-header button.secondary:hover { background: var(--bg-input-hover); }
 .sidebar-header .header-buttons { display: flex; gap: 6px; margin-top: 8px; }
 .sidebar-header .header-buttons button { margin-top: 0; flex: 1; }
 .sidebar-resizer {
