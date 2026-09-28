@@ -785,8 +785,8 @@ export function useStore() {
     connectStream(id)
   }
 
-  async function createSession(name: string, workingDir: string, projectId?: string) {
-    const actualId = await api.createSession(name, workingDir, projectId)
+  async function createSession(name: string, workingDir: string | null, projectId?: string, mode: string = 'normal') {
+    const actualId = await api.createSession(name, workingDir, projectId, mode)
     state.currentSession = actualId
     closeTurn()
     state.chatItems = []

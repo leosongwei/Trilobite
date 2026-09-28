@@ -23,7 +23,7 @@ Project 是给 session 分组的轻量"文件夹"：sidebar 顶部的 session �
 
 ## 前端（sidebar）
 
-* **创建**：sidebar 顶部的创建框只有 working directory 一个输入框；"+ New Session" 与 "+ New Project" 复用该字段，session/project 的名称自动取 working directory（两者均可后续重命名）。
+* **创建**：sidebar 顶部的创建框只有 working directory 一个输入框；"+ Session" 与 "+ Project" 复用该字段，session/project 的名称自动取 working directory（两者均可后续重命名）。"+ Chat" 不需要输入框，直接创建一个聊天模式 session（见 `doc/product/chat.md`）。
 * **展示**：项目行显示在 session 列表顶部（创建顺序），前面有展开箭头（`ms-expand`，折叠时旋转 90°）和文件夹图标（`ms-folder`）；点击行展开/收起（收起状态仅存内存，刷新即恢复展开）。
 * **状态点**：每个 session 和 project 行前常驻状态点，优先级固定：运行（绿点闪烁）> 挂起中（蓝点，`sleep_until` 挂起的会话）> 空闲（灰点）。project 的状态点由其成员 session 决定（任意成员运行 → 绿，任意成员挂起 → 蓝，否则灰）；状态计算与样式映射抽象在 `frontend/src/utils/sessionStatus.ts`。
 * **项目行操作**：行尾 hover 出现铅笔（重命名项目：名称变为行内输入框）、`+`（以项目的名称和工作目录创建 session 并归属于该项目，创建后自动选中）和 `×`（删除项目，确认后成员 session 保留为未分组）。编辑状态下行尾换成同款灰色的确认/取消两个按钮（Enter/Esc 等效），彩色按钮隐藏。

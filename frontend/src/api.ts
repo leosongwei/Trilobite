@@ -68,13 +68,14 @@ export async function getSessions(): Promise<Session[]> {
 
 export async function createSession(
   name: string,
-  workingDir: string,
+  workingDir: string | null,
   projectId?: string,
+  mode: string = 'normal',
 ): Promise<string> {
   const res = await authFetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, working_dir: workingDir, project_id: projectId ?? null }),
+    body: JSON.stringify({ name, working_dir: workingDir, project_id: projectId ?? null, mode }),
   })
   if (!res.ok) {
     const err = await res.json()
