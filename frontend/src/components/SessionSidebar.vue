@@ -15,7 +15,7 @@
       <input v-model="workingDir" type="text" placeholder="/home/user/project" />
       <div class="header-buttons">
         <button @click="handleCreate">+ Session</button>
-        <button class="secondary" @click="handleCreateChat">+ Chat</button>
+        <button class="chat" @click="handleCreateChat">+ Chat</button>
         <button class="secondary" @click="handleCreateProject">+ Project</button>
       </div>
     </div>
