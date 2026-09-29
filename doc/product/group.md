@@ -23,9 +23,18 @@ Group Session 是一个多 agent 聊天频道：用户在频道里发布指令�
 - 成员收到的消息在它的历史里带**寻址标签**：`[from group, by X]\n内容` 为频道广播（全员可见），`[private msg, from X]\n内容` 为定向私发（只投递给该成员）；X 为 user 或成员名。模型据此区分说话者与投递范围，私发内容保持私密（回信只发对方）。用户在成员自己的页面直发的消息同样标为 `[private msg, from user]`。
 - 协调先行：有多人空间的任务，成员的第一步是在频道里提出分工方案并**认领自己的部分**（`send_message("all")`），协调完重叠认领后才动手干活；无人反对即视为认领成立，不空等审批。琐碎的单步任务可以只报备一句就做。
 
+## group_shared 共享文件夹
+
+每个 group session 的文件夹里有一个 `group_shared/` 共享文件夹，是团队的文件交换区：
+
+- 成员的系统提示词给出它的绝对路径与用途约定：给用户和同伴看的产出物（报告、数据、想在频道展示的图片）放这里，不要散落在工作区；文件名互不覆盖（建议用成员名字做前缀）。
+- 对成员**预先授权**：group_shared 是每个成员有效授权集的一部分，读写不触发权限审批（见 [file_access.md](./file_access.md)）。
+- 频道视图渲染 markdown 时，消息中嵌入的图片以 group_shared 为基准解析相对路径：`![chart](chart.png)` 即 `group_shared/chart.png`（子目录同理）。文件经 `GET /api/sessions/{name}/shared/<path>` 提供，路径限制在该文件夹内（目录穿越与敏感文件名拒绝）。
+
 ## 频道视图（主 session）
 
-- 聊天窗口呈**群聊**形态：只渲染频道历史里的 user 消息；成员消息显示头像（按名字散列着色）+ 名字 + 中性气泡，左对齐。用户自己的消息用同款气泡但底色更亮、**右对齐**（聊天软件惯例：别人发的在左、自己发的在右）。成员的思考/工具过程不在频道里，点进成员会话查看。
+- 聊天窗口呈**群聊**形态：只渲染频道历史里的 user 消息；成员消息显示头像（按名字散列着色）+ 名字 + 中性气泡，左对齐。用户自己的消息用同款气泡但底色更亮、**右对齐**（聊天软件惯例：别人发的在左、自己发的在右），头像为人形图标。成员的思考/工具过程不在频道里，点进成员会话查看。
+- 频道消息按 **markdown** 渲染（成员与用户的消息都是）：代码块、列表、公式等正常展示；消息里嵌入的图片以 `group_shared` 为基准解析相对路径（外链 http/https/data 原样加载），气泡内限宽显示。
 - 群聊顶栏显示成员 chips（头像点 + 名字，点击切入该成员会话），运行中的成员带绿点；chip 旁的提示说明"发到频道即投递给所有成员"。
 - 发送框始终可用（成员运行中发消息即 steering），图片与 `/compact` 命令在频道中不提供。
 - Token 栏对频道隐藏（频道无 token 概念），成员会话各自显示。
@@ -52,6 +61,7 @@ sessions/
   <group_id>/                 # group channel（mode: "group"）
     session.json              # name, working_dir, mode, group_members: {名字: session_id}, group_size
     history.json              # 频道历史：仅 user 消息（sender 字段标明 user / 成员名）
+    group_shared/             # 团队共享文件夹（频道视图 markdown 图片的解析基准）
   <member_id>/                # 成员（与频道平级，扁平结构）
     session.json              # parent_session, subagent_type: "group", member_name, description,
                               # group_peers（同伴名字列表）, depth, working_dir, model, ...
