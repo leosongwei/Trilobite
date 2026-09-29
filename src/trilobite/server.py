@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import mimetypes
 import re
 import secrets
 import time
@@ -22,9 +23,16 @@ from src.trilobite.config import (
     init_config,
     load_models,
 )
-from src.trilobite.file_access import detect_line_ending, materialize, normalize_dir, normalize_dirs, resolve_file_path
+from src.trilobite.file_access import (
+    detect_line_ending,
+    is_sensitive_file,
+    materialize,
+    normalize_dir,
+    normalize_dirs,
+    resolve_file_path,
+)
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
-from src.trilobite.group import validate_group_size
+from src.trilobite.group import GROUP_SHARED_DIRNAME, validate_group_size
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image, UserMessage
 from src.trilobite.projects import (
@@ -1047,6 +1055,30 @@ async def get_image(name: str, filename: str):
     if not path.is_file():
         raise HTTPException(404, "image not found")
     mime = ext_to_mime(path.suffix)
+    return Response(path.read_bytes(), media_type=mime)
+
+
+@app.get("/api/sessions/{name}/shared/{file_path:path}")
+async def get_shared_file(name: str, file_path: str):
+    """Serve one file from a group session's group_shared folder.
+
+    Channel messages render as markdown and images embedded in them resolve
+    relative to group_shared; this endpoint serves those files. Paths are
+    confined to the folder (traversal and symlink escapes are refused) and
+    sensitive filenames never serve.
+    """
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    base = (session_dir / GROUP_SHARED_DIRNAME).resolve()
+    path = (base / file_path).resolve()
+    if not path.is_relative_to(base):
+        raise HTTPException(400, "invalid path")
+    if is_sensitive_file(path):
+        raise HTTPException(403, "sensitive file")
+    if not path.is_file():
+        raise HTTPException(404, "file not found")
+    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return Response(path.read_bytes(), media_type=mime)
 
 

@@ -7,7 +7,11 @@
           <span class="member-avatar" :style="{ background: avatarColor }">{{ avatarInitial }}</span>
           <span class="member-name">{{ item.sender }}</span>
         </div>
-        <span class="message user">{{ item.content }}</span>
+        <div v-if="isOwnGroupMsg" class="member-sender">
+          <span class="member-avatar user-avatar"><span class="ms ms-person"></span></span>
+        </div>
+        <span v-if="!isGroupChannel" class="message user">{{ item.content }}</span>
+        <div v-else class="message user markdown-body" v-html="renderedContent"></div>
         <div v-if="item.images?.length" class="user-images">
           <img
             v-for="img in item.images"
@@ -66,6 +70,7 @@ import { computed, ref, nextTick } from 'vue'
 import type { ImageMeta, UserItem } from '../types'
 import { useStore } from '../store'
 import { readFileAsDataURL } from '../utils/images'
+import { renderMarkdown } from '../utils/markdown'
 
 const props = defineProps<{ item: UserItem }>()
 const { state, enableVl, revert, fork } = useStore()
@@ -74,11 +79,16 @@ const sessionId = state.currentSession
 // Group channel rendering: messages carry a sender ("user" or a member's
 // name). A member's message renders chat-style -- left aligned with an
 // avatar and name tag; the user's own messages use the same bubble but a
-// brighter fill and right alignment (chat-app convention). Channel messages
-// never re-run, so editing is hidden.
+// brighter fill and right alignment (chat-app convention), with a person
+// icon avatar. Channel messages never re-run, so editing is hidden. Both
+// kinds render as markdown; images embedded in a message resolve relative
+// to the group's shared folder (group_shared).
 const isGroupChannel = computed(() => state.mode === 'group')
 const isMember = computed(() => isGroupChannel.value && !!props.item.sender && props.item.sender !== 'user')
 const isOwnGroupMsg = computed(() => isGroupChannel.value && props.item.sender === 'user')
+const renderedContent = computed(() =>
+  renderMarkdown(props.item.content, `/api/sessions/${sessionId}/shared`)
+)
 const avatarInitial = computed(() => (props.item.sender || '?').slice(0, 1))
 // Deterministic hue from the name so each member keeps one color across the
 // group view and the member chips.
@@ -340,6 +350,11 @@ async function forkEdit() {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-bright);
+}
+/* The user's own channel avatar: a person icon on the accent disc. */
+.user-avatar {
+  background: var(--accent);
+  font-size: 12px;
 }
 .user-message.group-member-msg .message.user {
   display: inline-block;

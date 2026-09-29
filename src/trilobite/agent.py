@@ -25,6 +25,7 @@ from src.trilobite.config import (
 from src.trilobite.file_access import normalize_dir, normalize_dirs
 from src.trilobite.group import (
     GROUP_ALL,
+    GROUP_SHARED_DIRNAME,
     format_group_message,
     pick_member_names,
     resolve_recipients,
@@ -394,7 +395,10 @@ class Agent:
             role_prompt = subagent_system_prompt("general")
         elif subagent_type == "group":
             role_prompt = group_member_system_prompt(
-                member_name or "agent", list(group_peers or [])
+                member_name or "agent",
+                list(group_peers or []),
+                shared_dir=str(parent.session_dir / GROUP_SHARED_DIRNAME)
+                if parent is not None else None,
             )
         else:
             role_prompt = SYSTEM_PROMPT
@@ -473,6 +477,12 @@ class Agent:
         # ``_member_name``; its parent is resolved lazily from the registry
         # because a member restored from disk may load before its group.
         self._mode: str | None = mode
+        if self._mode == "group":
+            # The channel's group_shared folder: the team's shared exchange
+            # area (members get it granted; the channel view serves images
+            # from it). Created here so it exists from the channel's first
+            # load on.
+            (self.session_dir / GROUP_SHARED_DIRNAME).mkdir(parents=True, exist_ok=True)
         self._group_members: dict[str, str] = dict(group_members or {})
         self._member_name: str | None = member_name
         # The Popen of the bash command currently running in a worker thread
@@ -979,12 +989,35 @@ class Agent:
         return _on_output
 
     @property
+    def group_shared_dir(self) -> Path | None:
+        """The group's shared folder (group_shared, in the channel's dir).
+
+        For the channel it is its own ``group_shared``; for a member it is
+        the parent channel's. None outside a group.
+        """
+        if self._mode == "group":
+            return self.session_dir / GROUP_SHARED_DIRNAME
+        if self._subagent_type == "group":
+            parent = self._parent
+            if parent is not None:
+                return parent.session_dir / GROUP_SHARED_DIRNAME
+        return None
+
+    @property
     def all_additional_dirs(self) -> list[Path]:
-        """Effective grants: global config dirs followed by session dirs."""
+        """Effective grants: global config dirs followed by session dirs.
+
+        Group members also get the team's group_shared folder: it is their
+        exchange area by design (the prompt tells them so), so neither the
+        file tools nor the bash sandbox should ever ask the user about it.
+        """
         out = list(self._global_dirs)
         for d in self._additional_dirs:
             if d not in out:
                 out.append(d)
+        shared = self.group_shared_dir
+        if shared is not None and shared not in out:
+            out.append(shared)
         return out
 
     def set_additional_dirs(self, dirs: list[str]):

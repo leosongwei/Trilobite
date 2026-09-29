@@ -1154,6 +1154,13 @@ button[title="Stop"]:not(:disabled):hover { background: var(--danger-hover); }
   text-decoration: none;
 }
 .markdown-body a:hover { text-decoration: underline; }
+.markdown-body img { max-width: 100%; border-radius: 6px; }
+/* Chat bubbles keep shared-folder images compact (group channel). */
+.user-message .markdown-body img {
+  max-width: 320px;
+  max-height: 320px;
+  object-fit: contain;
+}
 .markdown-body hr {
   border: none;
   border-top: 1px solid var(--border-subtle);

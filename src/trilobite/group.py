@@ -29,6 +29,12 @@ GROUP_ALL = "all"
 GROUP_MIN_SIZE = 1
 GROUP_MAX_SIZE = 16
 
+#: The team's shared folder, created inside the group channel's session
+#: folder. Members read and write it freely (it is part of their granted
+#: dirs) to exchange files with the user and each other; the channel view
+#: resolves markdown images relative to it.
+GROUP_SHARED_DIRNAME = "group_shared"
+
 
 def validate_group_size(count: object) -> int | str:
     """Validate a member count from the client.

@@ -118,6 +118,15 @@
     "class": "group"
   },
   {
+    "use": "user message avatar in group chat",
+    "name": "person",
+    "codepoint": "e7ff",
+    "std": "👤",
+    "std_name": "bust in silhouette",
+    "std_codepoint": "U+1F464",
+    "class": "person"
+  },
+  {
     "use": "file",
     "name": "description",
     "codepoint": "e873",

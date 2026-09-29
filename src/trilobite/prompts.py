@@ -192,18 +192,27 @@ How the channel works:
 - The user may also message you directly in your own session view (tagged "[private msg, from user]"); treat that as private guidance addressed to you alone, and reply there as plain text.
 """
 
+GROUP_SHARED_PROMPT = """Shared files (group_shared):
 
-def group_member_system_prompt(name: str, peers: list[str]) -> str:
+- The team has one shared folder, group_shared, at {shared}. It is the exchange area for anything the user and your teammates should see: artifacts, reports, datasets, and images you want shown in the channel. You can read and write it freely -- use it instead of scattering deliverables around the workspace -- but give files distinct names (prefix yours with your member name) so teammates never overwrite each other.
+- Channel messages render as markdown for the user, and an image embedded in one resolves relative to group_shared. To show an image in the channel, save it into group_shared and reference it by its path relative to that folder, like ![chart](chart.png) for group_shared/chart.png (subfolders work too: ![chart](plots/chart.png))."""
+
+
+def group_member_system_prompt(name: str, peers: list[str], shared_dir: str | None = None) -> str:
     """Build a group member's system prompt: base prompt + the group intro.
 
     The member knows its own name and every teammate's name up front; the
     channel protocol (send_message, the addressing tags) is spelled out so the
-    team can coordinate without further instruction.
+    team can coordinate without further instruction. ``shared_dir`` is the
+    team's group_shared folder -- the exchange area whose contents the channel
+    view renders (markdown images resolve against it).
     """
     peer_list = ", ".join(peers) if peers else "(no teammates)"
+    shared = shared_dir or "the group_shared folder inside the group session's folder"
     return (
         SYSTEM_PROMPT + "\n\n"
         + GROUP_MEMBER_PREFIX.format(name=name, peers=peer_list)
+        + "\n\n" + GROUP_SHARED_PROMPT.format(shared=shared)
     )
 
 
