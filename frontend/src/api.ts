@@ -1,4 +1,4 @@
-import type { Session, SessionInfo, HistoryMessage, SSEEvent, DiffRow, Project, ModelOption } from './types'
+import type { Session, SessionInfo, HistoryMessage, SSEEvent, DiffRow, Project, ModelOption, GroupMember } from './types'
 
 export interface ImageAttachment {
   mime_type: string
@@ -157,6 +157,24 @@ export async function sendMessage(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.detail || 'Failed to send message')
+  }
+  return res.json()
+}
+
+// Confirm the group's member count and create the member agents. The roster
+// is fixed afterwards; each member starts idle and runs on its first message.
+export async function spawnGroup(
+  id: string,
+  count: number,
+): Promise<{ members: GroupMember[] }> {
+  const res = await authFetch(`/api/sessions/${encode(id)}/group/spawn`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ count }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'Failed to create group members')
   }
   return res.json()
 }

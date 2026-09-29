@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import mimetypes
 import re
 import secrets
 import time
@@ -22,8 +23,16 @@ from src.trilobite.config import (
     init_config,
     load_models,
 )
-from src.trilobite.file_access import detect_line_ending, materialize, normalize_dir, normalize_dirs, resolve_file_path
+from src.trilobite.file_access import (
+    detect_line_ending,
+    is_sensitive_file,
+    materialize,
+    normalize_dir,
+    normalize_dirs,
+    resolve_file_path,
+)
 from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
+from src.trilobite.group import GROUP_SHARED_DIRNAME, validate_group_size
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image, UserMessage
 from src.trilobite.projects import (
@@ -124,7 +133,7 @@ class SessionCreate(BaseModel):
     name: str
     working_dir: str | None = None
     project_id: str | None = None
-    mode: str = "normal"  # "normal" | "chat"
+    mode: str = "normal"  # "normal" | "chat" | "group"
 
 class ProjectCreate(BaseModel):
     name: str
@@ -222,7 +231,9 @@ async def list_sessions():
                     info["is_running"] = agent.is_running() if agent else False
                     info["history_length"] = len(agent.history) if agent else 0
                     info["model"] = agent._model_name if agent else info.get("model") or get_default_model_name(config)
-                    info["sealed"] = agent.is_sealed() if agent else bool(info.get("subagent_type"))
+                    # Group members restored from disk are idle teammates,
+                    # not sealed read-only archives.
+                    info["sealed"] = agent.is_sealed() if agent else bool(info.get("subagent_type")) and info.get("subagent_type") != "group"
                     # A session suspended via sleep_until shows the sidebar's
                     # blue dot and sorts to the top; the target time feeds the
                     # tooltip. Suspended sessions can also be woken from the
@@ -259,10 +270,20 @@ async def create_session(req: SessionCreate):
 
     # Chat mode: a normal session whose working directory lives inside the
     # session folder itself, so no workspace needs to be chosen up front.
+    # Group mode: a multi-agent channel; like chat it works without a
+    # workspace (chat_files fallback), but a filled-in directory is honored
+    # so project groups and workspace groups both work.
     if req.mode == "chat":
         working_dir = session_dir / "chat_files"
         working_dir.mkdir(parents=True, exist_ok=True)
         name = req.name or "Chat"
+    elif req.mode == "group":
+        if req.working_dir:
+            working_dir = req.working_dir
+        else:
+            working_dir = session_dir / "chat_files"
+            working_dir.mkdir(parents=True, exist_ok=True)
+        name = req.name or "Group"
     elif req.working_dir:
         working_dir = req.working_dir
         name = req.name
@@ -272,6 +293,11 @@ async def create_session(req: SessionCreate):
     info = {"name": name, "working_dir": str(working_dir), "additional_dirs": [], "created_at": time.time()}
     if req.mode == "chat":
         info["mode"] = "chat"
+    elif req.mode == "group":
+        # The channel starts empty: the member count is confirmed from the
+        # group view, then POST /group/spawn creates the members.
+        info["mode"] = "group"
+        info["group_members"] = {}
     info["model"] = get_default_model_name(config)
     if req.project_id:
         info["project_id"] = req.project_id
@@ -284,6 +310,7 @@ async def create_session(req: SessionCreate):
         config=config,
         registry=agents,
         timer_service=timer_service,
+        mode=req.mode if req.mode in ("chat", "group") else None,
     )
     info["session_id"] = agent.session_id
     (session_dir / "session.json").write_text(json.dumps(info, indent=2))
@@ -429,6 +456,38 @@ def _get_or_create_agent(name: str) -> Agent:
         raise HTTPException(404, "Session not found")
     info = json.loads((session_dir / "session.json").read_text())
     subagent_type = info.get("subagent_type")
+    if subagent_type == "group":
+        # A group member restored from disk: a persistent teammate, rebuilt
+        # unsealed so later channel or direct messages can start its runs.
+        # Loading its group channel first wires the parent link -- the member
+        # resolves its channel for send_message delivery and model sync.
+        parent_agent: Agent | None = None
+        parent_id = info.get("parent_session")
+        if parent_id and parent_id != name:
+            try:
+                parent_agent = _get_or_create_agent(parent_id)
+            except HTTPException:
+                parent_agent = None
+        agent = Agent(
+            name=name,
+            working_dir=info["working_dir"],
+            session_dir=session_dir,
+            config=config,
+            session_id=info.get("session_id"),
+            registry=agents,
+            parent=parent_agent,
+            parent_session=parent_id,
+            subagent_type="group",
+            description=info.get("description"),
+            member_name=info.get("member_name"),
+            group_peers=info.get("group_peers"),
+            depth=info.get("depth", 1),
+            sealed=False,
+            model_name=info.get("model"),
+        )
+        agent.set_additional_dirs(info.get("additional_dirs", []))
+        agents[name] = agent
+        return agent
     if subagent_type:
         # A subagent session restored from disk: rebuild as a sealed, view-only
         # agent (its run is long over; it cannot accept new input).
@@ -439,6 +498,7 @@ def _get_or_create_agent(name: str) -> Agent:
             config=config,
             session_id=info.get("session_id"),
             registry=agents,
+            parent_session=info.get("parent_session"),
             subagent_type=subagent_type,
             description=info.get("description"),
             depth=info.get("depth", 1),
@@ -457,6 +517,8 @@ def _get_or_create_agent(name: str) -> Agent:
         registry=agents,
         timer_service=timer_service,
         model_name=info.get("model"),
+        mode=info.get("mode"),
+        group_members=info.get("group_members") or {},
     )
     agent.set_additional_dirs(info.get("additional_dirs", []))
     agent.restore_persisted_tokens(info)
@@ -469,6 +531,15 @@ async def send_message(name: str, req: MessageRequest):
     agent = _get_or_create_agent(name)
     if agent.is_sealed():
         raise HTTPException(status_code=409, detail="subagent session has ended, no longer accepts input")
+    if agent.is_group:
+        # A group channel posts to the shared channel instead of running an
+        # LLM: the message is recorded with the user as sender and delivered
+        # to every member (steering for running ones, fresh runs for idle
+        # ones). Images are not part of the channel (v1).
+        await agent.post_to_group(req.message)
+        return {"status": "started"}
+    # For group members steer/start tag this as a private note from the user
+    # (default sender="user", private=True); other sessions are untouched.
     # "/compact" needs no special casing here: it rides this endpoint as plain
     # text (start or steer), so it can also queue behind an in-flight run; the
     # agent turns it into the compaction turn when the run loop reads it.
@@ -498,6 +569,31 @@ async def send_message(name: str, req: MessageRequest):
     return {"status": "started"}
 
 
+class GroupSpawnRequest(BaseModel):
+    count: int
+
+
+@app.post("/api/sessions/{name}/group/spawn")
+async def group_spawn(name: str, req: GroupSpawnRequest):
+    """Create the group's member agents (the count dialog's confirmation).
+
+    The roster is fixed for the group's lifetime: a second spawn is a 409.
+    Members start idle; they run when the first channel or direct message
+    reaches them.
+    """
+    agent = _get_or_create_agent(name)
+    if not agent.is_group:
+        raise HTTPException(status_code=409, detail="not a group session")
+    count = validate_group_size(req.count)
+    if isinstance(count, str):
+        raise HTTPException(status_code=400, detail=count)
+    try:
+        members = await agent.group_spawn(count)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"status": "ok", "members": members}
+
+
 class RevertRequest(BaseModel):
     message_id: str
     message: str
@@ -511,6 +607,10 @@ class RevertRequest(BaseModel):
 @app.post("/api/sessions/{name}/revert")
 async def revert_message(name: str, req: RevertRequest):
     agent = _get_or_create_agent(name)
+    if agent.is_group:
+        # A channel's history is the shared record; editing one entry would
+        # not un-deliver it from the members.
+        raise HTTPException(status_code=400, detail="group channel does not support revert")
     # Rolling back history also drops any armed suspension: the deferred
     # wake result would otherwise land in a context that no longer matches
     # what the model asked to sleep on. (The sleeping turn is the last
@@ -563,6 +663,10 @@ async def fork_session(name: str, req: ForkRequest):
     src = _get_or_create_agent(name)
     if src.is_sealed():
         raise HTTPException(status_code=409, detail="subagent session cannot be forked")
+    if src.is_group:
+        # A channel's user messages are addressed to the whole group; a fork
+        # of one member's view is the supported path off a group history.
+        raise HTTPException(status_code=400, detail="group channel does not support fork")
     idx = src.history.index_of(req.message_id)
     if idx is None or not isinstance(src.history.raw[idx], UserMessage):
         raise HTTPException(status_code=400, detail="fork point must be an existing user message")
@@ -709,6 +813,9 @@ async def wake_session(name: str):
 async def interrupt_session(name: str):
     """Interrupt a running subagent: it stops work and produces a summary.
 
+    A group channel has no run of its own -- the stop button cancels every
+    member instead (hard stop, no summary; members stay reusable).
+
     A session suspended via sleep_until has no run to interrupt -- the stop
     button cancels the sleep instead: the deferred results are delivered as
     aborted, no wake-up run starts, and the session idles waiting for user
@@ -716,8 +823,14 @@ async def interrupt_session(name: str):
     sleeping turn's batch takes the normal interrupt path (its Cancelled
     handler drops the armed suspension too).
     """
-    agent = agents.get(name)
-    if agent and agent.is_running():
+    agent = _get_or_create_agent(name)
+    if agent.is_group:
+        # The channel itself never runs; stopping it means cancelling every
+        # member (hard stop, no summary -- members stay reusable).
+        if agent.is_running():
+            agent.cancel()
+        return {"status": "ok"}
+    if agent.is_running():
         agent.interrupt()
         return {"status": "ok"}
     if timer_service is not None and timer_service.is_sleeping(name):
@@ -942,6 +1055,30 @@ async def get_image(name: str, filename: str):
     if not path.is_file():
         raise HTTPException(404, "image not found")
     mime = ext_to_mime(path.suffix)
+    return Response(path.read_bytes(), media_type=mime)
+
+
+@app.get("/api/sessions/{name}/shared/{file_path:path}")
+async def get_shared_file(name: str, file_path: str):
+    """Serve one file from a group session's group_shared folder.
+
+    Channel messages render as markdown and images embedded in them resolve
+    relative to group_shared; this endpoint serves those files. Paths are
+    confined to the folder (traversal and symlink escapes are refused) and
+    sensitive filenames never serve.
+    """
+    session_dir = get_sessions_dir() / name
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found")
+    base = (session_dir / GROUP_SHARED_DIRNAME).resolve()
+    path = (base / file_path).resolve()
+    if not path.is_relative_to(base):
+        raise HTTPException(400, "invalid path")
+    if is_sensitive_file(path):
+        raise HTTPException(403, "sensitive file")
+    if not path.is_file():
+        raise HTTPException(404, "file not found")
+    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return Response(path.read_bytes(), media_type=mime)
 
 

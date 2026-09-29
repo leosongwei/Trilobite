@@ -55,6 +55,8 @@
   --amber-chip-hover: #6a5a2f;
   --green-btn-bg: #2d5a3f;
   --green-btn-hover: #357a52;
+  --purple-btn-bg: #4a3a6f;
+  --purple-btn-hover: #5a4a8f;
   --red-btn-bg: #933636;
   --red-btn-hover: #a84848;
 
@@ -146,6 +148,8 @@
   --amber-chip-hover: #d2b45e;
   --green-btn-bg: #4a7a52;
   --green-btn-hover: #3c6844;
+  --purple-btn-bg: #6a5a94;
+  --purple-btn-hover: #7a6aa4;
   --red-btn-bg: #a83a34;
   --red-btn-hover: #972c28;
 
@@ -285,6 +289,10 @@ body {
  * strong color in the header. */
 .sidebar-header button.secondary { background: var(--green-btn-bg); }
 .sidebar-header button.secondary:hover { background: var(--green-btn-hover); }
+/* The + Group button carries the group mode's purple tint (the member-count
+   dialog and the group chips use the same family). */
+.sidebar-header button.group { background: var(--purple-btn-bg); }
+.sidebar-header button.group:hover { background: var(--purple-btn-hover); }
 .sidebar-header .header-buttons { display: flex; gap: 6px; margin-top: 8px; }
 .sidebar-header .header-buttons button { margin-top: 0; flex: 1; }
 .sidebar-resizer {
@@ -436,6 +444,10 @@ body {
 .session-item .project-actions .delete:hover { background: var(--red-btn-hover); }
 .child-badge { font-size: 9px; font-weight: 600; padding: 1px 3px; border-radius: 2px; background: var(--bg-widget); color: var(--accent-soft); flex-shrink: 0; text-transform: uppercase; }
 .child-badge.explore { color: var(--amber); }
+/* A group member's badge is the group glyph (purple, the group-mode family)
+   instead of a two-letter role tag. */
+.child-badge.group { display: inline-flex; align-items: center; color: var(--accent-text); }
+.child-badge.group .ms { font-size: 10px; }
 .sealed-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dot-idle); flex-shrink: 0; }
 .stopped-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
 .pending-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dot-pending); box-shadow: 0 0 4px var(--dot-pending-glow); flex-shrink: 0; }
@@ -896,6 +908,25 @@ body {
 .subagent-bar .interrupt-btn:hover { background: var(--amber-chip-hover); }
 .sealed-notice { color: var(--text-muted); font-size: 12px; padding: 6px 0; }
 
+/* Group channel bar: one chip per member (click = open the member's own
+   session); the running dot mirrors the member's live state. */
+.group-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 6px 12px; background: var(--bg-panel); border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.group-bar .group-bar-label { display: flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
+.group-bar .group-bar-label .ms { font-size: 14px; }
+.group-bar .group-chip {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-widget); color: var(--text); border: 1px solid var(--border);
+  border-radius: 12px; padding: 2px 10px; cursor: pointer; font-size: 11px; font-family: inherit;
+}
+.group-bar .group-chip:hover { background: var(--bg-widget-hover); }
+.group-bar .group-chip .running-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dot-idle); flex-shrink: 0; }
+.group-bar .group-chip .running-dot.on { background: var(--success); animation: trilobite-pulse 1.4s ease-in-out infinite; }
+.group-bar .group-note { color: var(--text-ghost); font-size: 10px; margin-left: auto; }
+
 /* Sleep banner shown while the current session is suspended via sleep_until:
    the target time plus a wake-now button (sending a message also wakes it). */
 .sleep-banner { padding: 6px 12px; background: var(--sleep-bg); border-bottom: 1px solid var(--border); font-size: 12px; display: flex; align-items: center; gap: 12px; }
@@ -1123,6 +1154,13 @@ button[title="Stop"]:not(:disabled):hover { background: var(--danger-hover); }
   text-decoration: none;
 }
 .markdown-body a:hover { text-decoration: underline; }
+.markdown-body img { max-width: 100%; border-radius: 6px; }
+/* Chat bubbles keep shared-folder images compact (group channel). */
+.user-message .markdown-body img {
+  max-width: 320px;
+  max-height: 320px;
+  object-fit: contain;
+}
 .markdown-body hr {
   border: none;
   border-top: 1px solid var(--border-subtle);

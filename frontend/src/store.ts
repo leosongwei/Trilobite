@@ -1,5 +1,5 @@
 import { computed, reactive } from 'vue'
-import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem, PendingRequest, Project, ModelOption } from './types'
+import type { Session, ChatItem, ToolDisplay, SubagentChild, HistoryMessage, SSEEvent, TurnItem, PendingRequest, Project, ModelOption, GroupMember } from './types'
 import * as api from './api'
 
 interface State {
@@ -32,6 +32,10 @@ interface State {
   sealed: boolean
   subagentType: string | null
   subagentDescription: string
+  // Session mode of the viewed session ('normal' | 'chat' | 'group'); a
+  // group channel shows the chat-group view and its member roster here.
+  mode: 'normal' | 'chat' | 'group'
+  groupMembers: GroupMember[]
 }
 
 const state = reactive<State>({
@@ -53,6 +57,8 @@ const state = reactive<State>({
   sealed: false,
   subagentType: null,
   subagentDescription: '',
+  mode: 'normal',
+  groupMembers: [],
 })
 
 // Whether the current session's model supports visual input. Derived from the
@@ -201,6 +207,8 @@ function handleSSEEvent(event: SSEEvent) {
       state.sealed = event.sealed ?? false
       state.subagentType = event.subagent_type ?? null
       state.subagentDescription = event.description ?? ''
+      state.mode = (event.mode as State['mode']) ?? 'normal'
+      state.groupMembers = event.group_members ?? []
       closeTurn()
       break
     }
@@ -218,6 +226,7 @@ function handleSSEEvent(event: SSEEvent) {
         images: event.images,
         userSeq: event.user_seq,
         id: event.id,
+        sender: event.sender,
       })
       break
     }
@@ -411,6 +420,13 @@ function handleSSEEvent(event: SSEEvent) {
       })
       break
 
+    case 'group_members':
+      // The roster confirmed (from this tab or another one): the group view
+      // drops its setup dialog and shows the member chips. Running state and
+      // the sidebar tree come from the sessions poll.
+      state.groupMembers = event.members
+      break
+
     case 'sleep_start': {
       // sleep_until armed: light up the sidebar's blue dot immediately (the
       // sessions poll would catch up within 3s anyway).
@@ -518,6 +534,7 @@ function parseHistory(history: HistoryMessage[]): ChatItem[] {
         images: msg.images,
         userSeq: userSeq++,
         id: msg.id,
+        sender: msg.sender,
       })
       i++
       continue
@@ -781,6 +798,8 @@ export function useStore() {
     state.sealed = false
     state.subagentType = null
     state.subagentDescription = ''
+    state.mode = 'normal'
+    state.groupMembers = []
     await loadSessions()
     connectStream(id)
   }
@@ -795,8 +814,26 @@ export function useStore() {
     state.additionalDirs = []
     state.globalDirs = []
     state.isStreaming = false
+    state.mode = 'normal'
+    state.groupMembers = []
     await loadSessions()
     connectStream(actualId)
+  }
+
+  // Confirm the group's member count: the roster arrives via the channel's
+  // group_members event; the session list refresh adds the member tree.
+  async function spawnGroupMembers(count: number) {
+    if (!state.currentSession) return
+    try {
+      await api.spawnGroup(state.currentSession, count)
+    } catch (e) {
+      state.chatItems.push({
+        kind: 'error',
+        content: `Failed to create group members: ${e instanceof Error ? e.message : String(e)}`,
+      })
+      state.streamTick++
+    }
+    await loadSessions()
   }
 
   async function createProject(name: string, workingDir: string) {
@@ -965,6 +1002,7 @@ export function useStore() {
     loadSessions,
     selectSession,
     createSession,
+    spawnGroupMembers,
     createProject,
     deleteProject,
     renameProject,

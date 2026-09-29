@@ -18,7 +18,7 @@
         </div>
         <textarea
           v-model="message"
-          :placeholder="state.isSubagent ? 'Steer the subagent...' : 'Type a message... (type / for commands)'"
+          :placeholder="inputPlaceholder"
           rows="1"
           ref="textareaRef"
           @keydown.enter.exact.prevent="handleSend"
@@ -41,7 +41,7 @@
         @change="onImageSelect"
       />
       <button
-        v-if="enableVl && !state.isSubagent"
+        v-if="enableVl && !state.isSubagent && !isGroupChannel"
         @click="imageInput?.click()"
         title="Add image"
         :disabled="state.isStreaming"
@@ -66,6 +66,18 @@ const message = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const imageInput = ref<HTMLInputElement>()
 
+// Group session: a group member is a persistent teammate (stop = cancel its
+// current run, it stays reusable) while bounded subagents interrupt+seal.
+// The group channel itself sends to every member (always available, even
+// mid-run -- that is the steering path), no images, no slash commands.
+const isGroupChannel = computed(() => state.mode === 'group')
+
+const inputPlaceholder = computed(() => {
+  if (isGroupChannel.value) return 'Post to the group (every member sees this)...'
+  if (state.isSubagent) return 'Steer the subagent...'
+  return 'Type a message... (type / for commands)'
+})
+
 interface PendingImage {
   file: File
   mime_type: string
@@ -89,7 +101,7 @@ const filteredCommands = computed(() => {
   return COMMANDS.filter((c) => c.cmd.startsWith(m) && c.cmd !== m)
 })
 
-const showCommands = computed(() => filteredCommands.value.length > 0)
+const showCommands = computed(() => filteredCommands.value.length > 0 && !isGroupChannel.value)
 
 // A session suspended via sleep_until has no run, but its stop button stays
 // armed (red): pressing it aborts the sleep and wakes the model on the spot
@@ -141,7 +153,7 @@ async function onImageSelect(event: Event) {
 }
 
 async function onPaste(event: ClipboardEvent) {
-  if (!enableVl.value || state.isStreaming || state.isSubagent) return
+  if (!enableVl.value || state.isStreaming || state.isSubagent || isGroupChannel.value) return
   const items = event.clipboardData?.items
   if (!items) return
   let hasImage = false
@@ -182,12 +194,15 @@ async function handleSend() {
 
 async function stop() {
   if (!state.currentSession) return
-  // A subagent's stop is an interrupt: hard-stop its current work, then it
-  // runs one summary turn and exits. A suspended main session has no run to
-  // cancel -- stop means abort the sleep (interrupt endpoint; the deferred
-  // result is delivered as aborted and the session idles). Otherwise the
-  // main agent's stop is a plain cancel.
-  if (state.isSubagent) {
+  // A bounded subagent's stop is an interrupt: hard-stop its current work,
+  // then it runs one summary turn and exits. A group member's stop is a
+  // plain cancel (its run just ends; it stays a reusable teammate), not an
+  // interrupt+seal. A suspended main session has no run to cancel -- stop
+  // means abort the sleep (interrupt endpoint; the deferred result is
+  // delivered as aborted and the session idles). Otherwise the main agent's
+  // stop is a plain cancel (for the group channel it cancels every running
+  // member).
+  if (state.isSubagent && state.subagentType !== 'group') {
     await interruptSubagent(state.currentSession)
   } else if (sessionSleeping.value) {
     await interruptSession(state.currentSession)

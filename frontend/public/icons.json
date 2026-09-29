@@ -109,6 +109,24 @@
     "class": "folder"
   },
   {
+    "use": "group session icon / new group in project",
+    "name": "group",
+    "codepoint": "ea21",
+    "std": "👥",
+    "std_name": "busts in silhouette",
+    "std_codepoint": "U+1F465",
+    "class": "group"
+  },
+  {
+    "use": "user message avatar in group chat",
+    "name": "person",
+    "codepoint": "e7ff",
+    "std": "👤",
+    "std_name": "bust in silhouette",
+    "std_codepoint": "U+1F464",
+    "class": "person"
+  },
+  {
     "use": "file",
     "name": "description",
     "codepoint": "e873",

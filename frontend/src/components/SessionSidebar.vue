@@ -16,6 +16,7 @@
       <div class="header-buttons">
         <button @click="handleCreate">+ Session</button>
         <button class="secondary" @click="handleCreateChat">+ Chat</button>
+        <button class="group" @click="handleCreateGroup">+ Group</button>
         <button class="secondary" @click="handleCreateProject">+ Project</button>
       </div>
     </div>
@@ -49,6 +50,7 @@
             <template v-else>
               <button class="project-rename" type="button" title="Rename project" @click.stop="startEditProject(item.project)"><span class="ms ms-edit-square"></span></button>
               <button class="project-add" type="button" title="New session in project" @click.stop="handleCreateInProject(item.project)"><span class="ms ms-add"></span></button>
+              <button class="project-add" type="button" title="New group session in project" @click.stop="handleCreateGroupInProject(item.project)"><span class="ms ms-group"></span></button>
               <button class="delete" type="button" title="Delete project" @click.stop="handleDeleteProject(item.project)"><span class="ms ms-close"></span></button>
             </template>
           </span>
@@ -68,6 +70,7 @@
               :title="isSessionExpanded(item.session.id) ? 'Collapse subagents' : `Expand subagents (${item.children.length})`"
               @click.stop="toggleSessionChildren(item.session.id)"
             ></span>
+            <span v-if="item.session.mode === 'group'" class="tree-icon ms ms-group" title="group session"></span>
             <span v-if="item.kind === 'session' && item.children.length && !isSessionExpanded(item.session.id)" class="child-count">{{ item.children.length }}</span>
             {{ item.session.name }}
           </span>
@@ -83,7 +86,10 @@
           >
             <span class="session-label" :title="childLabel(c)">
               <span v-if="c.is_running" class="running-dot" title="running"></span>
-              <span v-if="c.subagent_type" class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">{{ (c.subagent_type || '').slice(0, 2) }}</span>
+              <span v-if="c.subagent_type" class="child-badge" :class="{ explore: c.subagent_type === 'explore', group: c.subagent_type === 'group' }" :title="c.subagent_type === 'group' ? 'group member' : c.subagent_type">
+                <span v-if="c.subagent_type === 'group'" class="ms ms-group"></span>
+                <template v-else>{{ (c.subagent_type || '').slice(0, 2) }}</template>
+              </span>
               <span v-if="c.has_sleep" class="pending-dot" title="suspended (sleep_until)"></span>
               <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
               {{ c.description || c.name }}
@@ -470,8 +476,13 @@ const sessionRows = computed<SessionRow[]>(() => {
   const toNode = (s: Session): SessionNode => ({
     ...s,
     children: (childrenByParent.get(s.id) ?? []).slice().sort((a, b) => {
-      // Newest subagents on top: descending by created_at, with missing
-      // timestamps (legacy sessions) pushed to the bottom.
+      // Group members keep roster (name) order -- they spawn in one batch and
+      // their names are their identity. Other subagents: newest on top,
+      // descending by created_at, with missing timestamps (legacy sessions)
+      // pushed to the bottom.
+      if (a.subagent_type === 'group' && b.subagent_type === 'group') {
+        return (a.description || a.name).localeCompare(b.description || b.name)
+      }
       return (b.created_at ?? 0) - (a.created_at ?? 0)
     }),
   })
@@ -568,6 +579,18 @@ async function handleCreateChat() {
   }
 }
 
+// Group mode: a multi-agent channel. A filled-in working directory is
+// honored (the agents work there); empty falls back to the session folder.
+// The member count is confirmed in a dialog after switching to it.
+async function handleCreateGroup() {
+  try {
+    await createSession('', workingDir.value.trim() || null, undefined, 'group')
+    resetDefaults()
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
+  }
+}
+
 // Projects reuse the header's working directory field as name + directory.
 async function handleCreateProject() {
   const dir = workingDir.value.trim()
@@ -588,6 +611,17 @@ async function handleCreateProject() {
 async function handleCreateInProject(p: Project) {
   try {
     await createSession(p.name, p.working_dir, p.id)
+    resetDefaults()
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
+  }
+}
+
+// Create a group session inside the project: it uses the project's working
+// directory and carries the group icon in the tree.
+async function handleCreateGroupInProject(p: Project) {
+  try {
+    await createSession('', p.working_dir, p.id, 'group')
     resetDefaults()
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
