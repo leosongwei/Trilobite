@@ -30,7 +30,7 @@
         >
           <span class="session-label">
             <span class="status-dot" :class="statusDot(item.dot).cls" :title="statusDot(item.dot).title"></span>
-            <span class="tree-arrow ms ms-expand" :class="{ open: !isProjectCollapsed(item.project.id) }"></span>
+            <span class="tree-arrow ms ms-expand" :class="{ open: isProjectEntered(item.project.id) }"></span>
             <span class="tree-icon ms ms-folder"></span>
             <input
               v-if="editingProjectId === item.project.id"
@@ -267,8 +267,10 @@ const requestsDetails = ref<HTMLDetailsElement | null>(null)
 // Model configuration modal (main sessions only).
 const modelModalOpen = ref(false)
 const pendingModel = ref('')
-// Expanded/collapsed state of project folders (in-memory only, not persisted).
-const collapsedProjects = ref(new Set<string>())
+// Project folders use enter navigation: only one project can be entered at a
+// time, and an entered project hides every other project and unassigned
+// session. In-memory only; re-derived from the active session on reload.
+const enteredProjectId = ref<string | null>(null)
 // Subagent lists collapse per session; expanded only while explicitly
 // toggled, so new sessions are collapsed by default (in-memory only).
 const expandedSessions = ref(new Set<string>())
@@ -435,15 +437,14 @@ type SessionRow =
   | { key: string; kind: 'project'; project: Project; children: Session[]; dot: SessionStatus }
   | { key: string; kind: 'session'; session: SessionNode; children: Session[]; project: boolean; dot: SessionStatus }
 
-function isProjectCollapsed(id: string): boolean {
-  return collapsedProjects.value.has(id)
+function isProjectEntered(id: string): boolean {
+  return enteredProjectId.value === id
 }
 
+// Click a project to enter it (only its sessions show); click the entered
+// project again to collapse it and return to the top level.
 function toggleProject(id: string) {
-  const s = new Set(collapsedProjects.value)
-  if (s.has(id)) s.delete(id)
-  else s.add(id)
-  collapsedProjects.value = s
+  enteredProjectId.value = enteredProjectId.value === id ? null : id
 }
 
 function isSessionExpanded(id: string): boolean {
@@ -502,18 +503,27 @@ const sessionRows = computed<SessionRow[]>(() => {
 
   const rows: SessionRow[] = []
   const projectIds = new Set(state.projects.map((p) => p.id))
-  for (const p of state.projects.slice().sort((a, b) =>
+  const projects = state.projects.slice().sort((a, b) =>
     (a.created_at ?? 0) - (b.created_at ?? 0) || a.name.localeCompare(b.name),
-  )) {
+  )
+  const pushProjectRow = (p: Project, withSessions: boolean) => {
     const members = all.filter((s) => !s.parent_session && s.project_id === p.id)
     rows.push({ key: 'p:' + p.id, kind: 'project', project: p, children: [], dot: projectStatus(members) })
-    if (!isProjectCollapsed(p.id)) {
-      for (const node of sortTop(members).map(toNode)) {
-        rows.push({ key: node.id, kind: 'session', session: node, children: node.children, project: true, dot: sessionStatus(node) })
-      }
+    if (!withSessions) return
+    for (const node of sortTop(members).map(toNode)) {
+      rows.push({ key: node.id, kind: 'session', session: node, children: node.children, project: true, dot: sessionStatus(node) })
     }
   }
-  // Sessions referencing a deleted/unknown project render as unassigned.
+  // Entered project: only that folder's sessions show (enter navigation).
+  if (enteredProjectId.value && projects.some((p) => p.id === enteredProjectId.value)) {
+    pushProjectRow(projects.find((p) => p.id === enteredProjectId.value)!, true)
+    return rows
+  }
+  // Top level: every project renders as a single collapsed row; sessions
+  // referencing a deleted/unknown project render as unassigned.
+  for (const p of projects) {
+    pushProjectRow(p, false)
+  }
   const free = all.filter(
     (s) => !s.parent_session && !(s.project_id && projectIds.has(s.project_id)),
   )
@@ -522,6 +532,23 @@ const sessionRows = computed<SessionRow[]>(() => {
   }
   return rows
 })
+
+// Entering is in-memory only: after a reload, re-enter the project holding
+// the active session so it stays visible. Assigning the current session to a
+// project (or un-assigning it) follows along; subagent sessions never steer
+// the view.
+watch(
+  () => {
+    if (state.isSubagent) return undefined
+    const cur = currentSessionObj.value
+    if (cur?.parent_session) return undefined
+    return cur?.project_id ?? null
+  },
+  (pid) => {
+    if (pid !== undefined) enteredProjectId.value = pid
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   resetDefaults()
@@ -632,6 +659,7 @@ async function handleDeleteProject(p: Project) {
   if (!confirm(`Delete project "${p.name}"? Its sessions are kept (unassigned).`)) return
   try {
     await deleteProject(p.id)
+    if (enteredProjectId.value === p.id) enteredProjectId.value = null
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
   }
