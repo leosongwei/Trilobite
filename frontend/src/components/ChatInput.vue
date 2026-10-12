@@ -264,13 +264,13 @@ async function stop() {
 }
 .edit-toggle .ms {
   font-size: 15px;
-  opacity: 0.7;
+  color: rgba(255, 255, 255, 0.4);
 }
 .edit-toggle.active {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.25);
 }
 .edit-toggle.active .ms {
-  opacity: 1;
+  color: var(--accent-soft);
 }
 .image-previews {
   display: flex;
