@@ -21,7 +21,7 @@
           :placeholder="inputPlaceholder"
           rows="1"
           ref="textareaRef"
-          @keydown.enter.exact.prevent="handleSend"
+          @keydown="onKeydown"
           @keydown.tab.prevent="tabComplete"
           @paste="onPaste"
         ></textarea>
@@ -48,7 +48,19 @@
       >
         <span class="ms ms-attach-file"></span>
       </button>
-      <button @click="handleSend">Send</button>
+      <button
+        class="send-group"
+        @click="handleSend"
+        :title="sendTitle"
+      >
+        <span>Send</span>
+        <span
+          class="edit-toggle"
+          :class="{ active: editMode }"
+          @click.stop="editMode = !editMode"
+          title="Edit mode: Enter inserts a newline, Ctrl+Enter sends"
+        ><span class="ms ms-edit-square"></span></span>
+      </button>
       <button @click="stop" :disabled="!state.isStreaming && !sessionSleeping" title="Stop"><span class="ms ms-stop ms-fill"></span></button>
     </template>
   </div>
@@ -120,6 +132,27 @@ function tabComplete() {
   if (filteredCommands.value.length > 0) {
     pickCommand(filteredCommands.value[0].cmd)
   }
+}
+
+// Send shortcut: Enter sends by default; the pencil toggle switches to edit
+// mode (Enter inserts a newline) and Ctrl+Enter sends instead, in both modes.
+const editMode = ref(false)
+
+const sendTitle = computed(() =>
+  editMode.value ? 'Send (Ctrl+Enter)' : 'Send (Enter)',
+)
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Enter' || e.shiftKey) return
+  const send = e.ctrlKey || e.metaKey
+  if (send) {
+    e.preventDefault()
+    handleSend()
+  } else if (!editMode.value) {
+    e.preventDefault()
+    handleSend()
+  }
+  // In edit mode a plain Enter falls through: the textarea inserts a newline.
 }
 
 function autoResize() {
@@ -213,6 +246,32 @@ async function stop() {
 </script>
 
 <style scoped>
+/* Send + edit-mode pencil live on one button, visually split by a divider. */
+.send-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+}
+.send-group > span:first-child {
+  padding: 8px 16px;
+}
+.edit-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+}
+.edit-toggle .ms {
+  font-size: 15px;
+  opacity: 0.7;
+}
+.edit-toggle.active {
+  background: rgba(255, 255, 255, 0.22);
+}
+.edit-toggle.active .ms {
+  opacity: 1;
+}
 .image-previews {
   display: flex;
   gap: 6px;
