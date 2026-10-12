@@ -259,18 +259,19 @@ async function stop() {
   display: inline-flex;
   align-items: center;
   padding: 8px 10px;
-  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  border-left: 1px solid var(--border-widget);
+  background: var(--bg-inset);
   cursor: pointer;
 }
 .edit-toggle .ms {
   font-size: 15px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 .edit-toggle.active {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--accent);
 }
 .edit-toggle.active .ms {
-  color: var(--accent-soft);
+  color: var(--text-contrast);
 }
 .image-previews {
   display: flex;
