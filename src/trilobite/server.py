@@ -180,6 +180,27 @@ def _decode_data_url(data_url: str) -> bytes:
     return base64.b64decode(m.group(2))
 
 
+def _save_attachment(session_dir: Path, att) -> Image:
+    """Store an uploaded image attachment, rejecting unconvertible formats."""
+    data = _decode_data_url(att.data_url)
+    image = save_image(
+        session_dir,
+        data,
+        att.mime_type,
+        original_name=att.original_name or "",
+        low_quality=bool(config.get("low_quality_images", True)),
+    )
+    if image is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unsupported image: {att.original_name or att.mime_type} "
+                f"could not be converted to a supported format"
+            ),
+        )
+    return image
+
+
 @app.on_event("startup")
 async def startup():
     global config, timer_service
@@ -557,14 +578,7 @@ async def send_message(name: str, req: MessageRequest):
         req.images = None
     images: list[Image] = []
     for att in req.images or []:
-        data = _decode_data_url(att.data_url)
-        images.append(save_image(
-            agent.session_dir,
-            data,
-            att.mime_type,
-            original_name=att.original_name or "",
-            low_quality=bool(config.get("low_quality_images", True)),
-        ))
+        images.append(_save_attachment(agent.session_dir, att))
     await agent.start(req.message, images=images or None)
     return {"status": "started"}
 
@@ -621,14 +635,7 @@ async def revert_message(name: str, req: RevertRequest):
     new_images: list[Image] = []
     if agent.enable_vl:
         for att in req.images or []:
-            data = _decode_data_url(att.data_url)
-            new_images.append(save_image(
-                agent.session_dir,
-                data,
-                att.mime_type,
-                original_name=att.original_name or "",
-                low_quality=bool(config.get("low_quality_images", True)),
-            ))
+            new_images.append(_save_attachment(agent.session_dir, att))
     try:
         status = await agent.revert(
             req.message_id,
@@ -738,14 +745,7 @@ async def fork_session(name: str, req: ForkRequest):
     images: list[Image] = []
     if agent.enable_vl:
         for att in req.images or []:
-            data = _decode_data_url(att.data_url)
-            images.append(save_image(
-                agent.session_dir,
-                data,
-                att.mime_type,
-                original_name=att.original_name or "",
-                low_quality=bool(config.get("low_quality_images", True)),
-            ))
+            images.append(_save_attachment(agent.session_dir, att))
     await agent.start(req.message, images=images or None)
     return {"status": "ok", "id": session_id, "name": info["name"]}
 

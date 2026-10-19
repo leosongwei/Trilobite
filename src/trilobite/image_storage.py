@@ -10,6 +10,9 @@ from PIL import Image as PILImage
 
 from src.trilobite.messages import Image
 
+# Raster formats the completions API accepts as image_url content parts.
+_API_IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
 # Explicit overrides for common image types so the extension is predictable
 # regardless of platform quirks in ``mimetypes.guess_extension``.
 _IMAGE_MIMES = {
@@ -53,6 +56,72 @@ def format_mtime(mtime: float) -> str:
     return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _rasterize_svg(data: bytes) -> bytes | None:
+    """Render an SVG to PNG bytes (resvg, bundled in the wheel)."""
+    try:
+        import resvg_py
+
+        png = bytes(resvg_py.svg_to_bytes(svg_string=data.decode("utf-8", errors="replace")))
+        return png or None
+    except Exception:
+        return None
+
+
+def _has_alpha(img: PILImage.Image) -> bool:
+    if img.mode in ("RGBA", "LA", "PA"):
+        return True
+    return img.mode == "P" and "transparency" in img.info
+
+
+def _encode_compressed(img: PILImage.Image) -> tuple[bytes, str]:
+    """Encode as the smaller of quality-85 JPEG and PNG.
+
+    Images with transparency keep their alpha channel as PNG; opaque images
+    pick whichever of JPEG and PNG compresses better (JPEG for photos, PNG
+    for flat-color screenshots).
+    """
+    if _has_alpha(img):
+        buf = io.BytesIO()
+        img.convert("RGBA").save(buf, format="PNG")
+        return buf.getvalue(), "image/png"
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="PNG")
+    png = buf.getvalue()
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=85, optimize=True)
+    jpeg = buf.getvalue()
+    if len(jpeg) < len(png):
+        return jpeg, "image/jpeg"
+    return png, "image/png"
+
+
+def normalize_image(data: bytes, mime_type: str) -> tuple[bytes, str] | None:
+    """Convert image bytes into a format the completions API accepts.
+
+    ``image_url`` content parts only take PNG / JPEG / GIF / WebP. Anything
+    else (SVG, BMP, TIFF, ...) is re-encoded here: SVG via the bundled resvg
+    renderer, other formats via Pillow. Returns ``(bytes, mime)`` or
+    ``None`` when the image cannot be converted (broken data, unsupported
+    and undecodable) -- callers must not store such images as image parts.
+    """
+    mime = mime_type.lower().split(";")[0].strip()
+    if mime == "image/jpg":
+        mime = "image/jpeg"
+    if mime in _API_IMAGE_MIMES:
+        return data, mime
+    if mime == "image/svg+xml":
+        png = _rasterize_svg(data)
+        if png is None:
+            return None
+        data = png
+    try:
+        img = PILImage.open(io.BytesIO(data))
+        img.load()
+    except Exception:
+        return None
+    return _encode_compressed(img)
+
+
 def transcode_image(data: bytes, mime_type: str) -> tuple[bytes, str] | None:
     """Re-encode an image as quality-92 JPEG (low-quality mode).
 
@@ -93,14 +162,22 @@ def save_image(
     original_name: str = "",
     date: str = "",
     low_quality: bool = False,
-) -> Image:
+) -> Image | None:
     """Store image bytes under ``session_dir/images/<hash>.ext`` and return Image metadata.
+
+    The image is first normalized to an API-supported format (``normalize_image``);
+    ``None`` is returned when that fails -- such an image must never reach an
+    ``image_url`` content part.
 
     With ``low_quality`` the image is re-encoded as quality-92 JPEG first
     (when that shrinks it); the untouched original is kept alongside as
     ``<hash>.orig<ext>`` purely as a disk backup -- it is never referenced by
     history and never served.
     """
+    normalized = normalize_image(data, mime_type)
+    if normalized is None:
+        return None
+    data, mime_type = normalized
     images_dir = session_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     stored, stored_mime = data, mime_type

@@ -15,12 +15,14 @@ models:
 
 开启后，前端发送区会出现"📎"图片按钮。后端不会验证模型是否支持视觉，需要用户自行把 `enable_vl` 配在视觉模型上。图片按钮跟随会话当前模型实际配置的模态：前端从会话的 `model` × 模型定义列表实时派生开关状态，任何改变当前会话模型的操作（本页应用或另一窗口的模型切换经轮询同步）都会立即更新按钮可见性——切到 `enable_vl: false` 的模型后图片按钮消失，切回支持视觉的模型后重新出现。新图片仅在开启时保存；关闭期间历史中已有的图片元数据和文件保留（详见下方后端行为）。
 
-## 低画质模式
+## 格式归一化与低画质模式
 
-`config.yaml` 的 `low_quality_images`（默认 `true`）开启低画质模式：保存到会话的图片统一重编码为 quality 92 的 JPEG 后再进入历史和 LLM 请求，显著降低 base64 请求体积。规则：
+发给 LLM 的 `image_url` content part 只接受 PNG / JPEG / GIF / WebP。图片保存到会话时统一做**格式归一化**：SVG 先经内置 resvg 渲染器栅格化为 PNG；其余 Pillow 可解码的格式（BMP、TIFF 等）重新编码为 PNG 与 quality-85 JPEG 中**体积更小**的一个（带透明通道的保留为 PNG）。归一化无法完成的图片（损坏数据、不可解码格式）不落盘：`read` 工具回退为按文本读取，用户上传入口返回 400 错误。
 
-- 转码后体积反而增大（小图、压缩良好的 JPEG 等），或图片无法转码（SVG、动画 GIF、损坏数据），则保留原始字节上传。
-- 发生转码时，原始文件以 `<hash>.orig<ext>` 形式另存在会话 `images/` 目录下作为磁盘备份；备份不被历史引用、不通过 API serve，同一原图重复上传不会产生重复备份文件。
+在此之上，`config.yaml` 的 `low_quality_images`（默认 `true`）开启低画质模式：归一化后的图片再统一重编码为 quality 92 的 JPEG（仅当体积更小时），显著降低 base64 请求体积。规则：
+
+- 转码后体积反而增大（小图、压缩良好的 JPEG 等），或图片无法转码（动画 GIF、损坏数据），则保留归一化后的字节上传。
+- 发生转码时，原文件以 `<hash>.orig<ext>` 形式另存在会话 `images/` 目录下作为磁盘备份；备份不被历史引用、不通过 API serve，同一原图重复上传不会产生重复备份文件。
 - 存储仍按内容寻址：历史引用的是实际进入 LLM 请求的字节（转码后或原图）的哈希文件名。
 
 该选项作用于两个图片入口：用户上传（`/message`、`/revert` 的图片附件）和 `read` 工具读到的图片。
@@ -43,7 +45,7 @@ models:
 - `UserMessage` 保存 `Image` 元数据，历史文件只引用文件名，不内嵌 base64。
 - `History.get_api_messages(image_dir=..., enable_vl=...)` 在构造 LLM 请求时把图片编码为 OpenAI 兼容的 `image_url` content part。
 - 当 `enable_vl` 被关闭后（配置里该模型未开启，或会话切换到 `enable_vl: false` 的模型），新的图片附件不会被保存，已存在历史中的图片元数据和文件也**不会被删除**，但它们不会出现在发给 LLM 的请求里，从而可以在非视觉模型上继续对话。
-- `read` 工具读到支持的图片文件（PNG / JPEG / GIF / WebP）时，会把图片存入 `sessions/<id>/images/<hash>.ext`，并返回 `<image filename="..." original_name="..." mime="..." modified="..." />` 标记。该图片会被挂到触发这次工具调用的 user 消息上，下轮 LLM 请求时模型就能看到这张图。
+- `read` 工具读到图片文件时，先把图片归一化为 API 支持的栅格格式（SVG 栅格化为 PNG，其余格式重编码为 PNG/JPEG），存入 `sessions/<id>/images/<hash>.ext`，并返回 `<image filename="..." original_name="..." mime="..." modified="..." />` 标记。该图片会被挂到触发这次工具调用的 user 消息上，下轮 LLM 请求时模型就能看到这张图。无法归一化的文件按文本读取。
 - 只有会话当前模型的 `enable_vl: true` 时，系统提示词和 `read` 工具定义才会包含图片相关的说明（切换模型的瞬间，agent 会重建系统提示词并更新历史首条 system 消息）。`enable_vl: false` 时 `read` 只 advertised 为文本读取工具，避免纯文本模型幻觉自己能读图。
 - 图片通过 `/api/sessions/{id}/images/{filename}` 读取。
 - 编辑重发（`POST /revert`）携带图片载荷：`keep_images` 列出编辑后保留的旧附件文件名（未列出的即被删除），`images` 为新上传的附件（与 `/message` 同形状）。保存同样走内容寻址，同一张图重复上传不占额外空间。
@@ -53,7 +55,7 @@ models:
 | 文件 | 说明 |
 |------|------|
 | `src/trilobite/config.py` | `enable_vl`、`low_quality_images` 默认配置 |
-| `src/trilobite/image_storage.py` | `save_image` 存储与 `transcode_image` quality-92 JPEG 转码 |
+| `src/trilobite/image_storage.py` | `save_image` 存储、`normalize_image` 格式归一化（resvg 栅格化 / PNG-JPEG 择优压缩）、`transcode_image` quality-92 JPEG 转码 |
 | `src/trilobite/messages.py` | `Image` 类、`UserMessage` 图文支持 |
 | `src/trilobite/history.py` | `get_api_messages` 带 `image_dir` 参数 |
 | `src/trilobite/agent.py` | `start()`/`revert()` 接收图片、`attach_subscriber` 透传 `enable_vl` |

@@ -101,7 +101,7 @@ class ReadTool(Tool):
                 return f"Error reading image: {e}"
             date = format_mtime(filepath.stat().st_mtime)
             low_quality = bool((config or {}).get("low_quality_images", True))
-            image: Image = save_image(
+            image: Image | None = save_image(
                 session_dir,
                 data,
                 mime,
@@ -109,13 +109,16 @@ class ReadTool(Tool):
                 date=date,
                 low_quality=low_quality,
             )
-            marker = (
-                f'<image filename="{image.filename}" '
-                f'original_name="{image.original_name}" '
-                f'mime="{image.mime_type}" '
-                f'modified="{image.date}" />'
-            )
-            return {"result": marker, "image": image}
+            if image is not None:
+                marker = (
+                    f'<image filename="{image.filename}" '
+                    f'original_name="{image.original_name}" '
+                    f'mime="{image.mime_type}" '
+                    f'modified="{image.date}" />'
+                )
+                return {"result": marker, "image": image}
+            # Not convertible to an API-supported raster format: fall
+            # through and read it as text instead.
 
         try:
             content = filepath.read_text(encoding="utf-8", errors="replace")
