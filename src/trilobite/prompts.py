@@ -115,9 +115,11 @@ know the current time; any parse error includes it.
 
 Write temporary/scratch files to /tmp, not the working directory. /tmp is a
 writable per-session scratch area shared by the file tools and the bash
-sandbox -- a file written there by one is visible to the others. Use it for
-intermediate artifacts, and keep the working directory free of throwaway
-files.
+sandbox -- a file written there by one is visible to the others. It is per
+session: your /tmp is not the /tmp of another agent (the main agent and each
+subagent have their own), so never hand files across agents through /tmp. Use
+it for intermediate artifacts, and keep the working directory free of
+throwaway files.
 """
 
 COMPACTION_PROMPT = """You are about to run out of context. Write a first-person handoff note to
