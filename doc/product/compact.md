@@ -17,15 +17,16 @@
 
 ## 触发条件
 
-压缩不再是循环顶部的一次性检查，而是融入主循环：一轮（含工具执行）结束后读取该轮 API 返回的真实 token 用量，估算下一轮的消耗：
+压缩不再是循环顶部的一次性检查，而是融入主循环：一轮（含工具执行）结束后读取该轮 API 返回的真实 token 用量，与阈值比较：
 
 ```
-estimated = token_count（上次 API 返回的真实 token 数，仅反映 marker 之后的消息）
-          + estimate(未覆盖的历史消息)
-          + estimate(工具定义)
+token_count（该轮 API 返回的真实 token 数，含工具定义，仅反映 marker 之后的消息）
+  >= max_context_tokens * compaction_trigger_ratio
 ```
 
-`token_count` 连同其覆盖游标 `token_covered`（上次用量已计入的历史前缀长度）一起持久化在 `session.json`；会话冷加载时一并恢复，估算不会把已在盘上的消息重复计入。当 `estimated >= max_context_tokens * compaction_trigger_ratio` 时，标记 `_need_compact=True` 并把压缩指令作为一条普通 user 消息 append 进 history。下一轮因此有「新消息」而续跑。
+判定只依据 API 后验报告的真实用量，不做本地 token 估算。本地估算与厂商的计量方式不一致（图片尤其明显：成本取决于服务端缩放后的实际像素，与 payload 字节数无关），会造成误触发压缩。代价是滞后一轮：上一轮响应之后追加的消息由下一次响应来计量。
+
+`token_count` 持久化在 `session.json`，会话冷加载时恢复，因此重启后第一次请求之前就能带着真实的上下文长度做判定。触发时标记 `_need_compact=True` 并把压缩指令作为一条普通 user 消息 append 进 history。下一轮因此有「新消息」而续跑。
 
 触发阈值与上下文窗口都是**模型定义**的一部分（`models[].max_context` / `models[].compaction_trigger_ratio`），会话切换主模型时同步更新。默认值：
 - `max_context`：400,000（400k）

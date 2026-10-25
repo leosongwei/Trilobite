@@ -76,6 +76,8 @@ allowed_dirs: []
 
 该目录**隐式授权**：访问 `/tmp` 不走权限审批、不加入 `additional_dirs`、不持久化，也不出现在侧边栏 Allowed directories 中；敏感文件过滤仍然生效。
 
+subagent 是独立 session，因此父 agent、各 subagent 的 `/tmp` 互不相同（沙箱启用时各绑各自的 `tmp/`）：`/tmp` 是单个会话内的临时区，不作为跨 agent 传递文件的通道，需要交换文件时走工作目录或 group 的 `group_shared/`。
+
 ### Group 共享文件夹（`group_shared`）
 
 group session 的 `group_shared/` 文件夹（群组文件交换区，见 [group.md](./group.md)）对每个成员**隐式授权**：它是成员有效授权集的一部分（文件工具边界检查与 bash 沙箱可写挂载都认），读写不走权限审批、不加入 `additional_dirs`、不持久化；敏感文件过滤仍然生效。

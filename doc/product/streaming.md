@@ -76,15 +76,13 @@ per-session 事件总线，维护：
 
 ### Token 计数持久化
 
-每次 API 流式返回真实用量（`chunk.usage.total_tokens`）时，agent 把两个字段写入 `session.json`：
+每次 API 流式返回真实用量（`chunk.usage.total_tokens`）时，agent 把字段写入 `session.json`：
 
-* `token_count` -- 上次 API 报告的真实 token 数；
-* `token_covered` -- 该用量已覆盖的历史长度游标（`_token_covered`），供压缩估算切分「已计费」与「新增 pending」消息。
+* `token_count` -- 上次 API 报告的真实 token 数，压缩判定唯一依据。
 
-压缩重建后计数归零时同样落盘。会话冷加载（web 的 `_get_or_create_agent`、CLI resume）调用 `restore_persisted_tokens` 恢复两者：
+压缩重建后计数归零时同样落盘。会话冷加载（web 的 `_get_or_create_agent`、CLI resume）调用 `restore_persisted_tokens` 恢复：
 
-* 切到某个 session 时，SSE `init` 快照即携带磁盘上的 token 计数，底部显示条直接呈现当前 context 长度，无需等下一次 API 调用；
-* 缺少精确游标的旧数据视为全部历史均已覆盖——盘上的消息正是产生该计数的那批输入，不会重复计入压缩估算。
+* 切到某个 session 时，SSE `init` 快照即携带磁盘上的 token 计数，底部显示条直接呈现当前 context 长度，无需等下一次 API 调用。
 
 运行期间 `usage` 事件随后端轮次持续刷新前端计数。
 

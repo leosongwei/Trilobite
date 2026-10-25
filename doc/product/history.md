@@ -62,7 +62,7 @@ ToolResults(results)                        # 一批工具调用的结果，紧�
 
 注意磁盘顺序**本身就是** API 合法的消息序列：`model(tool_calls)` 后紧跟它的 `tool_results` 整块，`user`（含 steering）只能出现在整块之后。v2 靠"结果嵌套在 assistant 对象里"容忍乱序；v3 扁平化后文件顺序必须即合法顺序，这一要求由 `MessageList` 的写入原语保证。
 
-**惰性升级**：`MessageList._load` 按顶层形状分发——list 即 v1（裸扁平数组，`from_v1` 折叠 tool dict）、`version == 2` 即 v2（`from_v2` 展开嵌套的 `assistant.tool_results`）、`version == 3` 即 v3（逐条 `message_from_storage`）。三个 loader 产出同一种内存形态（扁平 typed 列表），并为每条旧消息补发 `_id`。任何 `save()` 都写 v3，旧 session 一旦被新代码读写就自动转成 v3，不需要批量迁移脚本。迁移是逐条独立的：没有磁盘索引跨越消息边界（`persisted_len`/`_token_covered` 是内存条目计数，与磁盘条目数无关）；load 时不做过度校验，遗留的开放 turn（有 calls 没结果）由运行前的 `_patch_dangling_tool_calls` 补全。
+**惰性升级**：`MessageList._load` 按顶层形状分发——list 即 v1（裸扁平数组，`from_v1` 折叠 tool dict）、`version == 2` 即 v2（`from_v2` 展开嵌套的 `assistant.tool_results`）、`version == 3` 即 v3（逐条 `message_from_storage`）。三个 loader 产出同一种内存形态（扁平 typed 列表），并为每条旧消息补发 `_id`。任何 `save()` 都写 v3，旧 session 一旦被新代码读写就自动转成 v3，不需要批量迁移脚本。迁移是逐条独立的：没有磁盘索引跨越消息边界（`persisted_len` 是内存条目计数，与磁盘条目数无关）；load 时不做过度校验，遗留的开放 turn（有 calls 没结果）由运行前的 `_patch_dangling_tool_calls` 补全。
 
 ## MessageList：扁平事实源
 
