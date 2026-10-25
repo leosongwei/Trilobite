@@ -4,39 +4,26 @@ import json
 from typing import TYPE_CHECKING
 
 from src.trilobite.prompts import COMPACTION_PROMPT
-from src.trilobite.tokens import estimate_tokens_for_messages, estimate_tokens_for_tools
 
 if TYPE_CHECKING:
     from src.trilobite.agent import Agent
 
 
 def should_compact(agent: Agent) -> bool:
-    """Estimate whether the context is large enough to warrant compaction.
+    """Decide whether the context is large enough to warrant compaction.
 
-    ``_token_count`` is the real usage reported by the last API call, which
-    only reflects messages from the last compact marker onward. ``pending`` is
-    the messages added since that call. Together they approximate what the
-    next request would cost, so pre-marker messages never skew the estimate.
+    The only measure used is ``_token_count``: the real prompt size reported by
+    the last API response. Estimated token counts are not consulted -- local
+    estimates drift from the provider's own accounting (most dramatically for
+    images, whose cost depends on the provider's resizing, not on the payload
+    size), which used to trigger compaction spuriously right after reading an
+    image. The cost of that fidelity is one turn of lag: whatever is appended
+    after the last response is measured by the next response.
     """
-    tools = agent._permission.filter_definitions(enable_vl=agent.enable_vl)
-    pending = agent.history.raw[agent._token_covered:]
-    # Pending entries are typed Message objects; expand to API dicts for the
-    # token estimate (a ModelMessage + its ToolResults unfold into assistant + tool msgs).
-    pending_dicts = [
-        d
-        for m in pending
-        for d in m.to_api_dicts(
-            image_dir=agent.session_dir / "images",
-            enable_vl=agent.enable_vl,
-        )
-    ]
-    estimated = (
-        agent._token_count
-        + estimate_tokens_for_messages(pending_dicts)
-        + estimate_tokens_for_tools(tools)
-    )
+    if not agent._token_count:
+        return False
     threshold = int(agent.max_context_tokens * agent.compaction_trigger_ratio)
-    return estimated >= threshold
+    return agent._token_count >= threshold
 
 
 def build_compact_prompt(agent: Agent) -> str:

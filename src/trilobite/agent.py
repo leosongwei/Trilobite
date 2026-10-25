@@ -422,7 +422,6 @@ class Agent:
         self._turns = TurnsView(self.history)
         self._broker = StreamBroker(len(self.history.raw))
         self._token_count: int = 0
-        self._token_covered: int = 0
         self._task: asyncio.Task | None = None
         # Continuation signals for the run loop. The loop runs another turn if
         # either (a) the previous turn produced tool_calls whose results the
@@ -595,7 +594,6 @@ class Agent:
             # Capture real token usage from stream
             if chunk.usage:
                 self._token_count = chunk.usage.total_tokens
-                self._token_covered = len(self.history)
                 self._persist_token_count()
 
             if chunk.choices:
@@ -1061,30 +1059,19 @@ class Agent:
         """Hydrate the token count persisted in session.json (``info`` is its dict).
 
         Called on cold load so the token bar reflects the real context length
-        instead of 0 until the next API response reports fresh usage.
-        ``_token_covered`` comes along so compaction's pending estimate stays
-        correct; absent a saved cursor, everything already on disk counts as
-        covered -- it is exactly the input that produced the persisted count.
+        instead of 0 until the next API response reports fresh usage. The
+        persisted value is the real usage of the last request, which is exactly
+        what compaction compares against its threshold.
         """
         self._token_count = int(info.get("token_count") or 0)
-        # Without a persisted count the base context is unknown: treat the
-        # whole disk history as covered rather than pending, otherwise the
-        # full-history estimate could exceed the threshold on the first
-        # message after a restart. The count self-heals on the next API
-        # response's real usage.
-        fallback = len(self.history.raw)
-        self._token_covered = int(info.get("token_covered", fallback))
 
     def _persist_additional_dirs(self):
         """Write additional_dirs back to session.json."""
         self._update_session_json({"additional_dirs": [str(d) for d in self._additional_dirs]})
 
     def _persist_token_count(self):
-        """Write the token count and its covered cursor back to session.json."""
-        self._update_session_json({
-            "token_count": self._token_count,
-            "token_covered": self._token_covered,
-        })
+        """Write the token count back to session.json."""
+        self._update_session_json({"token_count": self._token_count})
 
     def _update_session_json(self, updates: dict):
         """Update fields in session.json."""
@@ -1568,7 +1555,6 @@ class Agent:
                         user = UserMessage(s)
                         self.history.append(user)
                         await self._send_stream_event({"type": "user", "id": user._id, "text": s, "user_seq": user_seq})
-                    self._token_covered = len(self.history.raw)
                     self._persist_token_count()
                     await self._broker.commit(len(self.history.raw))
                     await self._send_stream_event({"type": "compact"})
