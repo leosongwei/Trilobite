@@ -45,7 +45,10 @@ TASK_TOOL_DEF: dict = {
             "queries: a known file path -> read; one specific definition -> "
             "grep; code within 2-3 known files -> read. The subagents' output "
             "is not shown to the user -- you must relay/summarize their results "
-            "yourself."
+            "yourself. Each subagent has its own scratch /tmp: it is not "
+            "shared with you or between subagents, so never pass files via "
+            "/tmp -- have the subagent return paths in the working directory "
+            "or inline content instead."
         ),
         "parameters": {
             "type": "object",
