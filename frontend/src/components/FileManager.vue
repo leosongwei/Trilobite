@@ -68,6 +68,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import hljs from 'highlight.js'
 import { getFileContent, getFileDiff, saveFile } from '../api'
+import { useStore } from '../store'
 import type { DiffRow } from '../types'
 import DiffView from './DiffView.vue'
 import type { OpenFilePayload } from './FileTree.vue'
@@ -224,8 +225,10 @@ async function openFile(f: OpenFilePayload) {
   if (view.value === 'preview') nextTick(() => typesetPreview())
 }
 
-async function loadContent(path: string) {
-  loading.value = true
+// `quiet` is used by the background refresh below: the content is re-fetched
+// without flashing the loading placeholder.
+async function loadContent(path: string, quiet = false) {
+  if (!quiet) loading.value = true
   try {
     const res = await getFileContent(props.sessionId, path)
     content.value = res.content
@@ -233,7 +236,7 @@ async function loadContent(path: string) {
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
-    loading.value = false
+    if (!quiet) loading.value = false
   }
 }
 
@@ -252,10 +255,12 @@ function switchView(v: 'view' | 'diff' | 'edit' | 'preview') {
   }
 }
 
-async function loadDiff() {
+async function loadDiff(quiet = false) {
   if (!selectedFile.value) return
-  diffLoading.value = true
-  error.value = ''
+  if (!quiet) {
+    diffLoading.value = true
+    error.value = ''
+  }
   try {
     const res = await getFileDiff(props.sessionId, selectedFile.value.path, props.base)
     diffRows.value = res.rows
@@ -263,13 +268,37 @@ async function loadDiff() {
     error.value = err instanceof Error ? err.message : String(err)
     diffRows.value = []
   } finally {
-    diffLoading.value = false
+    if (!quiet) diffLoading.value = false
   }
 }
 
 watch(() => props.base, () => {
   if (view.value === 'diff') loadDiff()
 })
+
+// The agent may have rewritten the open file behind our back (edit/write, or
+// a script it ran through bash). Follow the workspace refresh tick to reload
+// the content and diff of the file on screen. An editor buffer with unsaved
+// changes is never clobbered.
+const { state } = useStore()
+let fsRefreshTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => state.fsRefreshTick,
+  () => {
+    if (fsRefreshTimer) clearTimeout(fsRefreshTimer)
+    fsRefreshTimer = setTimeout(() => void reloadOpenFile(), 500)
+  },
+)
+
+async function reloadOpenFile() {
+  const f = selectedFile.value
+  if (!f || f.status === 'deleted') return
+  if (view.value === 'edit' && dirty.value) return
+  const tasks: Promise<void>[] = [loadContent(f.path, true)]
+  if (view.value === 'diff') tasks.push(loadDiff(true))
+  await Promise.all(tasks)
+  if (view.value === 'preview') nextTick(() => typesetPreview())
+}
 
 async function save() {
   if (!selectedFile.value) return

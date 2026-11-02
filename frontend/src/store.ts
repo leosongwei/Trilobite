@@ -13,10 +13,11 @@ interface State {
   maxTokens: number
   statusText: string | null
   streamTick: number
-  // Bumped when a file-changing tool returns (edit/write/bash/task), or on
-  // subagent state changes / run ends - the moments files can actually
-  // change. The sidebar "Session files" tree watches it to reload so files
-  // the agent created/modified show up promptly.
+  // Bumped when a tool that can write finishes (the agent's `fs_changed`
+  // event), or on subagent state changes / run ends - the moments files can
+  // actually change. The sidebar "Session files" tree and the file manager's
+  // open file watch it to reload so anything the agent created/modified shows
+  // up promptly.
   fsRefreshTick: number
   additionalDirs: string[]
   // Global fixed allowed dirs from the config (init event): granted to every
@@ -74,12 +75,6 @@ const enableVl = computed(() => {
 
 let currentTurnIdx = -1
 let currentToolIdx = -1
-
-// Tool returns that can change files in the workspace; the sidebar "Session
-// files" tree refreshes on these. read/glob/grep/todo never modify the
-// working tree (read's VLM images go to the session dir, not the workspace),
-// so their returns skip the reload.
-const FILE_CHANGING_TOOLS = new Set(['edit', 'write', 'bash', 'task'])
 
 function getCurrentTurn(): TurnItem | null {
   if (currentTurnIdx < 0) return null
@@ -331,10 +326,6 @@ function handleSSEEvent(event: SSEEvent) {
     }
 
     case 'tool_result': {
-      // Only file-changing tools trigger a tree refresh.
-      if (event.tool && FILE_CHANGING_TOOLS.has(event.tool)) {
-        state.fsRefreshTick++
-      }
       // A deferred sleep_until result lands between runs (after the sleeping
       // turn closed); fall back to the tool_call_id scan for those.
       const turn = getCurrentTurn()
@@ -353,6 +344,13 @@ function handleSSEEvent(event: SSEEvent) {
       }
       break
     }
+
+    case 'fs_changed':
+      // A tool that can write finished (own, subagent's or group member's
+      // -- the agent forwards it to the parent session): reload the sidebar
+      // "Session files" tree and the file manager's open file.
+      state.fsRefreshTick++
+      break
 
     case 'usage':
       state.tokenCount = event.token_count

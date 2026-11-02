@@ -68,6 +68,10 @@ export type SSEEvent =
   | { type: 'tool_start'; tool: string; args: Record<string, unknown>; tool_call_id?: string }
   | { type: 'tool_output'; tool_call_id: string; stream: 'stdout' | 'stderr'; text: string }
   | { type: 'tool_result'; tool: string; result: string; tool_call_id?: string; diff?: DiffRow[]; diff_prev?: string; diff_current?: string }
+  // A tool that can write finished: the workspace may have changed. Emitted by
+  // the agent (and forwarded to the parent session for subagents/group
+  // members) so the file tree and file manager reload.
+  | { type: 'fs_changed'; session: string; tool: string }
   | { type: 'usage'; token_count: number; max_context_tokens: number }
   | { type: 'status'; text: string }
   | { type: 'permission_request'; session: string; path: string; tool: string; message: string }
