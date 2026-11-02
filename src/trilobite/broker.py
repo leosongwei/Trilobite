@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
+# Events that are pure UI hints: fanned out live, never buffered for replay.
+# ``fs_changed`` only says "the workspace may have changed, reload", and a
+# reconnecting tab reloads the tree on attach anyway.
+EPHEMERAL_EVENTS = frozenset({"fs_changed"})
+
 
 class StreamBroker:
     """Per-session event bus that decouples agent runs from HTTP requests.
@@ -56,7 +61,7 @@ class StreamBroker:
                 self._is_running = True
             elif t in ("done", "cancelled", "error", "interrupted"):
                 self._is_running = False
-            else:
+            elif t not in EPHEMERAL_EVENTS:
                 self._append_to_buffer(event)
                 # When a tool finishes, drop its streamed output lines from
                 # the replay buffer: the final (truncated) result is now in

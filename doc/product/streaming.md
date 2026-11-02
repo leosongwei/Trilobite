@@ -15,7 +15,7 @@
 per-session 事件总线，维护：
 
 * `_subscribers`：每个连接的 SSE 客户端对应一个 `asyncio.Queue`。
-* `_turn_buffer`：当前 run 的事件（从第一个 `turn` 到现在），用于回放给中途连接的客户端。缓冲以**合并形态**保存：相邻的同类增量事件折叠为一条（thinking/text 增量拼接、同一 tool_call 的 tool_output 行按 `\n` 连接、同一工具的 tool_stream 参数保留累计值），输出量大的 run 也只回放几十条事件而非数万条原始增量——中途连接的客户端瞬间追平，不会逐条处理 live delta 而卡死；live 订阅者仍收到原始逐条事件。工具结束时其 tool_output 条目从缓冲移除（最终结果已进 `tool_result`）。
+* `_turn_buffer`：当前 run 的事件（从第一个 `turn` 到现在），用于回放给中途连接的客户端。缓冲以**合并形态**保存：相邻的同类增量事件折叠为一条（thinking/text 增量拼接、同一 tool_call 的 tool_output 行按 `\n` 连接、同一工具的 tool_stream 参数保留累计值），输出量大的 run 也只回放几十条事件而非数万条原始增量——中途连接的客户端瞬间追平，不会逐条处理 live delta 而卡死；live 订阅者仍收到原始逐条事件。工具结束时其 tool_output 条目从缓冲移除（最终结果已进 `tool_result`）。`fs_changed` 这类纯 UI 提示事件只 fan-out、不缓冲。
 * `_persisted_len`：已"提交"到 `init` 快照的历史长度。回放缓冲对应 `persisted_len` 之后的历史，二者不重叠。
 * `_lock`：保证快照与回放的一致性。
 
@@ -55,6 +55,7 @@ per-session 事件总线，维护：
 | `tool_start` | `tool, args, tool_call_id` | 工具开始执行；`tool_call_id` 关联流式输出与结果 |
 | `tool_output` | `tool_call_id, stream, text` | bash 工具的实时输出行（`stream` 为 `stdout`/`stderr`），前端按 `tool_call_id` 追加到对应工具的输出窗口；仅用于实时观察，不写入 history |
 | `tool_result` | `tool, result, diff?` | 工具结果（`result` 经 `max_output_lines`/`max_output_chars` 截断后写入 history；`diff` 为 edit 的结构化行级 diff：`[{type, old, new, text}]`，带真实文件行号） |
+| `fs_changed` | `session, tool` | 一个**可能写文件**的工具（`edit`/`write`/`bash`/`task` 及任何新增工具；`read`/`glob`/`grep`/`TodoList`/`skill`/`sleep_until`/`send_message` 除外）执行完毕，前端据此重载文件树与打开的文件。纯 UI 提示、**不进回放缓冲**（重连客户端不需要）；subagent 与群成员的该事件转发到父 session（详情见 [file_manager.md](./file_manager.md#刷新时机)） |
 | `usage` | `token_count, max_context_tokens` | token 用量 |
 | `status` | `text` | 状态横幅（如 compaction） |
 | `permission_request` | `path, tool, message` | 请求文件访问权限 |

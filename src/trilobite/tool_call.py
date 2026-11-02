@@ -25,6 +25,15 @@ ALL_TOOLS = [
 
 _TOOL_MAP: dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
+# Tools that never touch the workspace: the read-only ones plus TodoList (its
+# JSON lives in the session dir) and the virtual tools that only talk to other
+# agents. Every other tool -- edit/write, bash (a script it runs can rewrite
+# anything), task, and any tool added later -- may change files, so its
+# completion makes the frontend reload its file tree and the open file.
+NON_WRITING_TOOLS = frozenset({
+    "read", "glob", "grep", "TodoList", "skill", "sleep_until", "send_message",
+})
+
 # Virtual tool: spawn one or more subagents to run in parallel. Only exposed by
 # the primary agent's permission (see permission.py). Its execution
 # -- creating child Agents, gathering their runs -- is handled in Agent, not

@@ -64,7 +64,7 @@ from src.trilobite.timer import (
     sleep_result_text,
 )
 from src.trilobite.tools.bash import kill_process_group, truncate_output
-from src.trilobite.tool_call import execute_tool, validate_task_specs
+from src.trilobite.tool_call import NON_WRITING_TOOLS, execute_tool, validate_task_specs
 
 _CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -1519,6 +1519,12 @@ class Agent:
                             result_event["diff"] = tool_result["diff"]
                         await self._send_stream_event(result_event)
 
+                        # A tool that can write may have changed the workspace
+                        # (bash most of all: the model loves editing files from
+                        # a script). Tell the UI to reload the file tree.
+                        if tool_name not in NON_WRITING_TOOLS:
+                            await self._emit_fs_changed(tool_name)
+
                         # The result goes into the ToolResults entry right
                         # after the model (created on first result, before any
                         # steering user appended meanwhile), so a steering
@@ -2425,6 +2431,22 @@ class Agent:
         self._final_state = "interrupted"
         self._final_result = model.content
         await self._send_stream_event({"type": "interrupted"})
+
+    async def _emit_fs_changed(self, tool_name: str) -> None:
+        """Announce that the workspace may have changed.
+
+        The frontend reloads the sidebar's "Session files" tree and the file
+        manager's open file on this. Subagents and group members share the
+        parent's workspace, so the announcement goes to the parent session
+        (and, via it, to the other children) -- otherwise a subagent editing
+        files would only refresh its own stream, which has no tree.
+        """
+        event = {"type": "fs_changed", "session": self.name, "tool": tool_name}
+        parent = self._parent if self._subagent_type is not None else None
+        if parent is None:
+            await self._send_stream_event(event)
+        else:
+            await parent._broadcast_to_group(event)
 
     async def _broadcast_to_group(self, event: dict) -> None:
         """Send an event to this agent's own stream and, for the main session,

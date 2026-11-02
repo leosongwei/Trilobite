@@ -11,7 +11,7 @@ Trilobite 是一个 coding agent，通过 OpenAI 兼容 API 调用 LLM（默认 
 * `messages.py` -- 类型化对话消息层（v3 扁平表示，与 completions API 消息序列同构）。`Message` 基类（带 `_id`，紧凑 uuid，revert 按 id 寻址）及 `SystemMessage`/`UserMessage`/`ModelMessage`（think/content/calls）/`ToolResults`/`CompactMarker`/`Image`/`ToolCall`/`ToolResult` 类型，每个对象三向投影：`to_api_dicts`（发 LLM）、`to_storage_dict`（v3 JSON：`type` 字段 + `id`，tool_calls 存 OpenAI 形状）、`to_frontend_dicts`（role-based 扁平 dict 给前端，带 `id`）。一条 model turn 在扁平列表里是 `ModelMessage` + 紧跟的 `ToolResults` 两条；"整批工具结果先于任何后续 user 消息"的顺序不变量由 `history.py` 的写入原语保证，而非对象嵌套。`from_v1`/`from_v2`/`message_from_storage` 三版 loader 把旧格式惰性升级到 v3（load 时补发 id，首次 save 写 v3）。详见 `doc/product/history.md`。
 * `history.py` -- 对话历史管理。`MessageList` 是扁平事实源：语义原语 `append`/`append_model`/`close_model`/`insert_result`/`insert_results`/`truncate_at(message_id)` 封装顺序不变量，`get_api_messages` 从最后一个 `CompactMarker` 之后取消息、合并连续同 role 的 UserMessage（`<multi_message/>` 分隔，避免 API 报错）；`TurnsView` 是 turn 分组视图（`turns` 折叠、`find_user` 按 id 定位），领域操作拆解成 MessageList 原语，从不直接改列表。
 * `broker.py` - 流式事件总线（StreamBroker）。解耦 agent 运行与 HTTP 请求：事件广播到所有订阅者，维护当前 run 的回放缓冲和已提交历史长度（`persisted_len`），支持浏览器多开、关闭重开、切 tab 恢复。终态事件 `done`/`cancelled`/`error`/`interrupted` 推进 `persisted_len` 并清空缓冲。详见 `doc/product/streaming.md`。
-* `tool_call.py` - 工具注册与分发。维护全局工具列表，三个**虚拟工具**定义（仅 LLM 可见，执行逻辑在 Agent 中）：`TASK_TOOL_DEF`（`task`，派生并行 subagent）、`SLEEP_UNTIL_DEF`（`sleep_until`，挂起会话到指定时间）和 `SEND_MESSAGE_DEF`（`send_message`，向群聊频道发消息）；`execute_tool` 执行具体工具。
+* `tool_call.py` - 工具注册与分发。维护全局工具列表，三个**虚拟工具**定义（仅 LLM 可见，执行逻辑在 Agent 中）：`TASK_TOOL_DEF`（`task`，派生并行 subagent）、`SLEEP_UNTIL_DEF`（`sleep_until`，挂起会话到指定时间）和 `SEND_MESSAGE_DEF`（`send_message`，向群聊频道发消息）；`execute_tool` 执行具体工具；`NON_WRITING_TOOLS` 声明不改工作区的工具集，其余工具执行后由 Agent 发布 `fs_changed` 让前端重载文件树与打开的文件。
 * `tools/tool.py` -- `Tool` 抽象基类（ABC），声明 `name`/`description`/`parameters` + 抽象 `execute` + `to_openai_tool`，所有具体工具继承它。
 * `permission.py` - Agent 权限策略抽象。`AgentPermission` 基类承担两个职责：声明工具列表（`filter_definitions`）+ 拦截调用（`intercept`）。`tool_names` 声明**允许集**，通用 `intercept` 以它为唯一依据拦截调用；`advertised_tool_names` 声明**暴露集**，缺省值为允许集（暴露即允许）。主 agent 用 `PrimaryPermission`（全量工具 + `task`/`sleep_until` 虚拟工具），subagent 用**角色**（`ExploreSubagentPermission` 只读 / `GeneralSubagentPermission` 可编辑，派生时固化），group 成员用 `GroupMemberPermission`（可编辑工具 + `send_message`）。`task` 工具仅主 agent 暴露（硬性限一层嵌套）。详见 `doc/product/subagent.md`。
 * `group.py` - 群聊频道（Group Session）的纯逻辑件：成员名字池与取名（跨 group 去重）、`[from group, by X]` / `[private msg, from X]` 消息格式化、`send_message` 收件人解析（all/成员名）与成员数校验（1-16）、共享文件夹名常量 `GROUP_SHARED_DIRNAME`。编排（spawn 成员、消息 fan-out、频道记录）在 `agent.py`。详见 `doc/product/group.md`。
@@ -42,10 +42,10 @@ Vue 3 + TypeScript，构建后输出到 `src/trilobite/static/`，由 FastAPI �
 
 * `main.ts` -- 入口
 * `App.vue` -- 根组件，布局 sidebar + chat + token bar；subagent 顶栏（返回父 session、类型标签、sealed 只读）；group 频道顶栏（成员 chips + 成员数确认弹框）；permission/subagent_permission 审批横幅
-* `store.ts` - 全局状态：sessions、chat items、SSE 订阅流处理（`init` 重建对话、事件驱动 isStreaming、断线自动重连）、subagent 状态、VLM 开关；session 列表 3s 轮询
+* `store.ts` - 全局状态：sessions、chat items、SSE 订阅流处理（`init` 重建对话、事件驱动 isStreaming、断线自动重连）、subagent 状态、VLM 开关、`fs_changed` 触发的文件刷新 tick；session 列表 3s 轮询
 * `api.ts` -- HTTP API 封装（会话 CRUD、消息/图片、mode、permission、revert、interrupt、stream 订阅等）
 * `types.ts` -- TypeScript 类型定义（SSEEvent 联合、HistoryMessage、SubagentChild、DiffRow 等）
-* `components/` -- ChatView（窗口化渲染长历史）、ChatInput（自适应 textarea、`/compact` 补全、图片粘贴上传）、SessionSidebar（会话列表 + 项目分组 + subagent 子树 + 信息面板 + 文件管理器入口）、TokenBar、TurnBlock、ThinkingBlock（可折叠、活气泡 tail-f 跟随）、ToolEntry（task 工具显示 subagent 树、read 可折叠、diff 展示）、DiffView（分屏/统一双视图响应式切换）、UserMessage（编辑重发 revert、图片缩略图 + lightbox）、FileManager（文件管理器面板：查看/diff/编辑三视图，highlight.js 只读高亮）、FileTree（懒加载目录树，展开时按目录请求、git 状态徽章）
+* `components/` -- ChatView（窗口化渲染长历史）、ChatInput（自适应 textarea、`/compact` 补全、图片粘贴上传）、SessionSidebar（会话列表 + 项目分组 + subagent 子树 + 信息面板 + 文件管理器入口）、TokenBar、TurnBlock、ThinkingBlock（可折叠、活气泡 tail-f 跟随）、ToolEntry（task 工具显示 subagent 树、read 可折叠、diff 展示）、DiffView（分屏/统一双视图响应式切换）、UserMessage（编辑重发 revert、图片缩略图 + lightbox）、FileManager（文件管理器面板：查看/diff/编辑三视图，highlight.js 只读高亮，跟随 `fs_changed` 自动重载打开的文件）、FileTree（懒加载目录树，展开时按目录请求、git 状态徽章）
 * `utils/markdown.ts` -- Markdown 渲染（marked + GFM，LaTeX 占位符保护）
 * `utils/mathjax.ts` -- 数学公式渲染（懒加载 vendored MathJax）
 
