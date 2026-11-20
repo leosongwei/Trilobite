@@ -69,22 +69,10 @@ function restoreLatex(html: string): string {
   return html
 }
 
-export function renderMarkdown(text: string, imageBase?: string): string {
+export function renderMarkdown(text: string): string {
   if (!text) return ''
   const protected_ = protectLatex(text)
   let html = marked.parse(protected_) as string
   html = restoreLatex(html)
-  if (imageBase) html = rewriteImageSrcs(html, imageBase)
   return html
-}
-
-// Markdown images with a relative path resolve against imageBase (the group
-// channel's shared folder); URLs with a scheme (http, https, data, ...) and
-// protocol-relative ones pass through untouched.
-function rewriteImageSrcs(html: string, base: string): string {
-  return html.replace(/<img src="([^"]*)"/g, (tag: string, src: string) => {
-    if (!src || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(src) || src.startsWith('//')) return tag
-    const rel = src.replace(/^\.?\//, '')
-    return `<img src="${base}/${rel}"`
-  })
 }
