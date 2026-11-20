@@ -18,7 +18,7 @@ Subagent 是"主 agent 通过一次 `task` 工具调用派生出来的子 agent"
 - ✅ 用户可**中断**子 agent，中断后立刻产出总结再退出。
 - ✅ 仅允许**一层**：子 agent 看不到 `task` 工具，无法再派生。
 - ✅ 子 agent 上下文隔离：只拿到主 agent 给的 prompt，不继承主 agent 历史。
-- ✅ `max_steps` 默认 100，防子 agent 失控死循环。
+- ✅ run 无步数上限：子 agent 只在模型不再调用工具时结束，没有步数截断（失控靠用户 stop / interrupt 兜底）。
 - ✅ 子 agent 权限请求为**交互式**：弹提示、全局可见、写明是哪个子 agent 请求哪里的权限。
 
 ### v1 不做的事（non-goals）
@@ -107,7 +107,6 @@ Subagent 是一个**角色**（role）--这是 `permission.py` 已确立的分�
 | `depth` | `parent.depth + 1`（父为 0，子为 1） |
 | `registry` | 父 agent 的 registry（同一个 `agents` 字典），见第八节 |
 | `parent_broker` | 父 agent 的 broker 引用，用于权限请求全局广播（见第六节） |
-| `max_steps` | 100（默认） |
 
 子 agent 的 `system_prompt` = 基础 system prompt（`SYSTEM_PROMPT`）+ **`SUBAGENT_ROLE_PREFIX`**（公共前缀，见下）+ 角色提示，由 `prompts.subagent_system_prompt()` 拼接。三者均为 `src/trilobite/prompts.py` 中的代码常量。
 
@@ -130,7 +129,7 @@ Subagent 是一个**角色**（role）--这是 `permission.py` 已确立的分�
 ### 并行与 gather
 
 - 同一次 `task` 调用的多个子 agent 用 `asyncio.gather` 并发运行。
-- `gather` 等待**全部**子 agent 结束（正常完成 / 被中断 / 出错 / 触发 max_steps）后才返回。任意一个的失败或中断**不影响**其它继续跑。
+- `gather` 等待**全部**子 agent 结束（正常完成 / 被中断 / 出错）后才返回。任意一个的失败或中断**不影响**其它继续跑。
 - `task` 是系统里第一个异步工具。`Agent` 工具派发处对 `task` 走 `await self._run_subagents(args)`；其余工具仍走同步 `execute_tool`（但在调用处用 `asyncio.to_thread` 丢到工作线程执行，避免 bash 的 `subprocess.run` 阻塞共享事件循环，详见 streaming.md）。不在 v1 把 `execute_tool` 整体异步化。
 
 ### 用户 steering 子 agent
@@ -167,7 +166,7 @@ Subagent 是一个**角色**（role）--这是 `permission.py` 已确立的分�
 
 ### 结束即 sealed（不可复用）
 
-子 agent 的 run 一旦结束（正常完成 / 中断总结 / max_steps / 出错），即置 `_sealed = True`。此后 `POST /api/sessions/{child}/message` 一律拒绝（"subagent 已结束，不再接受输入"）。子 session 的 history 已落盘，**长期可在侧边栏只读查看**，但不支持续跑/复用。
+子 agent 的 run 一旦结束（正常完成 / 中断总结 / 出错），即置 `_sealed = True`。此后 `POST /api/sessions/{child}/message` 一律拒绝（"subagent 已结束，不再接受输入"）。子 session 的 history 已落盘，**长期可在侧边栏只读查看**，但不支持续跑/复用。
 
 ### 取消传播
 
@@ -182,10 +181,6 @@ Subagent 是一个**角色**（role）--这是 `permission.py` 已确立的分�
 - **中断保留被中断 turn 的部分输出**：`CancelledError` 落在 LLM 流的 `async for chunk` 上时，本轮的 `ModelMessage` 已经 drain 开始时 append 进 history（未入盘），并已累积部分文本/思维链。interrupt 路径**保留**这个未 persist 的消息（有 think/content/tool_calls 时 `save()` 落盘，只有真正空时才 `remove()` 丢弃），半截思维链以 `{role: assistant, content: "", reasoning_content: "..."}` 进 history。投影给 API 时，无 tool_calls 且 content 为空的 turn 由 `_assistant_dict(for_api=True)` 把 content 替换成空格 `" "`（glm-5.2 会丢弃 content 为空串的 assistant 消息连同 reasoning，传空格才能继承半截推理；前端/存储仍保留真实空串）。若中断落在 tool 执行中途（消息已 persist），则保留，先 `_salvage_inflight_tool` 抢救在飞 bash 的部分输出（作为结果插入该模型的 `ToolResults` 条目），再由 `_patch_dangling_tool_calls` 兜底。
 - **中断极早期窗口**：`_run_as_subagent` 在 `set_running(True)` 后、进入 `run()` 前还发了一条 user 事件。若中断的 `cancel()` 恰好落在这个 await 上，`CancelledError` 不在 `run()` 的 try 内（还在 `_run_as_subagent` 里），子 agent 直接硬停、无总结。窗口极小（仅一条事件发送），可接受。
 - **总结 turn 自身失败**：中断后总结 turn 的 LLM 调用若抛异常（API 错误等），被 `except Exception` 兜住，子 agent 以 `state="error"` 退出（`_final_result` 记录失败原因），不向上抛、不拖垮父 agent 的 `gather`。
-
-### max_steps
-
-子 agent 默认 `max_steps = 100`（一轮 LLM + 其工具调用算一步）。超过即停止并返回 `<task_error>`，作为该子 agent 的结果（`state="error"`）。防失控兜底。
 
 ## 六、子 agent 权限请求（交互式、全局可见）
 
@@ -217,7 +212,7 @@ Subagent 是一个**角色**（role）--这是 `permission.py` 已确立的分�
 <result>...中断总结...</result>
 </subagent>
 <subagent session="parent__e5f6" type="general" description="重构 parser" state="error">
-<result>...错误信息 / max_steps 超限说明...</result>
+<result>...错误信息...</result>
 </subagent>
 </task_result>
 ```
@@ -287,16 +282,13 @@ sessions/
 2. **wall-clock 超时**：子 agent run 加超时（如 10 分钟），超时返回错误。
 3. **并行上限**：`gather` 加 `Semaphore` 限制同时运行的子 agent 数（如 ≤ 4），超了排队。
 
-> `max_steps`（默认 100）已纳入 v1，不在此列。
-
 ## 十一、实现拆解（审核通过后执行）
 
 1. **`permission.py`**：主 agent permission（`PrimaryPermission`）的 `tool_names` 增加 `task`；新增 `TASK_TOOL_DEF` 工具定义常量（或 `TaskTool` 子类），由 permission 在 `filter_definitions` 里拼上。Explore/General 不变（天然不含 task）。
 2. **`agent.py`**：
-   - `__init__` 加 `registry`、`depth`、`parent_broker`、`max_steps`、`_sealed` 参数/字段。
+   - `__init__` 加 `registry`、`depth`、`parent_broker`、`_sealed` 参数/字段。
    - 工具派发处加 `elif tool_name == "task": tool_result = await self._run_subagents(args)`，作为 `intercept` 之后的分支。
-   - 新增 `_run_subagents(args)`：校验、创建子 Agent（注入 prompt、permission、depth、registry、parent_broker、max_steps）、`gather`、组装 `<task_result>`。
-   - run 循环加 `max_steps` 计数与超限退出。
+   - 新增 `_run_subagents(args)`：校验、创建子 Agent（注入 prompt、permission、depth、registry、parent_broker）、`gather`、组装 `<task_result>`。
    - 新增 `interrupt()`：置 `_interrupted` 标志 + kill bash 进程组 + **cancel 当前 run task**（立刻中断 LLM 流/工具）；run 的 `except CancelledError` 检测 `_interrupted` 为真则 `uncancel` + 保留半截思维链 + 抢救在飞 bash 部分输出 + 补齐 dangling tool_calls + 做总结 turn，结束置 `_sealed`。`_interrupted` 为假（主 agent 取消）则硬停不总结（同样保留半截输出 + 抢救 bash）。
    - 子 agent 权限请求：复用 `_permission_event`；触发时经 `parent_broker` 由父 agent fan-out `subagent_permission_request` 到父 + 所有兄弟 broker。
    - run 结束（任何原因）置 `_sealed = True`。
@@ -311,5 +303,5 @@ sessions/
 - **task 工具异步化范围**：只让 `task` 异步，不把 `execute_tool` 整体异步化，控制改动面。
 - **子 agent 权限请求**：交互式 + 全局广播（父 agent fan-out 到父及所有兄弟 broker），而非越界即拒；提示写明子 agent 身份与路径。
 - **steering 与 sealed**：用户可 steer 运行中的子 agent（有界任务的中途引导）；run 一旦结束即 sealed，不可复用，但历史长期只读可查。
-- **max_steps=100**：纳入 v1 作防失控兜底。
+- **无步数上限**：run 只由模型停止调用工具结束，不设 steps 截断；失控由用户 stop/interrupt 兜底。
 - **提示词正向框架**：系统提示词和 `task` 工具描述采用正向框架--把 subagent 定位为"屏蔽上下文、省 token、探索首选"，并给出正面用例（如"错误在哪处理""代码库结构"），排除项收窄为 needle 查询（已知文件路径/单个定义/2-3 个已知文件）。早期版本用"不要为单个 read/bash 能做的事开 subagent""spawning costs a full independent run"这类宽泛否定且在提示词与工具描述里各重复一遍，对 DeepSeek 这类对否定指令敏感的模型造成双倍抑制，使模型几乎从不主动 spawn subagent。对照 opencode 的 `task.txt` 与各模型 `prompt/*.txt`（"prefer to use the Task tool to reduce context usage""proactively use"），正向框架是其模型乐于派生 subagent 的主因。

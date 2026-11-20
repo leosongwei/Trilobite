@@ -335,7 +335,6 @@ class Agent:
         parent: Agent | None = None,
         parent_session: str | None = None,
         depth: int = 0,
-        max_steps: int | None = None,
         sealed: bool = False,
         timer_service: Any = None,
         model_name: str | None = None,
@@ -463,10 +462,8 @@ class Agent:
         self._parent_ref: Agent | None = parent
         self._parent_session: str | None = parent.name if parent is not None else parent_session
         self._depth: int = depth
-        self._max_steps: int | None = max_steps
         self._sealed: bool = sealed
         self._interrupted: bool = False
-        self._step_count: int = 0
         self._children: list[Agent] = []
         # ── group session (multi-agent chat channel) ─────────────────────
         # ``mode == "group"`` marks the channel session itself: it never runs
@@ -1340,12 +1337,6 @@ class Agent:
                 self._force_run = False
                 self._pending_tool_results = False
 
-                # Subagent step cap: prevent runaway loops.
-                if self._max_steps is not None and self._step_count >= self._max_steps:
-                    self._final_state = "error"
-                    self._final_result = f"max_steps ({self._max_steps}) exceeded"
-                    await self._send_stream_event({"type": "error", "text": self._final_result})
-                    break
                 # A queued "/compact" command (sent like any message, so it can
                 # also wait out an in-flight run) turns this turn into the
                 # compaction turn: mark it and append the compact prompt, which
@@ -1411,8 +1402,6 @@ class Agent:
                 )
                 if not model.content and not model.think and not model.tool_calls:
                     self._log.warning("TURN produced EMPTY model output (no content/thinking/tool_calls)")
-
-                self._step_count += 1
 
                 if model.tool_calls:
                     # Persist the model message (with tool_calls) before
@@ -1584,8 +1573,8 @@ class Agent:
                     self._final_result = model.content
 
             # Loop exited normally: the run completed with no pending work.
-            # Emit ``done`` only for a completed run (max_steps already
-            # emitted ``error`` above).
+            # Emit ``done`` only for a completed run (an error/interrupt path
+            # has already emitted its own terminal event).
             if self._final_state == "completed":
                 await self._send_stream_event({"type": "done"})
 
@@ -1870,7 +1859,6 @@ class Agent:
             registry=self._registry,
             parent=self,
             depth=self._depth + 1,
-            max_steps=int(self.config.get("subagent_max_steps", 100)),
             model_name=self._model_name,
         )
         child.set_additional_dirs([str(d) for d in self._additional_dirs])
@@ -1997,8 +1985,8 @@ class Agent:
             registry=self._registry,
             parent=self,
             depth=self._depth + 1,
-            # No max_steps: a member is a long-lived teammate, not a bounded
-            # task -- it must never be killed mid-work by a step cap.
+            # No step cap at all: neither subagents nor group members are
+            # killed mid-work; runs end when the model stops calling tools.
             model_name=self._model_name,
             member_name=name,
             group_peers=peers,
