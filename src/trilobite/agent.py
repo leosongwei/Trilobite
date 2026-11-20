@@ -1985,8 +1985,6 @@ class Agent:
             registry=self._registry,
             parent=self,
             depth=self._depth + 1,
-            # No step cap at all: neither subagents nor group members are
-            # killed mid-work; runs end when the model stops calling tools.
             model_name=self._model_name,
             member_name=name,
             group_peers=peers,

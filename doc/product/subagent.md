@@ -18,7 +18,6 @@ Subagent 是"主 agent 通过一次 `task` 工具调用派生出来的子 agent"
 - ✅ 用户可**中断**子 agent，中断后立刻产出总结再退出。
 - ✅ 仅允许**一层**：子 agent 看不到 `task` 工具，无法再派生。
 - ✅ 子 agent 上下文隔离：只拿到主 agent 给的 prompt，不继承主 agent 历史。
-- ✅ run 无步数上限：子 agent 只在模型不再调用工具时结束，没有步数截断（失控靠用户 stop / interrupt 兜底）。
 - ✅ 子 agent 权限请求为**交互式**：弹提示、全局可见、写明是哪个子 agent 请求哪里的权限。
 
 ### v1 不做的事（non-goals）
@@ -303,5 +302,4 @@ sessions/
 - **task 工具异步化范围**：只让 `task` 异步，不把 `execute_tool` 整体异步化，控制改动面。
 - **子 agent 权限请求**：交互式 + 全局广播（父 agent fan-out 到父及所有兄弟 broker），而非越界即拒；提示写明子 agent 身份与路径。
 - **steering 与 sealed**：用户可 steer 运行中的子 agent（有界任务的中途引导）；run 一旦结束即 sealed，不可复用，但历史长期只读可查。
-- **无步数上限**：run 只由模型停止调用工具结束，不设 steps 截断；失控由用户 stop/interrupt 兜底。
 - **提示词正向框架**：系统提示词和 `task` 工具描述采用正向框架--把 subagent 定位为"屏蔽上下文、省 token、探索首选"，并给出正面用例（如"错误在哪处理""代码库结构"），排除项收窄为 needle 查询（已知文件路径/单个定义/2-3 个已知文件）。早期版本用"不要为单个 read/bash 能做的事开 subagent""spawning costs a full independent run"这类宽泛否定且在提示词与工具描述里各重复一遍，对 DeepSeek 这类对否定指令敏感的模型造成双倍抑制，使模型几乎从不主动 spawn subagent。对照 opencode 的 `task.txt` 与各模型 `prompt/*.txt`（"prefer to use the Task tool to reduce context usage""proactively use"），正向框架是其模型乐于派生 subagent 的主因。
