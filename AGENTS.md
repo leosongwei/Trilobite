@@ -131,6 +131,15 @@ trilobite   # entry point，启动 uvicorn（默认 127.0.0.1:2345）
 * 更新完功能后，修改pyproject.toml中包版本的第三个数字。比如当前是1.1.2，那就改为1.1.3。注意，版本号需要相对于最新版master进行bump，避免一个PR内多次bump。
 * 完成后提交PR
 
+## 反模式
+
+一些常见错误做法。
+
+* 凭空否定
+  * 常见问题：当删除某一功能时，虽然移除了代码，但是留下了注释或者在文档里面说“aaa不是bbb”，“删去了xxx功能”，或者“之前是xxx，现在是xxx”
+    * 错误范例，当移除subagent的最大步数限制时增加了注释：`src/trilobite/agent.py ： No step cap at all: neither subagents nor group members are killed mid-work; runs end when the model stops calling tools.`
+  * 正确做法：当前删除某一功能时，将相关代码路径、注释、文档清理干净，就像它从未存在过一样。
+
 ## 发布release
 
 一般用户在github上合并PR到master后会需要发布release。
@@ -151,4 +160,4 @@ trilobite   # entry point，启动 uvicorn（默认 127.0.0.1:2345）
 
 ## 产品文档
 
-* 产品文档描述最终事实，而不要描述过程。避免“是xxx而不是xxx”，或者“之前是xxx，现在是xxx”一类的描述。
+* 产品文档描述最终事实，而不要描述变更过程。参见`反模式`
