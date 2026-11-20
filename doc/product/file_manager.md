@@ -163,7 +163,7 @@ grep -E "^def .*\(self\):$" app.py
 
 ### 刷新时机
 
-Agent 每个工具执行完毕后，后端判断该工具是否**可能改动工作区文件**：`read` / `glob` / `grep` / `TodoList` / `skill` / `sleep_until` / `send_message` 之外的任何工具（`edit` / `write` / `bash` / `task` 以及日后新增的工具）都算——模型经常用 `bash` 跑临时脚本改文件，判定不依赖工具语义而按"非白名单即可能写"。判定结果以 `fs_changed` 事件（`session, tool`）发布，纯 UI 提示、不进回放缓冲。subagent 与群成员的该事件**转发到父 session**（其流上没有文件树），所以子 agent 改文件时父 session 的树也会实时刷新。
+Agent 每个工具执行完毕后，后端判断该工具是否**可能改动工作区文件**：`read` / `glob` / `grep` / `TodoList` / `skill` / `sleep_until` 之外的任何工具（`edit` / `write` / `bash` / `task` 以及日后新增的工具）都算——模型经常用 `bash` 跑临时脚本改文件，判定不依赖工具语义而按"非白名单即可能写"。判定结果以 `fs_changed` 事件（`session, tool`）发布，纯 UI 提示、不进回放缓冲。subagent 的该事件**转发到父 session**（其流上没有文件树），所以子 agent 改文件时父 session 的树也会实时刷新。
 
 前端收到 `fs_changed` 即递增 `fsRefreshTick`（`subagent_state` 与 run 终态 `done`/`cancelled`/`interrupted`/`error` 同样递增，作为兜底）：
 

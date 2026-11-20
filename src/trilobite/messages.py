@@ -152,7 +152,6 @@ class UserMessage(Message):
         is_compact_prompt: bool = False,
         is_mode_notification: bool = False,
         images: list[Image] | None = None,
-        sender: str = "",
         id: str = "",
     ):
         super().__init__(id)
@@ -167,11 +166,6 @@ class UserMessage(Message):
         # produced; kept so old persisted histories still render correctly
         # (the notice stays hidden and excluded from user_seq).
         self.is_mode_notification = is_mode_notification
-        # Group channel only: who said this in the channel. Empty for
-        # ordinary sessions (and for the API projection, which never sees
-        # it -- the model already gets the sender via the [from group, by X] /
-        # [private msg, from X] tags).
-        self.sender = sender
         self.images = images or []
 
     def to_api_dicts(self, image_dir: Path | None = None, enable_vl: bool = True) -> list[dict]:
@@ -196,8 +190,6 @@ class UserMessage(Message):
             d["is_compact_prompt"] = True
         if self.is_mode_notification:
             d["is_mode_notification"] = True
-        if self.sender:
-            d["sender"] = self.sender
         return d
 
     def to_frontend_dicts(self) -> list[dict]:
@@ -210,8 +202,6 @@ class UserMessage(Message):
             d["is_compact_prompt"] = True
         if self.is_mode_notification:
             d["is_mode_notification"] = True
-        if self.sender:
-            d["sender"] = self.sender
         return [d]
 
 
@@ -476,7 +466,6 @@ def message_from_storage(d: dict) -> Message:
                 )
                 for img in d.get("images", [])
             ],
-            sender=d.get("sender", ""),
             id=mid,
         )
     if t == "model":

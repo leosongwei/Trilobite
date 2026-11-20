@@ -23,13 +23,6 @@ from src.trilobite.config import (
     get_model,
 )
 from src.trilobite.file_access import normalize_dir, normalize_dirs
-from src.trilobite.group import (
-    GROUP_ALL,
-    GROUP_SHARED_DIRNAME,
-    format_group_message,
-    pick_member_names,
-    resolve_recipients,
-)
 from src.trilobite.history import MessageList, TurnsView
 from src.trilobite.messages import (
     CompactMarker,
@@ -43,14 +36,12 @@ from src.trilobite.messages import (
 from src.trilobite.prompts import (
     IMAGE_READ_PROMPT,
     SYSTEM_PROMPT,
-    group_member_system_prompt,
     subagent_system_prompt,
 )
 from src.trilobite.permission import (
     AgentPermission,
     ExploreSubagentPermission,
     GeneralSubagentPermission,
-    GroupMemberPermission,
     PrimaryPermission,
 )
 from src.trilobite.skills import discover_skills, format_skill_listing
@@ -338,10 +329,6 @@ class Agent:
         sealed: bool = False,
         timer_service: Any = None,
         model_name: str | None = None,
-        mode: str | None = None,
-        member_name: str | None = None,
-        group_peers: list[str] | None = None,
-        group_members: dict[str, str] | None = None,
     ):
         self.name = name
         self.working_dir = Path(working_dir).resolve()
@@ -383,22 +370,13 @@ class Agent:
         self.compaction_trigger_ratio = model_def.compaction_trigger_ratio
         self._extra_body = model_def.extra_body or {}
         # Subagents override the system prompt with the role prefix + guidance
-        # and use a fixed role permission. Group members get the group-channel
-        # prefix instead: their own name plus every teammate's name, so the
-        # team can coordinate without further instruction.
+        # and use a fixed role permission.
         self._subagent_type: str | None = subagent_type
         self._description: str = description or ""
         if subagent_type == "explore":
             role_prompt = subagent_system_prompt("explore")
         elif subagent_type == "general":
             role_prompt = subagent_system_prompt("general")
-        elif subagent_type == "group":
-            role_prompt = group_member_system_prompt(
-                member_name or "agent",
-                list(group_peers or []),
-                shared_dir=str(parent.session_dir / GROUP_SHARED_DIRNAME)
-                if parent is not None else None,
-            )
         else:
             role_prompt = SYSTEM_PROMPT
         # Prepend a dynamic environment block (working dir, git, platform)
@@ -443,8 +421,6 @@ class Agent:
             self._permission: AgentPermission = ExploreSubagentPermission()
         elif subagent_type == "general":
             self._permission: AgentPermission = GeneralSubagentPermission()
-        elif subagent_type == "group":
-            self._permission: AgentPermission = GroupMemberPermission()
         else:
             self._permission: AgentPermission = PrimaryPermission()
         self._additional_dirs: list[Path] = []
@@ -465,22 +441,6 @@ class Agent:
         self._sealed: bool = sealed
         self._interrupted: bool = False
         self._children: list[Agent] = []
-        # ── group session (multi-agent chat channel) ─────────────────────
-        # ``mode == "group"`` marks the channel session itself: it never runs
-        # an LLM, it records the conversation and fans messages out to the
-        # members. ``_group_members`` maps member name -> session id (the
-        # roster, persisted in session.json). A member instead carries
-        # ``_member_name``; its parent is resolved lazily from the registry
-        # because a member restored from disk may load before its group.
-        self._mode: str | None = mode
-        if self._mode == "group":
-            # The channel's group_shared folder: the team's shared exchange
-            # area (members get it granted; the channel view serves images
-            # from it). Created here so it exists from the channel's first
-            # load on.
-            (self.session_dir / GROUP_SHARED_DIRNAME).mkdir(parents=True, exist_ok=True)
-        self._group_members: dict[str, str] = dict(group_members or {})
-        self._member_name: str | None = member_name
         # The Popen of the bash command currently running in a worker thread
         # (None when idle). Set/cleared via _register_proc so interrupt() can
         # kill it instead of blocking until the command finishes on its own.
@@ -517,8 +477,8 @@ class Agent:
         """The parent agent, resolved lazily from the registry.
 
         Spawned children hold a direct reference; a session restored from
-        disk (e.g. a group member loaded before its group) resolves through
-        ``_parent_session`` once the parent appears in the registry.
+        disk resolves through ``_parent_session`` once the parent appears in
+        the registry.
         """
         if self._parent_ref is not None:
             return self._parent_ref
@@ -904,11 +864,6 @@ class Agent:
             return "subagent"
         return "main"
 
-    @property
-    def is_group(self) -> bool:
-        """True for the group channel session itself (never runs an LLM)."""
-        return self._mode == "group"
-
     def interrupt(self) -> None:
         """Hard-stop a running subagent's current work, then summarize.
 
@@ -919,14 +874,7 @@ class Agent:
         and, rather than a bare cancel, runs one tool-less summary turn and
         exits. Also kills a running bash process group and unblocks a pending
         permission wait so nothing is left stuck.
-
-        A group member is a persistent teammate, not a bounded task: its
-        interrupt is a plain cancel (hard stop, stays reusable, no summary,
-        never sealed).
         """
-        if self._subagent_type == "group":
-            self.cancel()
-            return
         self._interrupted = True
         self._permission_approved = False
         self._permission_event.set()
@@ -984,35 +932,12 @@ class Agent:
         return _on_output
 
     @property
-    def group_shared_dir(self) -> Path | None:
-        """The group's shared folder (group_shared, in the channel's dir).
-
-        For the channel it is its own ``group_shared``; for a member it is
-        the parent channel's. None outside a group.
-        """
-        if self._mode == "group":
-            return self.session_dir / GROUP_SHARED_DIRNAME
-        if self._subagent_type == "group":
-            parent = self._parent
-            if parent is not None:
-                return parent.session_dir / GROUP_SHARED_DIRNAME
-        return None
-
-    @property
     def all_additional_dirs(self) -> list[Path]:
-        """Effective grants: global config dirs followed by session dirs.
-
-        Group members also get the team's group_shared folder: it is their
-        exchange area by design (the prompt tells them so), so neither the
-        file tools nor the bash sandbox should ever ask the user about it.
-        """
+        """Effective grants: global config dirs followed by session dirs."""
         out = list(self._global_dirs)
         for d in self._additional_dirs:
             if d not in out:
                 out.append(d)
-        shared = self.group_shared_dir
-        if shared is not None and shared not in out:
-            out.append(shared)
         return out
 
     def set_additional_dirs(self, dirs: list[str]):
@@ -1022,8 +947,8 @@ class Agent:
         paths against the working dir) so the same directory can never be
         listed twice under different spellings. When this session's grants
         change, running subagents are kept in sync: they inherit the new
-        grants (so they stop re-requesting what the user already allowed for
-        the group) and lose the ones this session dropped.
+        grants (so they stop re-requesting what the user already allowed)
+        and lose the ones this session dropped.
         """
         old = self._additional_dirs
         new: list[Path] = []
@@ -1150,16 +1075,9 @@ class Agent:
 
         Matching is deliberately loose (any message starting with the word):
         the full text stays visible to the model in the merged turn anyway,
-        so extra words ride along as context. Only a group member's copies
-        carry a leading addressing tag (``[private msg, from user]`` etc.),
-        which is skipped before the match -- normal sessions are untouched.
+        so extra words ride along as context.
         """
-        text = msg.content.strip()
-        for prefix in ("[from group, by ", "[private msg, from "):
-            if text.startswith(prefix) and "\n" in text:
-                text = text.split("\n", 1)[1].strip()
-                break
-        return text.startswith("/compact")
+        return msg.content.strip().startswith("/compact")
 
     def _has_unread_compact_command(self) -> bool:
         """Whether an unread real user message is a ``/compact`` command.
@@ -1343,13 +1261,6 @@ class Agent:
                 # combine_new_messages folds in last among the unread inputs.
                 if not self._need_compact:
                     await self._trigger_compact_command()
-                # Group members talk through the group session's currently
-                # selected model: sync it at the turn boundary (no request in
-                # flight here) so the request below -- and every later one --
-                # uses the channel's choice. An already-executing request is
-                # never touched; it finishes on the old parameters.
-                if self._subagent_type == "group":
-                    self._adopt_group_model()
                 messages = self.history.get_api_messages(
                     image_dir=self.session_dir / "images",
                     enable_vl=self.enable_vl,
@@ -1441,8 +1352,6 @@ class Agent:
                             tool_result = await self._run_subagents(args)
                         elif tool_name == "sleep_until":
                             tool_result = await self._run_sleep_tool(args)
-                        elif tool_name == "send_message":
-                            tool_result = await self._run_send_message(args)
                         else:
                             # Tools are synchronous (notably bash's subprocess.run
                             # blocks). Run them in a worker thread so a long bash
@@ -1468,8 +1377,8 @@ class Agent:
                                     self, perm_path, tool_name, tool_result["result"]
                                 )
                             else:
-                                # Main session: fan out to its group too.
-                                await self._broadcast_to_group({
+                                # Main session: fan out to all subagents too.
+                                await self._broadcast_to_children({
                                     "type": "permission_request",
                                     "session": self.name,
                                     "path": perm_path,
@@ -1678,10 +1587,8 @@ class Agent:
                 "error_code": error_code,
             })
         finally:
-            # A bounded subagent's run has ended for any reason -> it is now
-            # sealed (view-only, no new input). Group members are persistent
-            # teammates instead: they go idle and accept later channel or
-            # direct messages.
+            # A subagent's run has ended for any reason -> it is now sealed
+            # (view-only, no new input).
             if self._subagent_type in ("explore", "general"):
                 self._sealed = True
             # The run is over regardless of how it ended; clear the running
@@ -1691,22 +1598,14 @@ class Agent:
             self._broker.set_running(False)
             self._task = None
 
-    async def steer(self, message: str, *, sender: str = "user", private: bool = True):
+    async def steer(self, message: str):
         """Append a steering user message mid-run.
 
         The message goes straight into history (no queue): the run loop is
         alive, so its next continuation check picks it up and runs another turn
         so the model can respond. It lands after the in-flight assistant turn,
         never splitting tool_calls from their results.
-
-        For group members the copy is tagged with its addressing --
-        ``[private msg, from X]`` for a note aimed at this member alone
-        (the default: direct user steering), ``[from group, by X]`` for a
-        channel broadcast -- so the model can tell who said what and how
-        visible its reply should be. Other sessions get the text untouched.
         """
-        if self._subagent_type == "group":
-            message = format_group_message(sender, message, private=private)
         user_seq = self._count_user_messages()
         user = UserMessage(message)
         self.history.append(user)
@@ -1718,32 +1617,16 @@ class Agent:
         return user
 
     def is_running(self) -> bool:
-        # The group channel itself never runs; it shows as running while any
-        # member does (sidebar dot, stop button, streaming flag).
-        if self._mode == "group":
-            return any(m.is_running() for m in self._group_member_agents())
         return self._broker.is_running
 
-    async def start(self, message: str, images: list[Image] | None = None, *, sender: str = "user", private: bool = True) -> None:
+    async def start(self, message: str, images: list[Image] | None = None) -> None:
         """Begin a run independently of any HTTP request lifecycle.
 
         Closing a browser only drops SSE subscribers; the agent keeps running
         because the task created here is not tied to any request. The user
         message is emitted as a stream event so every subscriber (and any
         reconnecting client) renders it consistently.
-
-        Group members tag the message with its addressing exactly like
-        ``steer`` (default: a private note from the user); other sessions
-        store the text untouched.
         """
-        # A group channel never runs an LLM: a message sent to it is recorded
-        # in the channel and delivered to every member (any caller -- the
-        # HTTP endpoint routes here directly, the CLI would land here too).
-        if self._mode == "group":
-            await self.post_to_group(message)
-            return
-        if self._subagent_type == "group":
-            message = format_group_message(sender, message, private=private)
         user_seq = self._count_user_messages()
         # Auto-title the session from the first user message (first 50 chars).
         # Subagents carry a description instead and are never auto-titled.
@@ -1783,13 +1666,6 @@ class Agent:
         # Global config grants are session-independent; the sidebar shows
         # them in gray with no remove button.
         snapshot["global_dirs"] = [str(d) for d in self._global_dirs]
-        if self._mode == "group":
-            # The group channel view needs the roster (the setup dialog and
-            # the member chips) and a running flag that reflects the members.
-            snapshot["mode"] = "group"
-            snapshot["group_members"] = [
-                {"name": n, "session": sid} for n, sid in self._group_members.items()
-            ]
         snapshot["is_running"] = self.is_running()
         return q, snapshot
 
@@ -1808,9 +1684,8 @@ class Agent:
         self._kill_current_proc()
         if self._task and not self._task.done():
             self._task.cancel()
-        # Propagate cancellation to running subagents (hard stop, no summary)
-        # and, for a group channel, to its members.
-        for c in list(self._children) or self._group_member_agents():
+        # Propagate cancellation to running subagents (hard stop, no summary).
+        for c in list(self._children):
             c.cancel()
 
     async def stop(self) -> None:
@@ -1825,7 +1700,7 @@ class Agent:
                 pass
             except Exception:
                 pass
-        for c in list(self._children) or self._group_member_agents():
+        for c in list(self._children):
             await c.stop()
         self._task = None
         self._broker.set_running(False)
@@ -1877,250 +1752,6 @@ class Agent:
         self._broker.set_running(True)
         await self._send_stream_event({"type": "user", "text": self._initial_prompt, "user_seq": 0})
         await self.run()
-
-    # ── group channel (multi-agent chat) ─────────────────────────────────
-
-    def _materialize_member(self, sid: str) -> Agent | None:
-        """Load a group member from disk into the registry (idempotent).
-
-        After a server restart members are not in memory; a channel message
-        addressed to them materializes the instance on demand, so delivery
-        works without anyone first visiting that member's view.
-        """
-        if self._registry is None:
-            return None
-        existing = self._registry.get(sid)
-        if existing is not None:
-            return existing
-        member_dir = self.session_dir.parent / sid
-        if not member_dir.is_dir():
-            return None
-        try:
-            info = json.loads((member_dir / "session.json").read_text())
-        except Exception:
-            return None
-        if info.get("parent_session") != self.name:
-            return None
-        child = Agent(
-            name=sid,
-            working_dir=info["working_dir"],
-            session_dir=member_dir,
-            config=self.config,
-            session_id=info.get("session_id"),
-            registry=self._registry,
-            parent=self,
-            subagent_type="group",
-            description=info.get("description"),
-            member_name=info.get("member_name"),
-            group_peers=info.get("group_peers"),
-            depth=info.get("depth", 1),
-            model_name=info.get("model"),
-        )
-        child.set_additional_dirs(info.get("additional_dirs", []))
-        self._registry[sid] = child
-        return child
-
-    def _group_member_agents(self) -> list[Agent]:
-        """The live member agents of a group channel (empty for others)."""
-        if self._mode != "group" or not self._group_members:
-            return []
-        return [a for a in (self._materialize_member(sid) for sid in self._group_members.values()) if a is not None]
-
-    def _adopt_group_model(self) -> None:
-        """A member's LLM calls go through the group's selected model.
-
-        The group main session's model is the only selector the user has, so
-        it is authoritative for every member: each turn the member adopts it
-        (and persists the choice) before starting its completion request.
-        Called at the turn boundary -- with no request in flight -- so an
-        already-executing request is never touched; it finishes on the old
-        parameters and the switch lands on the next call.
-        """
-        if self._subagent_type != "group":
-            return
-        parent = self._parent
-        if parent is None or not parent.is_group:
-            return
-        model = parent._model_name
-        if not model or model == self._model_name:
-            return
-        try:
-            self.apply_model(model)
-        except KeyError:
-            return
-        self._update_session_json({"model": model})
-
-    def _create_group_member(self, name: str, peers: list[str]) -> Agent:
-        """Build one group member agent (does not start it).
-
-        Members are persistent child sessions under the group session: same
-        working directory and model as the channel, a group permission
-        (editing tools + ``send_message``), and a system prompt that names
-        the whole team.
-        """
-        child_name = uuid.uuid4().hex
-        child_dir = self.session_dir.parent / child_name
-        child_dir.mkdir(parents=True, exist_ok=True)
-        info = {
-            "name": child_name,
-            "working_dir": str(self.working_dir),
-            "parent_session": self.name,
-            "subagent_type": "group",
-            "member_name": name,
-            "description": name,
-            "group_peers": peers,
-            "depth": self._depth + 1,
-            "additional_dirs": [str(d) for d in self._additional_dirs],
-            "model": self._model_name,
-            "created_at": time.time(),
-        }
-        (child_dir / "session.json").write_text(json.dumps(info, indent=2))
-        child = Agent(
-            name=child_name,
-            working_dir=str(self.working_dir),
-            session_dir=child_dir,
-            config=self.config,
-            subagent_type="group",
-            description=name,
-            registry=self._registry,
-            parent=self,
-            depth=self._depth + 1,
-            model_name=self._model_name,
-            member_name=name,
-            group_peers=peers,
-        )
-        child.set_additional_dirs([str(d) for d in self._additional_dirs])
-        if self._registry is not None:
-            self._registry[child_name] = child
-        return child
-
-    async def group_spawn(self, count: int) -> list[dict]:
-        """Create the group's member agents (the count dialog's confirmation).
-
-        One-time: a group is sized once; a second call is rejected. Names are
-        picked distinctly, preferring names no other group session uses.
-        Members start idle -- they run when the first channel or direct
-        message reaches them.
-        """
-        if self._group_members:
-            raise ValueError("group already has members")
-        taken: set[str] = set()
-        if self.session_dir.parent.is_dir():
-            for sd in self.session_dir.parent.iterdir():
-                if not sd.is_dir() or sd == self.session_dir:
-                    continue
-                try:
-                    other = json.loads((sd / "session.json").read_text())
-                except Exception:
-                    continue
-                if other.get("mode") == "group":
-                    taken |= set(other.get("group_members") or {})
-        names = pick_member_names(count, taken)
-        # Each member's prompt names itself ("You are {name}") and its
-        # teammates; the peers list excludes self.
-        members = [
-            self._create_group_member(name, peers=[n for n in names if n != name])
-            for name in names
-        ]
-        self._group_members = {m._member_name: m.name for m in members}
-        # Members join _children so cancel propagation and the permission
-        # fan-out reach them through the usual channel.
-        self._children = list(members)
-        self._update_session_json({
-            "group_members": dict(self._group_members),
-            "group_size": len(names),
-        })
-        roster = [{"name": n, "session": sid} for n, sid in self._group_members.items()]
-        await self._send_stream_event({"type": "group_members", "members": roster})
-        return roster
-
-    async def post_to_group(self, message: str) -> None:
-        """Record a user message in the channel and deliver it to every member.
-
-        The channel never runs an LLM itself: the message lands in the
-        channel's history (the group view renders it) and goes to each member
-        as a tagged user message -- steering for a running member, a fresh
-        run for an idle one.
-        """
-        user_seq = self._count_user_messages()
-        if user_seq == 0:
-            self._maybe_auto_title(message)
-        user = UserMessage(message, sender="user")
-        self.history.append(user)
-        await self._send_stream_event({
-            "type": "user", "id": user._id, "text": message,
-            "sender": "user", "user_seq": user_seq,
-        })
-        for m in self._group_member_agents():
-            await m.receive_group_message("user", message, private=False)
-
-    async def receive_member_message(self, from_member: Agent, to: str, text: str) -> str:
-        """Deliver a member's send_message call (channel side).
-
-        Resolves the recipient first (an unknown name fails the tool call
-        with a hint); a valid message is recorded in the channel with the
-        sender's name (the channel view is the user's copy -- "all" reaches
-        the user this way) and fanned out to the resolved members. Returns
-        the tool result text for the sender.
-        """
-        sender = from_member._member_name or "agent"
-        targets, err = resolve_recipients(to, sender, self._group_members)
-        if err:
-            return err
-        user = UserMessage(text, sender=sender)
-        self.history.append(user)
-        await self._send_stream_event({
-            "type": "user", "id": user._id, "text": text,
-            "sender": sender, "user_seq": self._count_user_messages() - 1,
-        })
-        for name in targets:
-            member = self._materialize_member(self._group_members.get(name, ""))
-            if member is None:
-                continue
-            # "all" is a channel broadcast; a named recipient got a private
-            # note -- the delivered copy is tagged accordingly.
-            await member.receive_group_message(sender, text, private=to != GROUP_ALL)
-        if to == GROUP_ALL:
-            return "Message delivered to the whole group (user and teammates)."
-        return f"Message delivered to {', '.join(targets)}."
-
-    async def receive_group_message(self, sender: str, text: str, *, private: bool = False) -> None:
-        """Receive one channel message (member side).
-
-        The addressing is carried through to steer/start, which tag the
-        copy: a channel broadcast reads ``[from group, by X]``, a message
-        aimed at this member alone reads ``[private msg, from X]`` -- so the
-        model can tell who said what and whether the reply should go to
-        everyone or just the sender.
-        A running member takes it as steering (the run loop picks it up at
-        the next turn boundary); an idle member starts a fresh run whose
-        first user message is the tagged text. The check and the
-        running-flag flip inside start() share no await, so two concurrent
-        deliveries cannot double-start a run.
-        """
-        if self.is_running():
-            await self.steer(text, sender=sender, private=private)
-        else:
-            await self.start(text, sender=sender, private=private)
-
-    async def _run_send_message(self, args: dict) -> dict[str, Any]:
-        """Send a message to the group channel (virtual send_message tool).
-
-        Like task/sleep_until, execution lives on Agent: the parent channel
-        records the message and fans it out to the resolved recipients'
-        histories. The tool result confirms delivery (or explains the
-        failure).
-        """
-        parent = self._parent
-        if parent is None or not parent.is_group:
-            return {"result": "Error: send_message is only available inside a group session."}
-        to = str(args.get("to") or "")
-        text = str(args.get("text") or "").strip()
-        if not to:
-            return {"result": "Error: send_message requires 'to': 'all' or a teammate's name."}
-        if not text:
-            return {"result": "Error: send_message requires non-empty 'text'."}
-        return {"result": await parent.receive_member_message(self, to, text)}
 
     # ── timers (sleep_until) ───────────────────────────────────────────────
 
@@ -2422,19 +2053,19 @@ class Agent:
         """Announce that the workspace may have changed.
 
         The frontend reloads the sidebar's "Session files" tree and the file
-        manager's open file on this. Subagents and group members share the
-        parent's workspace, so the announcement goes to the parent session
-        (and, via it, to the other children) -- otherwise a subagent editing
-        files would only refresh its own stream, which has no tree.
+        manager's open file on this. Subagents share the parent's workspace,
+        so the announcement goes to the parent session (and, via it, to the
+        other children) -- otherwise a subagent editing files would only
+        refresh its own stream, which has no tree.
         """
         event = {"type": "fs_changed", "session": self.name, "tool": tool_name}
         parent = self._parent if self._subagent_type is not None else None
         if parent is None:
             await self._send_stream_event(event)
         else:
-            await parent._broadcast_to_group(event)
+            await parent._broadcast_to_children(event)
 
-    async def _broadcast_to_group(self, event: dict) -> None:
+    async def _broadcast_to_children(self, event: dict) -> None:
         """Send an event to this agent's own stream and, for the main session,
         to all its running children. Used for the main session's own approval
         requests (permission) so the prompt is visible no matter which session

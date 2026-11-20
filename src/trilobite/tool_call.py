@@ -31,7 +31,7 @@ _TOOL_MAP: dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 # anything), task, and any tool added later -- may change files, so its
 # completion makes the frontend reload its file tree and the open file.
 NON_WRITING_TOOLS = frozenset({
-    "read", "glob", "grep", "TodoList", "skill", "sleep_until", "send_message",
+    "read", "glob", "grep", "TodoList", "skill", "sleep_until",
 })
 
 # Virtual tool: spawn one or more subagents to run in parallel. Only exposed by
@@ -191,44 +191,6 @@ SLEEP_UNTIL_DEF: dict = {
                 },
             },
             "required": ["until"],
-        },
-    },
-}
-
-
-# Virtual tool: send a message to the group channel. Exposed only to group
-# members (see permission.py); its execution -- recording the message in the
-# channel and fanning it out to the recipients' histories -- is handled in
-# Agent, not here.
-SEND_MESSAGE_DEF: dict = {
-    "type": "function",
-    "function": {
-        "name": "send_message",
-        "description": (
-            "Send a message to the group channel, where the user and your "
-            "teammates will see it. Your plain text replies are NOT visible "
-            "in the channel -- this tool is the only way to communicate with "
-            "them. Use it to say what you are taking on, report findings or "
-            "finished work, and answer the user. Keep messages short and "
-            "purposeful."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "to": {
-                    "type": "string",
-                    "description": (
-                        "Recipient: 'all' (everyone in the group -- the user "
-                        "and every teammate) or a teammate's name to address "
-                        "one member."
-                    ),
-                },
-                "text": {
-                    "type": "string",
-                    "description": "Message text, written so the recipients can act on it.",
-                },
-            },
-            "required": ["to", "text"],
         },
     },
 }

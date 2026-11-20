@@ -16,7 +16,6 @@
       <div class="header-buttons">
         <button @click="handleCreate">+ Session</button>
         <button class="secondary" @click="handleCreateChat">+ Chat</button>
-        <button class="group" @click="handleCreateGroup">+ Group</button>
         <button class="secondary" @click="handleCreateProject">+ Project</button>
       </div>
     </div>
@@ -50,7 +49,6 @@
             <template v-else>
               <button class="project-rename" type="button" title="Rename project" @click.stop="startEditProject(item.project)"><span class="ms ms-edit-square"></span></button>
               <button class="project-add" type="button" title="New session in project" @click.stop="handleCreateInProject(item.project)"><span class="ms ms-add"></span></button>
-              <button class="project-add" type="button" title="New group session in project" @click.stop="handleCreateGroupInProject(item.project)"><span class="ms ms-group"></span></button>
               <button class="delete" type="button" title="Delete project" @click.stop="handleDeleteProject(item.project)"><span class="ms ms-close"></span></button>
             </template>
           </span>
@@ -70,7 +68,6 @@
               :title="isSessionExpanded(item.session.id) ? 'Collapse subagents' : `Expand subagents (${item.children.length})`"
               @click.stop="toggleSessionChildren(item.session.id)"
             ></span>
-            <span v-if="item.session.mode === 'group'" class="tree-icon ms ms-group" title="group session"></span>
             <span v-if="item.kind === 'session' && item.children.length && !isSessionExpanded(item.session.id)" class="child-count">{{ item.children.length }}</span>
             {{ item.session.name }}
           </span>
@@ -86,9 +83,8 @@
           >
             <span class="session-label" :title="childLabel(c)">
               <span v-if="c.is_running" class="running-dot" title="running"></span>
-              <span v-if="c.subagent_type" class="child-badge" :class="{ explore: c.subagent_type === 'explore', group: c.subagent_type === 'group' }" :title="c.subagent_type === 'group' ? 'group member' : c.subagent_type">
-                <span v-if="c.subagent_type === 'group'" class="ms ms-group"></span>
-                <template v-else>{{ (c.subagent_type || '').slice(0, 2) }}</template>
+              <span v-if="c.subagent_type" class="child-badge" :class="{ explore: c.subagent_type === 'explore' }" :title="c.subagent_type">
+                {{ (c.subagent_type || '').slice(0, 2) }}
               </span>
               <span v-if="c.has_sleep" class="pending-dot" title="suspended (sleep_until)"></span>
               <span v-if="c.sealed" class="sealed-dot" title="finished"></span>
@@ -147,16 +143,16 @@
           <button class="model-conf-btn" title="模型配置：切换主模型，下一次发送生效" @click="openModelModal">Model Conf</button>
         </div>
         <details>
-          <summary>Allowed directories ({{ groupDirs.length }})</summary>
-          <div v-if="groupDirs.length === 0" class="requests-empty">
+          <summary>Allowed directories ({{ treeDirs.length }})</summary>
+          <div v-if="treeDirs.length === 0" class="requests-empty">
             No allowed directories
           </div>
-          <div v-for="entry in groupDirs" :key="entry.path" class="dir-item" :class="{ 'dir-item-global': entry.global }">
+          <div v-for="entry in treeDirs" :key="entry.path" class="dir-item" :class="{ 'dir-item-global': entry.global }">
             <span class="dir-path" :title="entry.path">
               <span v-if="entry.source" class="dir-source">{{ entry.source }}</span>
               {{ entry.path }}
             </span>
-            <span v-if="!entry.global" class="delete" @click="handleRemoveGroupDir(entry)"><span class="ms ms-close"></span></span>
+            <span v-if="!entry.global" class="delete" @click="handleRemoveTreeDir(entry)"><span class="ms ms-close"></span></span>
           </div>
           <div class="dir-add">
             <input v-model="newDir" type="text" placeholder="/path/to/dir" @keydown.enter="handleAddDir" />
@@ -410,9 +406,9 @@ function reloadTreeDir(path: string) {
 defineExpose({ reloadTreeDir })
 
 // fsRefreshTick is bumped when a tool that can write finishes (the agent's
-// `fs_changed` event, forwarded to the parent session for subagents and group
-// members), on subagent updates and on run ends. Reload the tree so files the
-// agent created or modified show up without waiting for the session poll.
+// `fs_changed` event, forwarded to the parent session for subagents), on
+// subagent updates and on run ends. Reload the tree so files the agent
+// created or modified show up without waiting for the session poll.
 // Debounced so a burst of tool completions collapses into a single reload.
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 watch(
@@ -475,16 +471,11 @@ const sessionRows = computed<SessionRow[]>(() => {
   }
   const toNode = (s: Session): SessionNode => ({
     ...s,
-    children: (childrenByParent.get(s.id) ?? []).slice().sort((a, b) => {
-      // Group members keep roster (name) order -- they spawn in one batch and
-      // their names are their identity. Other subagents: newest on top,
-      // descending by created_at, with missing timestamps (legacy sessions)
-      // pushed to the bottom.
-      if (a.subagent_type === 'group' && b.subagent_type === 'group') {
-        return (a.description || a.name).localeCompare(b.description || b.name)
-      }
-      return (b.created_at ?? 0) - (a.created_at ?? 0)
-    }),
+    children: (childrenByParent.get(s.id) ?? []).slice().sort(
+      // Newest on top, descending by created_at, with missing timestamps
+      // (legacy sessions) pushed to the bottom.
+      (a, b) => (b.created_at ?? 0) - (a.created_at ?? 0),
+    ),
   })
   // Running sessions first, then sessions suspended via sleep_until
   // (blue dot), then by last activity (updated_at descending, history.json
@@ -605,18 +596,6 @@ async function handleCreateChat() {
   }
 }
 
-// Group mode: a multi-agent channel. A filled-in working directory is
-// honored (the agents work there); empty falls back to the session folder.
-// The member count is confirmed in a dialog after switching to it.
-async function handleCreateGroup() {
-  try {
-    await createSession('', workingDir.value.trim() || null, undefined, 'group')
-    resetDefaults()
-  } catch (e) {
-    alert(e instanceof Error ? e.message : String(e))
-  }
-}
-
 // Projects reuse the header's working directory field as name + directory.
 async function handleCreateProject() {
   const dir = workingDir.value.trim()
@@ -637,17 +616,6 @@ async function handleCreateProject() {
 async function handleCreateInProject(p: Project) {
   try {
     await createSession(p.name, p.working_dir, p.id)
-    resetDefaults()
-  } catch (e) {
-    alert(e instanceof Error ? e.message : String(e))
-  }
-}
-
-// Create a group session inside the project: it uses the project's working
-// directory and carries the group icon in the tree.
-async function handleCreateGroupInProject(p: Project) {
-  try {
-    await createSession('', p.working_dir, p.id, 'group')
     resetDefaults()
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e))
@@ -706,14 +674,14 @@ async function handleAddDir() {
   newDir.value = ''
 }
 
-// ── allowed directories (group-scoped) ─────────────────────────────────────
+// ── allowed directories (tree-scoped) ─────────────────────────────────────
 // Allowed directories are per-session, but a subagent inherits the parent's
 // grants and may add its own, so the same path can legitimately live in
-// several sessions of the group. Show the union of the current main-session
-// group deduped by path instead, with the owning session labelled on entries
-// that do not belong to the session being viewed. The + box still adds to
-// the viewed session only.
-interface GroupDirEntry {
+// several sessions of one tree. Show the union of the current session tree
+// deduped by path instead, with the owning session labelled on entries that
+// do not belong to the session being viewed. The + box still adds to the
+// viewed session only.
+interface DirEntry {
   sessionId: string
   path: string
   source: string | null
@@ -731,26 +699,26 @@ function sessionLabel(s: Session): string {
   return s.subagent_type ? `[${s.subagent_type}: ${s.description || s.id}]` : s.name
 }
 
-const groupDirs = computed<GroupDirEntry[]>(() => {
+const treeDirs = computed<DirEntry[]>(() => {
   const cur = state.currentSession
   if (!cur) return []
   const root = findSessionRoot(state.sessions, cur)
   if (!root) return []
-  const group = state.sessions.filter((s) => s.id === root || s.parent_session === root)
-  const byPath = new Map<string, GroupDirEntry>()
-  const entries: GroupDirEntry[] = []
+  const tree = state.sessions.filter((s) => s.id === root || s.parent_session === root)
+  const byPath = new Map<string, DirEntry>()
+  const entries: DirEntry[] = []
   // Global fixed grants (config allowed_dirs) come first; shown in gray and
   // not removable. A session-level grant of the same path demotes the entry
   // to a regular session entry: removing it only drops the session grant.
   for (const p of state.globalDirs) {
     const key = dirKey(p)
     if (!byPath.has(key)) {
-      const entry: GroupDirEntry = { sessionId: '', path: key, source: null, global: true }
+      const entry: DirEntry = { sessionId: '', path: key, source: null, global: true }
       byPath.set(key, entry)
       entries.push(entry)
     }
   }
-  for (const s of group) {
+  for (const s of tree) {
     for (const p of s.additional_dirs ?? []) {
       const key = dirKey(p)
       const existing = byPath.get(key)
@@ -769,7 +737,7 @@ const groupDirs = computed<GroupDirEntry[]>(() => {
         }
         continue
       }
-      const entry: GroupDirEntry = {
+      const entry: DirEntry = {
         sessionId: s.id,
         path: key,
         source: s.id === cur ? null : sessionLabel(s),
@@ -781,15 +749,15 @@ const groupDirs = computed<GroupDirEntry[]>(() => {
   return entries
 })
 
-async function handleRemoveGroupDir(entry: GroupDirEntry) {
+async function handleRemoveTreeDir(entry: DirEntry) {
   // The entry may represent the same dir granted to several sessions in the
-  // group; remove it from every session that holds it so it does not
-  // reappear through another owner. The server canonicalizes paths, so a
-  // legacy `/foo/` entry is matched and removed too.
+  // tree; remove it from every session that holds it so it does not reappear
+  // through another owner. The server canonicalizes paths, so a legacy
+  // `/foo/` entry is matched and removed too.
   const root = findSessionRoot(state.sessions, state.currentSession)
   if (!root) return
-  const group = state.sessions.filter((s) => s.id === root || s.parent_session === root)
-  for (const s of group) {
+  const tree = state.sessions.filter((s) => s.id === root || s.parent_session === root)
+  for (const s of tree) {
     const dirs = await apiRemoveDir(s.id, entry.path)
     if (s.id === state.currentSession) state.additionalDirs = dirs
     else s.additional_dirs = dirs

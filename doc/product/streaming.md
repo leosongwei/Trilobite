@@ -45,7 +45,7 @@ per-session 事件总线，维护：
 | 事件 | 字段 | 说明 |
 |---|---|---|
 | `init` | `history, is_running, token_count, max_context_tokens, additional_dirs` | 连接时首发，前端据此重建对话与状态 |
-| `user` | `id, text, user_seq, sender?` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`id` 为该消息的消息 id（revert 用），`user_seq` 为在真实 user 消息中的序号。群聊频道中带 `sender`（"user" 或成员名），前端渲染说话者 |
+| `user` | `id, text, user_seq` | 用户消息（start/steer 时发），前端据此渲染用户气泡；`id` 为该消息的消息 id（revert 用），`user_seq` 为在真实 user 消息中的序号 |
 | `user_edit` | `message_id, text` | revert 编辑尚未被模型读取的 steer 消息时发（消息已在 history 但模型未读到），前端按 `message_id` 就地更新对应 user 气泡 |
 | `turn` | -- | 一个 LLM 回合开始，置 `is_running=true` |
 | `turn_restart` | -- | 流式回合失败重试：丢弃本回合已流出的部分输出（坏思维链/截断正文/工具片段），开启新的回合泡泡，`is_running` 不变 |
@@ -55,11 +55,10 @@ per-session 事件总线，维护：
 | `tool_start` | `tool, args, tool_call_id` | 工具开始执行；`tool_call_id` 关联流式输出与结果 |
 | `tool_output` | `tool_call_id, stream, text` | bash 工具的实时输出行（`stream` 为 `stdout`/`stderr`），前端按 `tool_call_id` 追加到对应工具的输出窗口；仅用于实时观察，不写入 history |
 | `tool_result` | `tool, result, diff?` | 工具结果（`result` 经 `max_output_lines`/`max_output_chars` 截断后写入 history；`diff` 为 edit 的结构化行级 diff：`[{type, old, new, text}]`，带真实文件行号） |
-| `fs_changed` | `session, tool` | 一个**可能写文件**的工具（`edit`/`write`/`bash`/`task` 及任何新增工具；`read`/`glob`/`grep`/`TodoList`/`skill`/`sleep_until`/`send_message` 除外）执行完毕，前端据此重载文件树与打开的文件。纯 UI 提示、**不进回放缓冲**（重连客户端不需要）；subagent 与群成员的该事件转发到父 session（详情见 [file_manager.md](./file_manager.md#刷新时机)） |
+| `fs_changed` | `session, tool` | 一个**可能写文件**的工具（`edit`/`write`/`bash`/`task` 及任何新增工具；`read`/`glob`/`grep`/`TodoList`/`skill`/`sleep_until` 除外）执行完毕，前端据此重载文件树与打开的文件。纯 UI 提示、**不进回放缓冲**（重连客户端不需要）；subagent 的该事件转发到父 session（详情见 [file_manager.md](./file_manager.md#刷新时机)） |
 | `usage` | `token_count, max_context_tokens` | token 用量 |
 | `status` | `text` | 状态横幅（如 compaction） |
 | `permission_request` | `path, tool, message` | 请求文件访问权限 |
-| `group_members` | `members` | 群聊频道确认成员数后广播花名册（`[{name, session}]`）；频道 `init` 快照也带 `mode: "group"` 与 `group_members`（见 [group.md](./group.md)） |
 | `done` | -- | run 正常结束，置 `is_running=false` |
 | `cancelled` | -- | run 被取消，置 `is_running=false` |
 | `error` | `text, status_code?, error_type?, error_code?` | run 出错，置 `is_running=false` |

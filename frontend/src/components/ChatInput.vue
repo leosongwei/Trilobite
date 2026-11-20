@@ -41,7 +41,7 @@
         @change="onImageSelect"
       />
       <button
-        v-if="enableVl && !state.isSubagent && !isGroupChannel"
+        v-if="enableVl && !state.isSubagent"
         @click="imageInput?.click()"
         title="Add image"
         :disabled="state.isStreaming"
@@ -49,7 +49,7 @@
         <span class="ms ms-attach-file"></span>
       </button>
       <button
-        class="send-group"
+        class="send-buttons"
         @click="handleSend"
         :title="sendTitle"
       >
@@ -78,14 +78,7 @@ const message = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const imageInput = ref<HTMLInputElement>()
 
-// Group session: a group member is a persistent teammate (stop = cancel its
-// current run, it stays reusable) while bounded subagents interrupt+seal.
-// The group channel itself sends to every member (always available, even
-// mid-run -- that is the steering path), no images, no slash commands.
-const isGroupChannel = computed(() => state.mode === 'group')
-
 const inputPlaceholder = computed(() => {
-  if (isGroupChannel.value) return 'Post to the group (every member sees this)...'
   if (state.isSubagent) return 'Steer the subagent...'
   return 'Type a message... (type / for commands)'
 })
@@ -113,7 +106,7 @@ const filteredCommands = computed(() => {
   return COMMANDS.filter((c) => c.cmd.startsWith(m) && c.cmd !== m)
 })
 
-const showCommands = computed(() => filteredCommands.value.length > 0 && !isGroupChannel.value)
+const showCommands = computed(() => filteredCommands.value.length > 0)
 
 // A session suspended via sleep_until has no run, but its stop button stays
 // armed (red): pressing it aborts the sleep and wakes the model on the spot
@@ -186,7 +179,7 @@ async function onImageSelect(event: Event) {
 }
 
 async function onPaste(event: ClipboardEvent) {
-  if (!enableVl.value || state.isStreaming || state.isSubagent || isGroupChannel.value) return
+  if (!enableVl.value || state.isStreaming || state.isSubagent) return
   const items = event.clipboardData?.items
   if (!items) return
   let hasImage = false
@@ -227,15 +220,12 @@ async function handleSend() {
 
 async function stop() {
   if (!state.currentSession) return
-  // A bounded subagent's stop is an interrupt: hard-stop its current work,
-  // then it runs one summary turn and exits. A group member's stop is a
-  // plain cancel (its run just ends; it stays a reusable teammate), not an
-  // interrupt+seal. A suspended main session has no run to cancel -- stop
-  // means abort the sleep (interrupt endpoint; the deferred result is
-  // delivered as aborted and the session idles). Otherwise the main agent's
-  // stop is a plain cancel (for the group channel it cancels every running
-  // member).
-  if (state.isSubagent && state.subagentType !== 'group') {
+  // A subagent's stop is an interrupt: hard-stop its current work, then it
+  // runs one summary turn and exits. A suspended main session has no run to
+  // cancel -- stop means abort the sleep (interrupt endpoint; the deferred
+  // result is delivered as aborted and the session idles). Otherwise the
+  // main agent's stop is a plain cancel.
+  if (state.isSubagent) {
     await interruptSubagent(state.currentSession)
   } else if (sessionSleeping.value) {
     await interruptSession(state.currentSession)
@@ -247,12 +237,12 @@ async function stop() {
 
 <style scoped>
 /* Send + edit-mode pencil live on one button, visually split by a divider. */
-.send-group {
+.send-buttons {
   display: inline-flex;
   align-items: center;
   padding: 0;
 }
-.send-group > span:first-child {
+.send-buttons > span:first-child {
   padding: 8px 16px;
 }
 .edit-toggle {
