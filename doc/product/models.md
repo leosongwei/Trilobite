@@ -38,7 +38,8 @@ default_vl_model: ""                    # 预留字段，暂未使用
 ## 会话模型选择
 
 - 每个 session 的 `session.json` 持久化 `model` 字段（当前选择的模型 name）：主 session 新建时写入默认模型，subagent 派生时写入父 session 当前模型。字段缺失（旧版 session）时一律回退默认模型。重启/重连后按该字段恢复。
-- CLI 模式：`-t` 新建 session 使用默认模型，`-c` 续接时恢复 session 已保存的模型。
+- 该字段指向的模型若在 `models` 列表中已不存在（配置改动后 name 被改名或删除），session 不会因此报错：加载时用默认模型顶替，并把纠正后的 name 写回 `session.json`（`resolve_model_name`），侧边栏/信息接口展示的始终是实际生效的模型。
+- CLI 模式：`-t` 新建 session 使用默认模型，`-c` 续接时恢复 session 已保存的模型（失效时同样回退默认模型并写回）。
 
 ### UI
 
@@ -52,7 +53,7 @@ default_vl_model: ""                    # 预留字段，暂未使用
 
 - `GET /api/models` 返回模型定义列表（前端形状，**不含 api_key / extra_body**）。
 - `PUT /api/sessions/{name}/model` 校验模型名并持久化到 `session.json`；unknown 模型返回 400。
-- `GET /api/sessions` 与 `/api/sessions/{name}/info` 携带会话当前模型名。
+- `GET /api/sessions` 与 `/api/sessions/{name}/info` 携带会话当前模型名（未加载的 session 也返回解析后的有效模型名，不会返回已失效的名字）。
 - 切换模型时 agent 同步更新：API 地址（httpx 客户端 base_url）、密钥、`enable_vl`、`max_context`/`max_tokens`/`compaction_trigger_ratio`、`extra_body`、`pretend_to_be_opencode`。
 - `pretend_to_be_opencode` 切换时同步更新 httpx 客户端的 base headers：开启则加入 `User-Agent`/`x-session-affinity`/`X-Session-Id`；关闭则移除这些头。
 - 切换导致 `enable_vl` 变化时，agent 重建系统提示词（VLM 说明块）并更新历史首条 system 消息——切换模型本身已使 provider 缓存失效，改写 API 前缀无额外代价。
