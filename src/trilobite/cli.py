@@ -437,6 +437,11 @@ async def _make_agent(
         mode=info.get("mode"),
     )
     registry[agent.name] = agent
+    if info.get("model") != agent._model_name:
+        # The stored choice no longer names a configured model; persist the
+        # default the agent fell back to.
+        info["model"] = agent._model_name
+        _write_session_json(session_dir, info)
     if resume:
         if info.get("additional_dirs"):
             agent.set_additional_dirs(info["additional_dirs"])

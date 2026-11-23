@@ -21,6 +21,7 @@ from src.trilobite.config import (
     get_sessions_dir,
     init_config,
     load_models,
+    resolve_model_name,
 )
 from src.trilobite.file_access import (
     detect_line_ending,
@@ -252,7 +253,7 @@ async def list_sessions():
                     agent = agents.get(sd.name)
                     info["is_running"] = agent.is_running() if agent else False
                     info["history_length"] = len(agent.history) if agent else 0
-                    info["model"] = agent._model_name if agent else info.get("model") or get_default_model_name(config)
+                    info["model"] = agent._model_name if agent else resolve_model_name(config, info.get("model"))
                     info["sealed"] = agent.is_sealed() if agent else bool(info.get("subagent_type"))
                     # A session suspended via sleep_until shows the sidebar's
                     # blue dot and sorts to the top; the target time feeds the
@@ -446,6 +447,19 @@ async def set_session_model(name: str, req: ModelSelectRequest):
     return {"status": "ok", "model": req.model}
 
 
+def _load_session_info(session_dir: Path) -> dict:
+    """Read ``session.json``, correcting a model choice that no longer names a
+    configured model (the ``models`` list in config.yaml can be edited while
+    sessions are on disk). The corrected name is written back so the sidebar
+    and the next load agree."""
+    info = json.loads((session_dir / "session.json").read_text())
+    resolved = resolve_model_name(config, info.get("model"))
+    if info.get("model") != resolved:
+        info["model"] = resolved
+        (session_dir / "session.json").write_text(json.dumps(info, indent=2))
+    return info
+
+
 def _get_or_create_agent(name: str) -> Agent:
     """Return the in-memory agent for a session, creating it from disk if needed.
 
@@ -458,7 +472,7 @@ def _get_or_create_agent(name: str) -> Agent:
     session_dir = get_sessions_dir() / name
     if not session_dir.exists():
         raise HTTPException(404, "Session not found")
-    info = json.loads((session_dir / "session.json").read_text())
+    info = _load_session_info(session_dir)
     subagent_type = info.get("subagent_type")
     if subagent_type:
         # A subagent session restored from disk: rebuild as a sealed, view-only
@@ -600,7 +614,7 @@ async def fork_session(name: str, req: ForkRequest):
         "name": " ".join(req.message.split())[:50],
         "working_dir": src_info.get("working_dir", str(Path.cwd())),
         "additional_dirs": src_info.get("additional_dirs", []),
-        "model": src_info.get("model") or get_default_model_name(config),
+        "model": src._model_name,
         "titled": True,
         "created_at": time.time(),
     }
@@ -798,7 +812,7 @@ async def get_session_info(name: str):
         session_dir = get_sessions_dir() / name
         if not session_dir.exists():
             raise HTTPException(404, "Session not found")
-        info = json.loads((session_dir / "session.json").read_text())
+        info = _load_session_info(session_dir)
         return {
             "name": name,
             "working_dir": info["working_dir"],
@@ -807,7 +821,7 @@ async def get_session_info(name: str):
             "max_context_tokens": int(config.get("max_context_tokens", DEFAULT_MAX_CONTEXT_TOKENS)),
             "additional_dirs": info.get("additional_dirs", []),
             "global_dirs": [str(d) for d in normalize_dirs(config.get("allowed_dirs", []) or [], Path(info["working_dir"]))],
-            "model": info.get("model") or get_default_model_name(config),
+            "model": info["model"],
         }
     return {
         "name": name,

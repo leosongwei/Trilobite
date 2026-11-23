@@ -21,6 +21,7 @@ from src.trilobite.config import (
     DEFAULT_MAX_TOKENS,
     get_default_model_name,
     get_model,
+    resolve_model_name,
 )
 from src.trilobite.file_access import normalize_dir, normalize_dirs
 from src.trilobite.history import MessageList, TurnsView
@@ -337,9 +338,10 @@ class Agent:
         self._session_id = session_id or _generate_session_id()
         # The session's chosen model (display name from the ``models`` config
         # list). New sessions default to ``default_model``; a session restored
-        # from disk carries its persisted choice. Subagents inherit the
+        # from disk carries its persisted choice, falling back to the default
+        # when that name is no longer in the config. Subagents inherit the
         # parent's model at spawn time.
-        model_def = get_model(config, model_name or get_default_model_name(config))
+        model_def = get_model(config, resolve_model_name(config, model_name))
         self._model_name = model_def.name
         self._api_key = model_def.api_key
         self._api_url = model_def.api_url.rstrip("/")

@@ -125,6 +125,19 @@ def get_default_model_name(config: dict) -> str:
     return models[0].name
 
 
+def resolve_model_name(config: dict, name: str | None) -> str:
+    """Return ``name`` if it names a known model, otherwise the default one.
+
+    A session's persisted model choice can go stale when the config's
+    ``models`` list is edited (renamed or removed entry). Such a session must
+    keep working instead of failing to load, so it silently falls back to the
+    default model; callers persist the corrected name.
+    """
+    if name and any(m.name == name for m in load_models(config)):
+        return name
+    return get_default_model_name(config)
+
+
 def get_project_root() -> Path:
     return Path(__file__).parent.parent.parent
 
