@@ -30,7 +30,15 @@ from src.trilobite.file_access import (
     normalize_dirs,
     resolve_file_path,
 )
-from src.trilobite.git_ops import MAX_DIFF_ROWS, build_diff_rows, list_dir, show_base_content
+from src.trilobite.git_ops import (
+    MAX_DIFF_ROWS,
+    build_diff_rows,
+    default_diff_base,
+    is_git_repo,
+    list_dir,
+    ref_exists,
+    show_base_content,
+)
 from src.trilobite.image_storage import ext_to_mime, save_image
 from src.trilobite.messages import Image, UserMessage
 from src.trilobite.projects import (
@@ -900,6 +908,17 @@ def _fs_read_text(filepath: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _fs_diff_base(root: Path, base: str | None) -> str:
+    """The ref to diff the workspace against: the caller's choice when it still
+    resolves, otherwise the repo's own default branch. ``""`` when there is
+    nothing to compare with (outside git, or a repo without commits)."""
+    if not is_git_repo(root):
+        return ""
+    if base and ref_exists(root, base):
+        return base
+    return default_diff_base(root)
+
+
 @app.get("/api/sessions/{name}/fs/list")
 async def fs_list(name: str, path: str, base: str | None = None):
     agent = _get_or_create_agent(name)
@@ -908,10 +927,12 @@ async def fs_list(name: str, path: str, base: str | None = None):
         raise HTTPException(status_code=400, detail="not a directory")
     root = _fs_root_for(agent, dir_path)
     relpath = str(dir_path.relative_to(root)) if dir_path != root else ""
-    listing = list_dir(root, relpath, base)
+    resolved_base = _fs_diff_base(root, base)
+    listing = list_dir(root, relpath, resolved_base or None)
     return {
         "path": str(dir_path),
         "name": dir_path.name or str(dir_path),
+        "base": resolved_base,
         **listing,
     }
 
@@ -924,19 +945,24 @@ async def fs_read(name: str, path: str):
 
 
 @app.get("/api/sessions/{name}/fs/diff")
-async def fs_diff(name: str, path: str, base: str = "master"):
+async def fs_diff(name: str, path: str, base: str | None = None):
     agent = _get_or_create_agent(name)
     filepath = _fs_resolve(agent, path)
     current = _fs_read_text(filepath)
     root = _fs_root_for(agent, filepath)
     relpath = str(filepath.relative_to(root))
-    base_content, error = show_base_content(root, base, relpath)
-    if error:
-        raise HTTPException(status_code=400, detail=error)
+    resolved_base = _fs_diff_base(root, base)
+    if resolved_base:
+        base_content, error = show_base_content(root, resolved_base, relpath)
+        if error:
+            raise HTTPException(status_code=400, detail=error)
+    else:
+        # No baseline to compare with: the whole file counts as new.
+        base_content = None
     rows = build_diff_rows(base_content, current)
     if len(rows) > MAX_DIFF_ROWS:
         raise HTTPException(status_code=413, detail="diff too large")
-    return {"rows": rows, "base": base, "untracked": base_content is None}
+    return {"rows": rows, "base": resolved_base, "untracked": base_content is None}
 
 
 @app.put("/api/sessions/{name}/fs/file")

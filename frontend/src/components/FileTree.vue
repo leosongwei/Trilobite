@@ -90,7 +90,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   'open-file': [file: OpenFilePayload]
-  'root-info': [info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }]
+  'root-info': [info: { path: string; isGit: boolean; branches: string[]; currentBranch: string; base: string }]
 }>()
 
 const rootNodes = ref<DirNode[]>([])
@@ -150,6 +150,7 @@ async function loadNode(node: DirNode, recursive = false) {
       isGit: node.isGit,
       branches: node.branches,
       currentBranch: node.currentBranch,
+      base: listing.base,
     })
     if (recursive) {
       for (const sub of node.subdirs) {

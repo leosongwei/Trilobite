@@ -240,7 +240,7 @@ import type { FsRoot } from './FileTree.vue'
 const emit = defineEmits<{
   select: []
   'open-file': [file: { path: string; name: string; status?: string }]
-  'root-info': [info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }]
+  'root-info': [info: { path: string; isGit: boolean; branches: string[]; currentBranch: string; base: string }]
 }>()
 
 // Diff base branch, shared with the file manager; the tree's change
@@ -295,7 +295,7 @@ function requestDetail(r: PendingRequest): string {
   return r.path ?? ''
 }
 
-function onRootInfo(info: { path: string; isGit: boolean; branches: string[]; currentBranch: string }) {
+function onRootInfo(info: { path: string; isGit: boolean; branches: string[]; currentBranch: string; base: string }) {
   emit('root-info', info)
 }
 

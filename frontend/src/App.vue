@@ -113,9 +113,11 @@ const sidebarWidth = ref(Number(localStorage.getItem('trilobite.sidebarWidth')) 
 const showFiles = ref(false)
 const sidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 const openedFile = ref<OpenFilePayload | null>(null)
-// Diff base branch, shared by the sidebar tree (change highlighting) and the
-// file manager (diff view + branch selector).
-const diffBase = ref('master')
+// Diff base ref, shared by the sidebar tree (change highlighting) and the file
+// manager (diff view + branch selector). Empty until the first listing: the
+// backend resolves the workspace's own mainline (main/master/trunk/remote
+// HEAD), so no branch name is assumed here.
+const diffBase = ref('')
 // Git info per workspace root, collected from the sidebar tree's root-info
 // events; the file manager needs it for the diff branch selector.
 const rootInfoMap = reactive<Record<string, RootInfo>>({})
@@ -215,7 +217,7 @@ watch(() => state.currentSession, () => {
   sidebarOpen.value = false
   showFiles.value = false
   openedFile.value = null
-  diffBase.value = 'master'
+  diffBase.value = ''
   for (const k of Object.keys(rootInfoMap)) delete rootInfoMap[k]
 })
 

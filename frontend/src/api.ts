@@ -325,6 +325,8 @@ export interface FsListing {
   is_git_repo: boolean
   current_branch: string
   branches: string[]
+  /** Ref the listing's change status is computed against ("" outside git). */
+  base: string
   entries: FsEntry[]
   truncated: boolean
 }
