@@ -26,6 +26,10 @@ MAX_LIST_ENTRIES = 5000
 #: this; beyond it the diff is refused to keep the frontend responsive).
 MAX_DIFF_ROWS = 20000
 
+#: Conventional default-branch names, used when the repo has no remote HEAD to
+#: ask. Order matters: the first one that exists wins.
+DEFAULT_BRANCH_NAMES = ("main", "master", "trunk")
+
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run a git command in ``root``; stdout/stderr captured as text."""
@@ -50,6 +54,59 @@ def list_branches(root: Path) -> list[str]:
 
 def current_branch(root: Path) -> str:
     return _git(root, "symbolic-ref", "--short", "HEAD").stdout.strip()
+
+
+def ref_exists(root: Path, ref: str) -> bool:
+    """Whether ``ref`` resolves to a commit (branch, tag, ``origin/main``, ``HEAD``)."""
+    if not ref:
+        return False
+    return _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode == 0
+
+
+def _remote_head_branch(root: Path) -> str:
+    """The remote's default branch as a usable ref (``origin/main``), or ``""``.
+
+    ``refs/remotes/origin/HEAD`` is a symbolic ref kept by ``git clone`` /
+    ``git remote set-head``; it is the most direct answer to "what is this
+    repository's mainline".
+    """
+    ref = _git(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+    return ref if ref_exists(root, ref) else ""
+
+
+def default_diff_base(root: Path) -> str:
+    """The ref a workspace's changes are compared against.
+
+    git has no command for "the branch this work forked from", so this resolves
+    in order:
+
+    1. the current branch when its name is itself a conventional default
+       (``main``/``master``/``trunk``) -- diffing against its own tip then
+       shows exactly the uncommitted work;
+    2. the remote's HEAD branch (the authoritative mainline of a clone; a
+       same-named local branch is preferred over ``origin/<name>``);
+    3. otherwise the first existing conventional default branch -- a feature
+       branch in a repo without a remote is compared against the mainline it
+       forked from;
+    4. otherwise the current branch, otherwise ``HEAD`` (detached).
+
+    An empty string means there is nothing to diff against yet (a repository
+    without commits) or the directory is not a git worktree.
+    """
+    current = current_branch(root)
+    if current in DEFAULT_BRANCH_NAMES and ref_exists(root, current):
+        return current
+    local_branches = list_branches(root)
+    remote_head = _remote_head_branch(root)
+    if remote_head:
+        short = remote_head.split("/", 1)[-1]
+        return short if short in local_branches else remote_head
+    for name in DEFAULT_BRANCH_NAMES:
+        if name in local_branches:
+            return name
+    if ref_exists(root, current):
+        return current
+    return "HEAD" if ref_exists(root, "HEAD") else ""
 
 
 def _map_status(xy: str) -> str:
@@ -235,11 +292,11 @@ def _finalize_listing(
 def show_base_content(root: Path, base: str, relpath: str) -> tuple[str | None, str | None]:
     """Return the file's content at ``base``, or ``(None, error)``.
 
-    ``(None, None)`` means the base branch exists but the file is not in it
+    ``base`` may be any ref (branch, remote branch, tag, ``HEAD``).
+    ``(None, None)`` means the ref exists but the file is not in it
     (untracked/added file) -- the caller treats the baseline as empty.
     """
-    check = _git(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{base}")
-    if check.returncode != 0:
+    if not ref_exists(root, base):
         return None, f"branch not found: {base}"
     proc = _git(root, "show", f"{base}:{relpath}")
     if proc.returncode != 0:

@@ -14,7 +14,7 @@
             title="对比分支"
             @change="emit('update:base', ($event.target as HTMLSelectElement).value)"
           >
-            <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
+            <option v-for="b in baseOptions" :key="b" :value="b">{{ b }}</option>
           </select>
         </template>
         <div class="fm-tabs">
@@ -79,6 +79,8 @@ export interface RootInfo {
   isGit: boolean
   branches: string[]
   currentBranch: string
+  /** Ref the backend resolved as this workspace's diff base ("" outside git). */
+  base: string
 }
 
 // The file to open is handed in from the sidebar tree; root info (branches,
@@ -105,6 +107,13 @@ const content = ref('')
 const editContent = ref('')
 const diffRows = ref<DiffRow[]>([])
 const branches = ref<string[]>([])
+// Branch choices for the diff selector: the repo's local branches plus the
+// resolved base when it is not a local branch (e.g. `origin/main`, the remote
+// HEAD branch the backend picked as the mainline).
+const baseOptions = computed(() => {
+  const list = branches.value
+  return props.base && !list.includes(props.base) ? [props.base, ...list] : list
+})
 const rootIsGit = ref(false)
 const loading = ref(false)
 const diffLoading = ref(false)
@@ -184,8 +193,10 @@ function refreshGitState() {
   if (!info) return
   rootIsGit.value = info.isGit
   branches.value = info.branches
-  if (rootIsGit.value && !branches.value.includes(props.base)) {
-    emit('update:base', info.currentBranch || branches.value[0] || 'master')
+  // The backend resolves the workspace's own default diff base (main/master/
+  // trunk/remote HEAD); adopt it so tree highlighting and the diff view agree.
+  if (rootIsGit.value && info.base !== props.base) {
+    emit('update:base', info.base)
   }
   if (!rootIsGit.value && view.value === 'diff') {
     view.value = 'view'
